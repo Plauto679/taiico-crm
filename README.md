@@ -1,36 +1,62 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TAIICO CRM
 
-## Getting Started
+Sistema de gestión modular para TAIICO Life Advisors, construido con Next.js y TypeScript.
 
-First, run the development server:
+## Requisitos Previos
+
+- Node.js (v18 o superior)
+- Acceso a la carpeta de Google Drive donde residen los archivos de Excel.
+
+## Instalación
+
+1. Navega a la carpeta del proyecto:
+   ```bash
+   cd "taiico-crm"
+   ```
+
+2. Instala las dependencias:
+   ```bash
+   npm install
+   ```
+
+## Ejecución
+
+Para iniciar la aplicación en modo desarrollo:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Abre [http://localhost:3000](http://localhost:3000) en tu navegador.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Estructura del Proyecto
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- `src/app`: Páginas y rutas de la aplicación (App Router).
+- `src/components`: Componentes de UI reutilizables.
+- `src/lib`: Utilidades, tipos y lógica de acceso a datos.
+  - `excel`: Servicios para leer/escribir archivos Excel.
+  - `types`: Definiciones de tipos TypeScript para los modelos de datos.
+- `src/modules`: Lógica de negocio modular.
+  - `cobranza`: Gestión de cobranza Metlife.
+  - `renovaciones`: Lógica de detección de renovaciones.
+  - `cartera`: Perfiles de clientes y búsqueda.
 
-## Learn More
+## Módulos Implementados
 
-To learn more about Next.js, take a look at the following resources:
+### 1. Cobranza
+- Carga de archivos "Base de Cobranza" (Vida y GMM).
+- Visualización en tablas separadas.
+- (Próximamente) Conciliación de pagos.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 2. Renovaciones
+- Detección automática de pólizas próximas a vencer (30, 60, 90 días).
+- Unificación de renovaciones de Vida y GMM.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 3. Cartera
+- Búsqueda unificada de clientes por nombre o número de póliza.
+- Visualización de perfil básico del cliente.
 
-## Deploy on Vercel
+## Notas Importantes
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- La aplicación lee directamente los archivos de Excel de la carpeta de Google Drive.
+- Asegúrese de que los archivos existan en las rutas configuradas en `src/lib/config.ts`.
