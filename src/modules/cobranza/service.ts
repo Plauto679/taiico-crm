@@ -1,22 +1,22 @@
-import { loadExcelSheet } from '@/lib/excel/loader';
-import { writeExcelSheet } from '@/lib/excel/writer';
-import { PATHS } from '@/lib/config';
+import { fetchFromApi } from '@/lib/api';
 import { MetlifeVidaRaw, MetlifeGMMRaw } from '@/lib/types/metlife';
 
-export async function loadCobranzaVida() {
-    return loadExcelSheet<MetlifeVidaRaw>(PATHS.METLIFE.COBRANZA, 'Vida');
+export async function getCobranzaVida(): Promise<MetlifeVidaRaw[]> {
+    return fetchFromApi<MetlifeVidaRaw[]>('/cobranza/vida');
 }
 
-export async function loadCobranzaGMM() {
-    return loadExcelSheet<MetlifeGMMRaw>(PATHS.METLIFE.COBRANZA, 'GMM');
+export async function getCobranzaGMM(): Promise<MetlifeGMMRaw[]> {
+    return fetchFromApi<MetlifeGMMRaw[]>('/cobranza/gmm');
 }
 
-export async function updateCobranzaVida(data: MetlifeVidaRaw[]) {
-    return writeExcelSheet(PATHS.METLIFE.COBRANZA, 'Vida', data);
+export async function updateCobranzaVida(data: MetlifeVidaRaw[]): Promise<void> {
+    // TODO: Implement update endpoint in Python if needed
+    console.warn("Update not implemented in Python backend yet");
 }
 
-export async function updateCobranzaGMM(data: MetlifeGMMRaw[]) {
-    return writeExcelSheet(PATHS.METLIFE.COBRANZA, 'GMM', data);
+export async function updateCobranzaGMM(data: MetlifeGMMRaw[]): Promise<void> {
+    // TODO: Implement update endpoint in Python if needed
+    console.warn("Update not implemented in Python backend yet");
 }
 
 // Placeholder for logic to match payments

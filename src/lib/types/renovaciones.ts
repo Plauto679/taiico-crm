@@ -50,7 +50,7 @@ export interface RenovacionGMMRaw {
 export interface RenewalItem {
     poliza: string;
     contratante: string;
-    fechaRenovacion: Date;
+    fechaRenovacion: string | Date;
     ramo: 'VIDA' | 'GMM';
     agente: string;
     estatus: string;

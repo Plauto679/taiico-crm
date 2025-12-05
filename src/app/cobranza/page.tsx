@@ -1,11 +1,11 @@
-import { loadCobranzaVida, loadCobranzaGMM } from '@/modules/cobranza/service';
+import { getCobranzaVida, getCobranzaGMM } from '@/modules/cobranza/service';
 import { CobranzaView } from '@/components/cobranza/CobranzaView';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CobranzaPage() {
-    const vidaData = await loadCobranzaVida();
-    const gmmData = await loadCobranzaGMM();
+    const vidaData = await getCobranzaVida();
+    const gmmData = await getCobranzaGMM();
 
     return (
         <div className="space-y-6">
