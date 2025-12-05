@@ -51,7 +51,46 @@ async def get_renovaciones_vida(days: int = Query(30, description="Days to look 
 async def get_renovaciones_gmm(days: int = Query(30, description="Days to look ahead")):
     try:
         df = pd.read_excel(METLIFE_PATHS["RENOVACIONES_GMM"], sheet_name=SHEET_NAMES["RENOVACIONES_GMM"])
-        df = filter_upcoming(df, days)
+        
+        # --- Data Wrangling ---
+        
+        # 1. Date formatting (YYYY-MM-DD)
+        date_cols = ["FINIVIG", "FFINVIG", "PAGADOHASTA"]
+        for col in date_cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%Y-%m-%d")
+
+        # 2. Money formatting (Float)
+        money_cols = ["PRIMA", "PRIMA.1", "RECARGO", "GTOSEXP", "IVA", "DEDUCIBLE"]
+        for col in money_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        # 3. Percentage handling (Divide by 100)
+        if "COASEGURO" in df.columns:
+             df["COASEGURO"] = pd.to_numeric(df["COASEGURO"], errors="coerce") / 100
+
+        # Filter upcoming (using FFINVIG which is the renewal date)
+        # We need to convert back to datetime for filtering, or do filtering before formatting.
+        # Let's filter first, then format? Or just re-parse for filtering.
+        # The `filter_upcoming` function expects a dataframe.
+        # Let's modify `filter_upcoming` or do it inline.
+        
+        # Actually, `filter_upcoming` is generic. Let's see how it works.
+        # It looks for "renovaci" and "fecha". But GMM uses "FFINVIG".
+        # We should explicitly handle filtering for GMM here or update `filter_upcoming`.
+        
+        # Let's do explicit filtering here for clarity and robustness
+        now = datetime.now()
+        future = now + timedelta(days=days)
+        
+        # Use FFINVIG for filtering
+        if "FFINVIG" in df.columns:
+             # Parse temporarily for filtering
+             temp_dates = pd.to_datetime(df["FFINVIG"], errors='coerce')
+             mask = (temp_dates >= now) & (temp_dates <= future)
+             df = df[mask]
+        
         return clean_data(df)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

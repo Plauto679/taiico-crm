@@ -17,7 +17,11 @@ export default async function RenovacionesPage({
         { header: 'Contratante', accessorKey: 'contratante' as keyof RenewalItem },
         {
             header: 'Fecha Renovación',
-            accessorKey: (row: RenewalItem) => row.fechaRenovacion ? row.fechaRenovacion.toLocaleDateString('es-MX') : 'N/A'
+            accessorKey: (row: RenewalItem) => {
+                if (!row.fechaRenovacion) return 'N/A';
+                if (typeof row.fechaRenovacion === 'string') return row.fechaRenovacion;
+                return row.fechaRenovacion.toLocaleDateString('es-MX');
+            }
         },
         { header: 'Ramo', accessorKey: 'ramo' as keyof RenewalItem },
         { header: 'Agente', accessorKey: 'agente' as keyof RenewalItem },

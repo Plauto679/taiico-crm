@@ -1,16 +1,22 @@
 import os
+from pathlib import Path
 
-# Define base paths
-# Note: In a real deployment, these might be environment variables.
+# Define base paths using pathlib for relative path resolution
+# Current file is in: .../2025 - Antigravity CRM/taiico-crm/backend/config.py
+# We want to reach: .../2025 - Antigravity CRM/
 
-# Using the paths found in src/lib/config.ts
-BASE_PATH = "/Users/albertoalfaromendoza/Library/CloudStorage/GoogleDrive-alberto.alfaro@taiico.com/Shared drives/Administrativos/2025 - Antigravity CRM"
+# Resolve the parent directory of the current file (backend)
+BACKEND_DIR = Path(__file__).resolve().parent
+# Resolve the project root (taiico-crm)
+PROJECT_ROOT = BACKEND_DIR.parent
+# Resolve the shared drive root (2025 - Antigravity CRM)
+BASE_DIR = PROJECT_ROOT.parent
 
 METLIFE_PATHS = {
-    "COBRANZA": os.path.join(BASE_PATH, "Bases de cobranza y comisiones/Metlife base cobranza.xlsx"),
-    "CARTERA": os.path.join(BASE_PATH, "Relaciones de cartera/Cartera Metlife.xlsx"),
-    "RENOVACIONES_VIDA": os.path.join(BASE_PATH, "Fechas de emision de Polizas y renovaciones/Metlife Vida.xlsx"),
-    "RENOVACIONES_GMM": os.path.join(BASE_PATH, "Fechas de emision de Polizas y renovaciones/Metlife GMM.xlsx"),
+    "COBRANZA": BASE_DIR / "Bases de cobranza y comisiones" / "Metlife base cobranza.xlsx",
+    "CARTERA": BASE_DIR / "Relaciones de cartera" / "Cartera Metlife.xlsx",
+    "RENOVACIONES_VIDA": BASE_DIR / "Fechas de emision de Polizas y renovaciones" / "Metlife Vida.xlsx",
+    "RENOVACIONES_GMM": BASE_DIR / "Fechas de emision de Polizas y renovaciones" / "Metlife GMM.xlsx",
 }
 
 SHEET_NAMES = {
