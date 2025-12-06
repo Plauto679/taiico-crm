@@ -8,14 +8,13 @@ export default async function CobranzaPage() {
     const gmmData = await getCobranzaGMM();
 
     return (
-        <div className="space-y-6">
-            <div className="flex items-center justify-between">
+        <div className="flex flex-col h-full">
+            <div className="flex-none p-8 pb-4">
                 <h1 className="text-2xl font-bold text-gray-900">Cobranza</h1>
-                <button className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-                    Exportar Excel
-                </button>
             </div>
-            <CobranzaView vidaData={vidaData} gmmData={gmmData} />
+            <div className="flex-1 min-h-0 px-8 pb-8">
+                <CobranzaView vidaData={vidaData} gmmData={gmmData} />
+            </div>
         </div>
     );
 }

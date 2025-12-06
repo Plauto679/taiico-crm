@@ -19,25 +19,29 @@ export default async function RenovacionesPage({
     ]);
 
     return (
-        <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <h1 className="text-2xl font-bold text-gray-900">Renovaciones</h1>
+        <div className="flex flex-col h-full">
+            <div className="flex-none p-8 pb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <h1 className="text-2xl font-bold text-gray-900">Renovaciones</h1>
 
-                {/* Insurer Selector */}
-                <div className="inline-flex rounded-md shadow-sm" role="group">
-                    {['Metlife', 'SURA', 'AXA', 'AARCO'].map((ins) => (
-                        <a
-                            key={ins}
-                            href={`?insurer=${ins}`}
-                            className={`px-4 py-2 text-sm font-medium border border-gray-200 first:rounded-l-lg last:rounded-r-lg ${insurer === ins ? 'bg-blue-600 text-white' : 'bg-white text-gray-900 hover:bg-gray-100'}`}
-                        >
-                            {ins}
-                        </a>
-                    ))}
+                    {/* Insurer Selector */}
+                    <div className="inline-flex rounded-md shadow-sm" role="group">
+                        {['Metlife', 'SURA', 'AXA', 'AARCO'].map((ins) => (
+                            <a
+                                key={ins}
+                                href={`?insurer=${ins}`}
+                                className={`px-4 py-2 text-sm font-medium border border-gray-200 first:rounded-l-lg last:rounded-r-lg ${insurer === ins ? 'bg-blue-600 text-white' : 'bg-white text-gray-900 hover:bg-gray-100'}`}
+                            >
+                                {ins}
+                            </a>
+                        ))}
+                    </div>
                 </div>
             </div>
 
-            <RenovacionesView vidaRenewals={vidaRenewals} gmmRenewals={gmmRenewals} />
+            <div className="flex-1 min-h-0 px-8 pb-8">
+                <RenovacionesView vidaRenewals={vidaRenewals} gmmRenewals={gmmRenewals} />
+            </div>
         </div>
     );
 }

@@ -18,12 +18,12 @@ export function DataTable<T>({ data, columns, className }: DataTableProps<T>) {
     return (
         <div className={twMerge("overflow-x-auto rounded-lg border border-gray-200 shadow-sm", className)}>
             <table className="min-w-full divide-y divide-gray-200 bg-white text-sm">
-                <thead className="bg-gray-50">
+                <thead className="bg-gray-50 sticky top-0 z-10">
                     <tr>
                         {columns.map((col, idx) => (
                             <th
                                 key={idx}
-                                className={twMerge("px-4 py-3 text-left font-medium text-gray-900", col.className)}
+                                className={twMerge("px-4 py-3 text-left font-medium text-gray-900 bg-gray-50", col.className)}
                             >
                                 {col.header}
                             </th>
