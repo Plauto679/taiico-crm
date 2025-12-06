@@ -1,96 +1,223 @@
 from fastapi import APIRouter, HTTPException, Query
 import pandas as pd
+from typing import List, Optional
+from datetime import datetime, timedelta
 from config import METLIFE_PATHS, SHEET_NAMES
 import numpy as np
-from datetime import datetime, timedelta
 
-router = APIRouter(prefix="/renovaciones", tags=["renovaciones"])
+router = APIRouter(
+    prefix="/renovaciones",
+    tags=["renovaciones"]
+)
 
-def clean_data(df):
+def clean_data(df: pd.DataFrame) -> List[dict]:
+    """
+    Convert DataFrame to a list of dicts, handling NaN/NaT values.
+    """
     df = df.replace({np.nan: None})
-    for col in df.columns:
-        if pd.api.types.is_datetime64_any_dtype(df[col]):
-            df[col] = df[col].dt.strftime('%Y-%m-%d')
     return df.to_dict(orient="records")
 
-def filter_upcoming(df, days: int):
-    # Ensure 'Fecha de Renovación' is datetime
-    # Note: The column name might vary. We need to check the exact column name.
-    # Based on previous context, it's likely "Fecha de Renovación" or similar.
-    # Let's assume standard column names for now, but we might need to inspect the file.
-    
-    # Common column names for renewal date
-    date_cols = [col for col in df.columns if "renovaci" in col.lower() and "fecha" in col.lower()]
-    if not date_cols:
-        # Fallback or error? Let's try to find any date column if specific one not found
-        return df # Return all if we can't find the date column
-    
-    date_col = date_cols[0]
-    
-    # Convert to datetime if not already
-    if not pd.api.types.is_datetime64_any_dtype(df[date_col]):
-        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-        
-    now = datetime.now()
-    future = now + timedelta(days=days)
-    
-    # Filter
-    mask = (df[date_col] >= now) & (df[date_col] <= future)
-    return df[mask]
-
-@router.get("/vida")
-async def get_renovaciones_vida(days: int = Query(30, description="Days to look ahead")):
+def parse_gmm_date(val):
+    """
+    Parse YYYYMMDD integer/string to ISO date string YYYY-MM-DD.
+    """
+    if pd.isna(val):
+        return None
+    s = str(int(val)).zfill(8)
     try:
-        df = pd.read_excel(METLIFE_PATHS["RENOVACIONES_VIDA"], sheet_name=SHEET_NAMES["RENOVACIONES_VIDA"])
-        df = filter_upcoming(df, days)
-        return clean_data(df)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        dt = datetime.strptime(s, "%Y%m%d")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        return None
+
+def parse_vida_date(val):
+    """
+    Parse various date formats to ISO date string YYYY-MM-DD.
+    """
+    if pd.isna(val):
+        return None
+    try:
+        dt = pd.to_datetime(val, errors='coerce')
+        if pd.isna(dt):
+            return None
+        return dt.strftime("%Y-%m-%d")
+    except:
+        return None
+
+def clean_money(val):
+    """
+    Convert currency string or number to float.
+    """
+    if pd.isna(val):
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    # Remove $ and ,
+    s = str(val).replace("$", "").replace(",", "").strip()
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+def clean_gmm(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean and normalize Metlife GMM data.
+    """
+    # 1. Date Conversion
+    date_cols = ["FINIVIG", "FFINVIG", "PAGADOHASTA"]
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(parse_gmm_date)
+
+    # 2. Money Conversion
+    money_cols = ["PRIMA", "PRIMA.1", "RECARGO", "GTOSEXP", "IVA", "DEDUCIBLE"]
+    for col in money_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(clean_money)
+
+    # 3. Percentage Conversion
+    if "COASEGURO" in df.columns:
+        df["COASEGURO"] = pd.to_numeric(df["COASEGURO"], errors="coerce") / 100.0
+
+    # 4. Map to Unified Schema
+    # Create new columns for the unified schema
+    df["poliza"] = df["NPOLIZA"].astype(str)
+    df["polizaOrigen"] = df["POLORIG"].astype(str)
+    df["contratante"] = df["CONTRATANTE"]
+    df["rfcContratante"] = df["RFC"]
+    df["fechaInicioVigencia"] = df["FINIVIG"]
+    df["fechaFinVigencia"] = df["FFINVIG"]
+    df["fechaRenovacion"] = df["FFINVIG"] # Canonical renewal date
+    df["nombreAsegurado"] = df["NOMBREL"]
+    df["conductoCobro"] = df["CONDCOB"]
+    df["prima"] = df["PRIMA.1"] # Assuming PRIMA.1 is the main premium
+    df["iva"] = df["IVA"]
+    df["pagadoHasta"] = df["PAGADOHASTA"]
+    df["deducible"] = df["DEDUCIBLE"]
+    df["coaseguro"] = df["COASEGURO"]
+    df["ramo"] = "GMM"
+    df["estatus"] = df["ESTATUS"].astype(str)
+    df["agente"] = df["NOMBRE"] # Agent Name
+
+    # Select only unified columns
+    unified_cols = [
+        "poliza", "polizaOrigen", "contratante", "rfcContratante",
+        "fechaInicioVigencia", "fechaFinVigencia", "fechaRenovacion",
+        "nombreAsegurado", "conductoCobro", "prima", "iva",
+        "pagadoHasta", "deducible", "coaseguro", "ramo", "estatus", "agente"
+    ]
+    # Ensure all columns exist
+    for col in unified_cols:
+        if col not in df.columns:
+            df[col] = None
+            
+    return df[unified_cols]
+
+def clean_vida(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean and normalize Metlife Vida data.
+    """
+    # 1. Date Conversion
+    date_cols = ["INI_VIG", "FIN_VIG", "PAGADO_HASTA"]
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(parse_vida_date)
+
+    # 2. Money Conversion
+    money_cols = ["PRIMA_ANUAL", "PRIMA_MODAL"]
+    for col in money_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(clean_money)
+
+    # 3. Map to Unified Schema
+    df["poliza"] = df["POLIZA_ACTUAL"].astype(str)
+    df["polizaOrigen"] = df["POLIZA_ORIGEN"].astype(str)
+    df["contratante"] = df["CONTRATANTE"]
+    df["rfcContratante"] = df["RFC_CONTRATANTE"]
+    df["fechaInicioVigencia"] = df["INI_VIG"]
+    df["fechaFinVigencia"] = df["FIN_VIG"]
+    df["fechaRenovacion"] = df["FIN_VIG"] # Canonical renewal date
+    df["producto"] = df["PDESC"]
+    df["estatus"] = df["ESTATUS_POL"]
+    df["formaPago"] = df["FORMA_PAGO"]
+    df["conductoCobro"] = df["CONDUCTO_COBRO"]
+    df["agente"] = df["NOM_AGENTE"]
+    df["prima"] = df["PRIMA_ANUAL"]
+    df["pagadoHasta"] = df["PAGADO_HASTA"]
+    df["ramo"] = "VIDA"
+
+    unified_cols = [
+        "poliza", "polizaOrigen", "contratante", "rfcContratante",
+        "fechaInicioVigencia", "fechaFinVigencia", "fechaRenovacion",
+        "producto", "estatus", "formaPago", "conductoCobro",
+        "agente", "prima", "pagadoHasta", "ramo"
+    ]
+    
+    # Ensure all columns exist
+    for col in unified_cols:
+        if col not in df.columns:
+            df[col] = None
+
+    return df[unified_cols]
+
+@router.get("/upcoming")
+async def get_upcoming_renewals(
+    days: int = Query(30, description="Days to look ahead"),
+    insurer: str = Query("Metlife", description="Insurer name"),
+    type: str = Query("ALL", description="Policy type: ALL, VIDA, GMM")
+):
+    """
+    Get upcoming renewals for a specific insurer and type.
+    """
+    results = []
+    
+    if insurer.lower() != "metlife":
+        # Placeholder for other insurers
+        return []
+
+    # Calculate date range
+    today = datetime.now()
+    future = today + timedelta(days=days)
+    today_str = today.strftime("%Y-%m-%d")
+    future_str = future.strftime("%Y-%m-%d")
+
+    # Load and process VIDA
+    if type.upper() in ["ALL", "VIDA"]:
+        try:
+            df_vida = pd.read_excel(METLIFE_PATHS["RENOVACIONES_VIDA"], sheet_name=SHEET_NAMES["RENOVACIONES_VIDA"])
+            df_vida = clean_vida(df_vida)
+            
+            # Filter by date
+            # Convert back to datetime for comparison, or compare strings (ISO format allows string comparison)
+            # String comparison works for ISO dates: "2023-01-01" < "2023-02-01"
+            mask = (df_vida["fechaRenovacion"] >= today_str) & (df_vida["fechaRenovacion"] <= future_str)
+            df_vida = df_vida[mask]
+            
+            results.extend(clean_data(df_vida))
+        except Exception as e:
+            print(f"Error loading Vida: {e}")
+
+    # Load and process GMM
+    if type.upper() in ["ALL", "GMM"]:
+        try:
+            df_gmm = pd.read_excel(METLIFE_PATHS["RENOVACIONES_GMM"], sheet_name=SHEET_NAMES["RENOVACIONES_GMM"])
+            df_gmm = clean_gmm(df_gmm)
+            
+            # Filter by date
+            mask = (df_gmm["fechaRenovacion"] >= today_str) & (df_gmm["fechaRenovacion"] <= future_str)
+            df_gmm = df_gmm[mask]
+            
+            results.extend(clean_data(df_gmm))
+        except Exception as e:
+             print(f"Error loading GMM: {e}")
+
+    return results
+
+# Keep legacy endpoints for backward compatibility if needed, but redirecting logic
+@router.get("/vida")
+async def get_renovaciones_vida(days: int = 30):
+    return await get_upcoming_renewals(days=days, insurer="Metlife", type="VIDA")
 
 @router.get("/gmm")
-async def get_renovaciones_gmm(days: int = Query(30, description="Days to look ahead")):
-    try:
-        df = pd.read_excel(METLIFE_PATHS["RENOVACIONES_GMM"], sheet_name=SHEET_NAMES["RENOVACIONES_GMM"])
-        
-        # --- Data Wrangling ---
-        
-        # 1. Date formatting (YYYY-MM-DD)
-        date_cols = ["FINIVIG", "FFINVIG", "PAGADOHASTA"]
-        for col in date_cols:
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%Y-%m-%d")
-
-        # 2. Money formatting (Float)
-        money_cols = ["PRIMA", "PRIMA.1", "RECARGO", "GTOSEXP", "IVA", "DEDUCIBLE"]
-        for col in money_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        # 3. Percentage handling (Divide by 100)
-        if "COASEGURO" in df.columns:
-             df["COASEGURO"] = pd.to_numeric(df["COASEGURO"], errors="coerce") / 100
-
-        # Filter upcoming (using FFINVIG which is the renewal date)
-        # We need to convert back to datetime for filtering, or do filtering before formatting.
-        # Let's filter first, then format? Or just re-parse for filtering.
-        # The `filter_upcoming` function expects a dataframe.
-        # Let's modify `filter_upcoming` or do it inline.
-        
-        # Actually, `filter_upcoming` is generic. Let's see how it works.
-        # It looks for "renovaci" and "fecha". But GMM uses "FFINVIG".
-        # We should explicitly handle filtering for GMM here or update `filter_upcoming`.
-        
-        # Let's do explicit filtering here for clarity and robustness
-        now = datetime.now()
-        future = now + timedelta(days=days)
-        
-        # Use FFINVIG for filtering
-        if "FFINVIG" in df.columns:
-             # Parse temporarily for filtering
-             temp_dates = pd.to_datetime(df["FFINVIG"], errors='coerce')
-             mask = (temp_dates >= now) & (temp_dates <= future)
-             df = df[mask]
-        
-        return clean_data(df)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def get_renovaciones_gmm(days: int = 30):
+    return await get_upcoming_renewals(days=days, insurer="Metlife", type="GMM")
