@@ -1,12 +1,24 @@
 import { fetchFromApi } from '@/lib/api';
-import { RenewalItem } from '@/lib/types/renovaciones';
+import { RenewalItem, RenovacionGMM, RenovacionVida } from '@/lib/types/renovaciones';
 
 export async function getUpcomingRenewals(
     days: number = 30,
     type: 'ALL' | 'VIDA' | 'GMM' = 'ALL',
-    insurer: string = 'Metlife'
+    insurer: string = 'Metlife',
+    startDate?: string,
+    endDate?: string
 ): Promise<RenewalItem[]> {
-    // The backend now handles the unified schema and filtering
-    // We just need to pass the parameters
-    return fetchFromApi<RenewalItem[]>('/renovaciones/upcoming', { days, type, insurer });
+    const params: Record<string, string> = {
+        days: days.toString(),
+        type,
+        insurer
+    };
+
+    if (startDate) params.start_date = startDate;
+    if (endDate) params.end_date = endDate;
+
+    const queryString = new URLSearchParams(params).toString();
+
+    // The backend returns a list of objects matching the requested schema
+    return fetchFromApi<RenewalItem[]>(`/renovaciones/upcoming?${queryString}`);
 }

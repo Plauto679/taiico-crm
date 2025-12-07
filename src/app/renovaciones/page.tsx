@@ -1,26 +1,32 @@
 import { getUpcomingRenewals } from '@/modules/renovaciones/service';
 import { RenovacionesView } from '@/components/renovaciones/RenovacionesView';
+import { DateRangeFilter } from '@/components/ui/DateRangeFilter';
+import { RenovacionGMM, RenovacionVida } from '@/lib/types/renovaciones';
 
 export const dynamic = 'force-dynamic';
 
 export default async function RenovacionesPage({
     searchParams,
 }: {
-    searchParams: { insurer?: string };
+    searchParams: { insurer?: string; startDate?: string; endDate?: string };
 }) {
     // Default to 30 days as requested (removing the buttons)
     const days = 30;
     const insurer = searchParams.insurer || 'Metlife';
+    const startDate = searchParams.startDate;
+    const endDate = searchParams.endDate;
 
     // Fetch both datasets
+    // We cast the result because the service returns RenewalItem[] (union), 
+    // but we know which call returns what based on the 'type' param.
     const [vidaRenewals, gmmRenewals] = await Promise.all([
-        getUpcomingRenewals(days, 'VIDA', insurer),
-        getUpcomingRenewals(days, 'GMM', insurer)
+        getUpcomingRenewals(days, 'VIDA', insurer, startDate, endDate) as Promise<RenovacionVida[]>,
+        getUpcomingRenewals(days, 'GMM', insurer, startDate, endDate) as Promise<RenovacionGMM[]>
     ]);
 
     return (
         <div className="flex flex-col h-full">
-            <div className="flex-none p-8 pb-4">
+            <div className="flex-none p-8 pb-4 space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <h1 className="text-2xl font-bold text-gray-900">Renovaciones</h1>
 
@@ -29,7 +35,7 @@ export default async function RenovacionesPage({
                         {['Metlife', 'SURA', 'AXA', 'AARCO'].map((ins) => (
                             <a
                                 key={ins}
-                                href={`?insurer=${ins}`}
+                                href={`?insurer=${ins}${startDate ? `&startDate=${startDate}` : ''}${endDate ? `&endDate=${endDate}` : ''}`}
                                 className={`px-4 py-2 text-sm font-medium border border-gray-200 first:rounded-l-lg last:rounded-r-lg ${insurer === ins ? 'bg-blue-600 text-white' : 'bg-white text-gray-900 hover:bg-gray-100'}`}
                             >
                                 {ins}
@@ -37,6 +43,9 @@ export default async function RenovacionesPage({
                         ))}
                     </div>
                 </div>
+
+                {/* Date Filter */}
+                <DateRangeFilter />
             </div>
 
             <div className="flex-1 min-h-0 px-8 pb-8">

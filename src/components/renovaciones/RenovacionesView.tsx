@@ -2,12 +2,12 @@
 
 import { useState } from 'react';
 import { DataTable } from '@/components/ui/DataTable';
-import { RenewalItem } from '@/lib/types/renovaciones';
+import { RenovacionGMM, RenovacionVida } from '@/lib/types/renovaciones';
 import { exportToExcel } from '@/lib/utils/export';
 
 interface RenovacionesViewProps {
-    vidaRenewals: RenewalItem[];
-    gmmRenewals: RenewalItem[];
+    vidaRenewals: RenovacionVida[];
+    gmmRenewals: RenovacionGMM[];
 }
 
 export function RenovacionesView({ vidaRenewals, gmmRenewals }: RenovacionesViewProps) {
@@ -19,33 +19,63 @@ export function RenovacionesView({ vidaRenewals, gmmRenewals }: RenovacionesView
         exportToExcel(data, fileName);
     };
 
-    const columns = [
-        { header: 'Póliza', accessorKey: 'poliza' as keyof RenewalItem },
-        { header: 'Contratante', accessorKey: 'contratante' as keyof RenewalItem },
+    const vidaColumns = [
+        { header: 'Póliza Actual', accessorKey: 'POLIZA_ACTUAL' as keyof RenovacionVida },
+        { header: 'Contratante', accessorKey: 'CONTRATANTE' as keyof RenovacionVida },
+        { header: 'Inicio Vigencia', accessorKey: 'INI_VIG' as keyof RenovacionVida },
+        { header: 'Fin Vigencia', accessorKey: 'FIN_VIG' as keyof RenovacionVida },
+        { header: 'Forma Pago', accessorKey: 'FORMA_PAGO' as keyof RenovacionVida },
+        { header: 'Conducto Cobro', accessorKey: 'CONDUCTO_COBRO' as keyof RenovacionVida },
         {
-            header: 'Fecha Renovación',
-            accessorKey: 'fechaRenovacion' as keyof RenewalItem,
-        },
-        { header: 'Ramo', accessorKey: 'ramo' as keyof RenewalItem },
-        { header: 'Agente', accessorKey: 'agente' as keyof RenewalItem },
-        { header: 'Estatus', accessorKey: 'estatus' as keyof RenewalItem },
-        {
-            header: 'Prima',
-            accessorKey: (row: RenewalItem) => {
-                if (row.prima === undefined || row.prima === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row.prima);
+            header: 'Prima Anual',
+            accessorKey: (row: RenovacionVida) => {
+                if (row.PRIMA_ANUAL === undefined || row.PRIMA_ANUAL === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row.PRIMA_ANUAL);
             }
         },
+        {
+            header: 'Prima Modal',
+            accessorKey: (row: RenovacionVida) => {
+                if (row.PRIMA_MODAL === undefined || row.PRIMA_MODAL === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row.PRIMA_MODAL);
+            }
+        },
+        { header: 'Pagado Hasta', accessorKey: 'PAGADO_HASTA' as keyof RenovacionVida },
     ];
 
-    // Add Coaseguro column for GMM
     const gmmColumns = [
-        ...columns,
+        { header: 'N Póliza', accessorKey: 'NPOLIZA' as keyof RenovacionGMM },
+        { header: 'Póliza Origen', accessorKey: 'POLORIG' as keyof RenovacionGMM },
+        { header: 'Contratante', accessorKey: 'CONTRATANTE' as keyof RenovacionGMM },
+        { header: 'Fin Vigencia', accessorKey: 'FFINVIG' as keyof RenovacionGMM },
+        {
+            header: 'Prima',
+            accessorKey: (row: RenovacionGMM) => {
+                if (row['PRIMA.1'] === undefined || row['PRIMA.1'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['PRIMA.1']);
+            }
+        },
+        {
+            header: 'IVA',
+            accessorKey: (row: RenovacionGMM) => {
+                if (row.IVA === undefined || row.IVA === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row.IVA);
+            }
+        },
+        { header: 'Asegurado', accessorKey: 'NOMBREL' as keyof RenovacionGMM },
+        {
+            header: 'Deducible',
+            accessorKey: (row: RenovacionGMM) => {
+                if (row.DEDUCIBLE === undefined || row.DEDUCIBLE === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row.DEDUCIBLE);
+            }
+        },
+        { header: 'Pagado Hasta', accessorKey: 'PAGADOHASTA' as keyof RenovacionGMM },
         {
             header: 'Coaseguro',
-            accessorKey: (row: RenewalItem) => {
-                if (row.coaseguro === undefined || row.coaseguro === null) return '-';
-                return `${(row.coaseguro * 100).toFixed(0)}%`;
+            accessorKey: (row: RenovacionGMM) => {
+                if (row.COASEGURO === undefined || row.COASEGURO === null) return '-';
+                return `${(row.COASEGURO * 100).toFixed(0)}%`;
             }
         }
     ];
@@ -77,7 +107,7 @@ export function RenovacionesView({ vidaRenewals, gmmRenewals }: RenovacionesView
 
             <div className="flex-1 min-h-0 overflow-hidden">
                 {activeTab === 'VIDA' ? (
-                    <DataTable data={vidaRenewals} columns={columns} className="h-full overflow-auto" />
+                    <DataTable data={vidaRenewals} columns={vidaColumns} className="h-full overflow-auto" />
                 ) : (
                     <DataTable data={gmmRenewals} columns={gmmColumns} className="h-full overflow-auto" />
                 )}

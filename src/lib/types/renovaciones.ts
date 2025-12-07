@@ -1,36 +1,27 @@
-export interface RenewalItem {
-    // Shared fields
-    poliza: string;
-    polizaOrigen?: string;
-    contratante: string;
-    rfcContratante?: string;
-
-    // Dates (ISO strings YYYY-MM-DD)
-    fechaInicioVigencia?: string;
-    fechaFinVigencia?: string;
-    fechaRenovacion: string; // Canonical date
-    pagadoHasta?: string;
-
-    // Classification
-    ramo: 'VIDA' | 'GMM';
-    estatus: string;
-    agente: string;
-
-    // Money (Numbers)
-    prima?: number;
-    iva?: number;
-    deducible?: number;
-
-    // GMM Specific
-    nombreAsegurado?: string;
-    coaseguro?: number; // Decimal (0-1)
-
-    // Vida Specific
-    producto?: string;
-    formaPago?: string;
-    conductoCobro?: string;
+export interface RenovacionGMM {
+    NPOLIZA: string;
+    POLORIG: string;
+    CONTRATANTE: string;
+    FFINVIG: string; // Date YYYY-MM-DD
+    'PRIMA.1': number;
+    IVA: number;
+    NOMBREL: string; // Asegurado
+    DEDUCIBLE: number;
+    PAGADOHASTA: string; // Date YYYY-MM-DD
+    COASEGURO?: number; // Optional as it wasn't strictly in the display list but is useful
 }
 
-// Raw interfaces are no longer strictly needed for the service mapping 
-// since the backend does the heavy lifting, but we can keep them if we want strict typing for the API response
-// For now, the API returns objects that match RenewalItem directly (or close to it).
+export interface RenovacionVida {
+    POLIZA_ACTUAL: string;
+    CONTRATANTE: string;
+    INI_VIG: string; // Date YYYY-MM-DD
+    FIN_VIG: string; // Date YYYY-MM-DD
+    FORMA_PAGO: string;
+    CONDUCTO_COBRO: string;
+    PRIMA_ANUAL: number;
+    PRIMA_MODAL: number;
+    PAGADO_HASTA: string; // Date YYYY-MM-DD
+}
+
+// Union type for cases where we might handle them generically, though usually we won't
+export type RenewalItem = RenovacionGMM | RenovacionVida;
