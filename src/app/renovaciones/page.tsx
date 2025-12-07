@@ -2,19 +2,23 @@ import { getUpcomingRenewals } from '@/modules/renovaciones/service';
 import { RenovacionesView } from '@/components/renovaciones/RenovacionesView';
 import { DateRangeFilter } from '@/components/ui/DateRangeFilter';
 import { RenovacionGMM, RenovacionVida, RenovacionSura } from '@/lib/types/renovaciones';
+import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
 export default async function RenovacionesPage({
     searchParams,
 }: {
-    searchParams: { insurer?: string; startDate?: string; endDate?: string };
+    searchParams: Promise<{ insurer?: string; startDate?: string; endDate?: string }>;
 }) {
+    // Await searchParams for Next.js 15+
+    const params = await searchParams;
+
     // Default to 30 days as requested (removing the buttons)
     const days = 30;
-    const insurer = searchParams.insurer || 'Metlife';
-    const startDate = searchParams.startDate;
-    const endDate = searchParams.endDate;
+    const insurer = params.insurer || 'Metlife';
+    const startDate = params.startDate;
+    const endDate = params.endDate;
 
     let vidaRenewals: RenovacionVida[] = [];
     let gmmRenewals: RenovacionGMM[] = [];
@@ -41,13 +45,13 @@ export default async function RenovacionesPage({
                     {/* Insurer Selector */}
                     <div className="inline-flex rounded-md shadow-sm" role="group">
                         {['Metlife', 'SURA', 'AXA', 'AARCO'].map((ins) => (
-                            <a
+                            <Link
                                 key={ins}
                                 href={`?insurer=${ins}${startDate ? `&startDate=${startDate}` : ''}${endDate ? `&endDate=${endDate}` : ''}`}
                                 className={`px-4 py-2 text-sm font-medium border border-gray-200 first:rounded-l-lg last:rounded-r-lg ${insurer === ins ? 'bg-blue-600 text-white' : 'bg-white text-gray-900 hover:bg-gray-100'}`}
                             >
                                 {ins}
-                            </a>
+                            </Link>
                         ))}
                     </div>
                 </div>
