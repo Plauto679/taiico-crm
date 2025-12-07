@@ -2,20 +2,32 @@
 
 import { useState } from 'react';
 import { DataTable } from '@/components/ui/DataTable';
-import { RenovacionGMM, RenovacionVida } from '@/lib/types/renovaciones';
+import { RenovacionGMM, RenovacionVida, RenovacionSura } from '@/lib/types/renovaciones';
 import { exportToExcel } from '@/lib/utils/export';
 
 interface RenovacionesViewProps {
-    vidaRenewals: RenovacionVida[];
-    gmmRenewals: RenovacionGMM[];
+    vidaRenewals?: RenovacionVida[];
+    gmmRenewals?: RenovacionGMM[];
+    suraRenewals?: RenovacionSura[];
+    insurer: string;
 }
 
-export function RenovacionesView({ vidaRenewals, gmmRenewals }: RenovacionesViewProps) {
+export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRenewals = [], insurer }: RenovacionesViewProps) {
     const [activeTab, setActiveTab] = useState<'VIDA' | 'GMM'>('VIDA');
 
     const handleExport = () => {
-        const data = activeTab === 'VIDA' ? vidaRenewals : gmmRenewals;
-        const fileName = `Renovaciones_${activeTab}_${new Date().toISOString().split('T')[0]}.xlsx`;
+        let data: any[] = [];
+        let prefix = '';
+
+        if (insurer === 'Metlife') {
+            data = activeTab === 'VIDA' ? vidaRenewals : gmmRenewals;
+            prefix = `Renovaciones_Metlife_${activeTab}`;
+        } else if (insurer === 'SURA') {
+            data = suraRenewals;
+            prefix = `Renovaciones_SURA`;
+        }
+
+        const fileName = `${prefix}_${new Date().toISOString().split('T')[0]}.xlsx`;
         exportToExcel(data, fileName);
     };
 
@@ -80,22 +92,49 @@ export function RenovacionesView({ vidaRenewals, gmmRenewals }: RenovacionesView
         }
     ];
 
+    const suraColumns = [
+        { header: 'Póliza', accessorKey: 'POLIZA' as keyof RenovacionSura },
+        { header: 'Nombre', accessorKey: 'NOMBRE' as keyof RenovacionSura },
+        { header: 'Inicio Vigencia', accessorKey: 'INICIO VIGENCIA' as keyof RenovacionSura },
+        { header: 'Fin Vigencia', accessorKey: 'FIN VIGENCIA' as keyof RenovacionSura },
+        { header: 'Ramo', accessorKey: 'RAMO' as keyof RenovacionSura },
+        {
+            header: 'Prima',
+            accessorKey: (row: RenovacionSura) => {
+                if (row.PRIMA === undefined || row.PRIMA === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row.PRIMA);
+            }
+        },
+        { header: 'Periodicidad', accessorKey: 'PERIODICIDAD_PAGO' as keyof RenovacionSura },
+        { header: 'Prospectador', accessorKey: 'PROSPECTADOR' as keyof RenovacionSura },
+        { header: 'Estatus', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionSura },
+    ];
+
     return (
         <div className="flex flex-col h-full space-y-4">
             <div className="flex items-center justify-between border-b pb-2 flex-none">
                 <div className="flex space-x-4">
-                    <button
-                        className={`px-4 py-2 font-medium ${activeTab === 'VIDA' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
-                        onClick={() => setActiveTab('VIDA')}
-                    >
-                        Vida
-                    </button>
-                    <button
-                        className={`px-4 py-2 font-medium ${activeTab === 'GMM' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
-                        onClick={() => setActiveTab('GMM')}
-                    >
-                        GMM
-                    </button>
+                    {insurer === 'Metlife' && (
+                        <>
+                            <button
+                                className={`px-4 py-2 font-medium ${activeTab === 'VIDA' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+                                onClick={() => setActiveTab('VIDA')}
+                            >
+                                Vida
+                            </button>
+                            <button
+                                className={`px-4 py-2 font-medium ${activeTab === 'GMM' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+                                onClick={() => setActiveTab('GMM')}
+                            >
+                                GMM
+                            </button>
+                        </>
+                    )}
+                    {insurer === 'SURA' && (
+                        <span className="px-4 py-2 font-medium border-b-2 border-blue-600 text-blue-600">
+                            SURA Renovaciones
+                        </span>
+                    )}
                 </div>
                 <button
                     onClick={handleExport}
@@ -106,10 +145,14 @@ export function RenovacionesView({ vidaRenewals, gmmRenewals }: RenovacionesView
             </div>
 
             <div className="flex-1 min-h-0 overflow-hidden">
-                {activeTab === 'VIDA' ? (
-                    <DataTable data={vidaRenewals} columns={vidaColumns} className="h-full overflow-auto" />
+                {insurer === 'Metlife' ? (
+                    activeTab === 'VIDA' ? (
+                        <DataTable data={vidaRenewals} columns={vidaColumns} className="h-full overflow-auto" />
+                    ) : (
+                        <DataTable data={gmmRenewals} columns={gmmColumns} className="h-full overflow-auto" />
+                    )
                 ) : (
-                    <DataTable data={gmmRenewals} columns={gmmColumns} className="h-full overflow-auto" />
+                    <DataTable data={suraRenewals} columns={suraColumns} className="h-full overflow-auto" />
                 )}
             </div>
         </div>

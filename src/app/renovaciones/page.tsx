@@ -1,7 +1,7 @@
 import { getUpcomingRenewals } from '@/modules/renovaciones/service';
 import { RenovacionesView } from '@/components/renovaciones/RenovacionesView';
 import { DateRangeFilter } from '@/components/ui/DateRangeFilter';
-import { RenovacionGMM, RenovacionVida } from '@/lib/types/renovaciones';
+import { RenovacionGMM, RenovacionVida, RenovacionSura } from '@/lib/types/renovaciones';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,13 +16,21 @@ export default async function RenovacionesPage({
     const startDate = searchParams.startDate;
     const endDate = searchParams.endDate;
 
-    // Fetch both datasets
-    // We cast the result because the service returns RenewalItem[] (union), 
-    // but we know which call returns what based on the 'type' param.
-    const [vidaRenewals, gmmRenewals] = await Promise.all([
-        getUpcomingRenewals(days, 'VIDA', insurer, startDate, endDate) as Promise<RenovacionVida[]>,
-        getUpcomingRenewals(days, 'GMM', insurer, startDate, endDate) as Promise<RenovacionGMM[]>
-    ]);
+    let vidaRenewals: RenovacionVida[] = [];
+    let gmmRenewals: RenovacionGMM[] = [];
+    let suraRenewals: RenovacionSura[] = [];
+
+    if (insurer === 'Metlife') {
+        const [vida, gmm] = await Promise.all([
+            getUpcomingRenewals(days, 'VIDA', insurer, startDate, endDate) as Promise<RenovacionVida[]>,
+            getUpcomingRenewals(days, 'GMM', insurer, startDate, endDate) as Promise<RenovacionGMM[]>
+        ]);
+        vidaRenewals = vida;
+        gmmRenewals = gmm;
+    } else if (insurer === 'SURA') {
+        // For SURA we fetch 'ALL' or just default since we handle it as one block in backend
+        suraRenewals = await getUpcomingRenewals(days, 'ALL', insurer, startDate, endDate) as Promise<RenovacionSura[]>;
+    }
 
     return (
         <div className="flex flex-col h-full">
@@ -49,7 +57,12 @@ export default async function RenovacionesPage({
             </div>
 
             <div className="flex-1 min-h-0 px-8 pb-8">
-                <RenovacionesView vidaRenewals={vidaRenewals} gmmRenewals={gmmRenewals} />
+                <RenovacionesView
+                    vidaRenewals={vidaRenewals}
+                    gmmRenewals={gmmRenewals}
+                    suraRenewals={suraRenewals}
+                    insurer={insurer}
+                />
             </div>
         </div>
     );

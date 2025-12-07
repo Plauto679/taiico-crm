@@ -23,5 +23,17 @@ export interface RenovacionVida {
     PAGADO_HASTA: string; // Date YYYY-MM-DD
 }
 
+export interface RenovacionSura {
+    POLIZA: string;
+    NOMBRE: string;
+    'INICIO VIGENCIA': string; // Date YYYY-MM-DD
+    'FIN VIGENCIA': string; // Date YYYY-MM-DD
+    RAMO: string;
+    PRIMA: number;
+    PERIODICIDAD_PAGO: string;
+    PROSPECTADOR: string;
+    ESTATUS_DE_RENOVACION: string;
+}
+
 // Union type for cases where we might handle them generically, though usually we won't
-export type RenewalItem = RenovacionGMM | RenovacionVida;
+export type RenewalItem = RenovacionGMM | RenovacionVida | RenovacionSura;

@@ -19,6 +19,10 @@ METLIFE_PATHS = {
     "RENOVACIONES_GMM": BASE_DIR / "Fechas de emision de Polizas y renovaciones" / "Metlife GMM.xlsx",
 }
 
+SURA_PATHS = {
+    "RENOVACIONES": BASE_DIR / "Fechas de emision de Polizas y renovaciones" / "SURA.xlsx",
+}
+
 SHEET_NAMES = {
     "COBRANZA_VIDA": "Vida",
     "COBRANZA_GMM": "GMM",

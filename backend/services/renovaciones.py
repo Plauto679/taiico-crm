@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 import pandas as pd
 from typing import List, Optional
 from datetime import datetime, timedelta
-from config import METLIFE_PATHS, SHEET_NAMES
+from config import METLIFE_PATHS, SURA_PATHS, SHEET_NAMES
 import numpy as np
 
 router = APIRouter(
@@ -85,11 +85,7 @@ def clean_gmm(df: pd.DataFrame) -> pd.DataFrame:
     requested_cols = [
         "NPOLIZA", "POLORIG", "CONTRATANTE", "FFINVIG", 
         "PRIMA.1", "IVA", "NOMBREL", "DEDUCIBLE", "PAGADOHASTA",
-        "COASEGURO" # Keeping COASEGURO as it was useful, but user didn't explicitly list it in the "display" list. 
-                    # However, previous code used it. I will include it to be safe, or should I strictly follow?
-                    # User said: "So I can specify you what are the columns that should be displayed".
-                    # I will include it in the dataframe but the frontend can choose to ignore it if needed.
-                    # Actually, let's stick to the requested list + COASEGURO since it was a specific feature before.
+        "COASEGURO"
     ]
     
     # Ensure all columns exist
@@ -131,6 +127,34 @@ def clean_vida(df: pd.DataFrame) -> pd.DataFrame:
 
     return df[requested_cols]
 
+def clean_sura(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean and normalize SURA data.
+    """
+    # Columns: 'POLIZA', 'NOMBRE', 'INICIO VIGENCIA', 'FIN VIGENCIA', 'RAMO', 'PRIMA', 'PERIODICIDAD_PAGO', 'PROSPECTADOR', 'ESTATUS_DE_RENOVACION'
+    
+    # 1. Date Conversion
+    date_cols = ["INICIO VIGENCIA", "FIN VIGENCIA"]
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(parse_vida_date) # Use generic parser
+
+    # 2. Money Conversion
+    if "PRIMA" in df.columns:
+        df["PRIMA"] = df["PRIMA"].apply(clean_money)
+
+    requested_cols = [
+        "POLIZA", "NOMBRE", "INICIO VIGENCIA", "FIN VIGENCIA", 
+        "RAMO", "PRIMA", "PERIODICIDAD_PAGO", "PROSPECTADOR", 
+        "ESTATUS_DE_RENOVACION"
+    ]
+    
+    for col in requested_cols:
+        if col not in df.columns:
+            df[col] = None
+            
+    return df[requested_cols]
+
 @router.get("/upcoming")
 async def get_upcoming_renewals(
     start_date: Optional[str] = Query(None, description="Start date YYYY-MM-DD"),
@@ -145,10 +169,6 @@ async def get_upcoming_renewals(
     """
     results = []
     
-    if insurer.lower() != "metlife":
-        # Placeholder for other insurers
-        return []
-
     # Determine date range
     today = datetime.now()
     
@@ -160,40 +180,50 @@ async def get_upcoming_renewals(
         start_str = today.strftime("%Y-%m-%d")
         end_str = (today + timedelta(days=days)).strftime("%Y-%m-%d")
 
-    # Load and process VIDA
-    if type.upper() in ["ALL", "VIDA"]:
-        try:
-            df_vida = pd.read_excel(METLIFE_PATHS["RENOVACIONES_VIDA"], sheet_name=SHEET_NAMES["RENOVACIONES_VIDA"])
-            df_vida = clean_vida(df_vida)
-            
-            # Filter by date on FIN_VIG
-            if "FIN_VIG" in df_vida.columns:
-                mask = (df_vida["FIN_VIG"] >= start_str) & (df_vida["FIN_VIG"] <= end_str)
-                df_vida = df_vida[mask]
-            
-            # Tag with type for frontend if needed, though we have separate endpoints/calls usually
-            # But here we return a mixed list if type=ALL. 
-            # Since the schema is different, type=ALL might be tricky for the frontend to handle if it expects a single schema.
-            # But the frontend now makes separate calls for VIDA and GMM, so it's fine.
-            
-            results.extend(clean_data(df_vida))
-        except Exception as e:
-            print(f"Error loading Vida: {e}")
+    if insurer.lower() == "metlife":
+        # Load and process VIDA
+        if type.upper() in ["ALL", "VIDA"]:
+            try:
+                df_vida = pd.read_excel(METLIFE_PATHS["RENOVACIONES_VIDA"], sheet_name=SHEET_NAMES["RENOVACIONES_VIDA"])
+                df_vida = clean_vida(df_vida)
+                
+                # Filter by date on FIN_VIG
+                if "FIN_VIG" in df_vida.columns:
+                    mask = (df_vida["FIN_VIG"] >= start_str) & (df_vida["FIN_VIG"] <= end_str)
+                    df_vida = df_vida[mask]
+                
+                results.extend(clean_data(df_vida))
+            except Exception as e:
+                print(f"Error loading Vida: {e}")
 
-    # Load and process GMM
-    if type.upper() in ["ALL", "GMM"]:
+        # Load and process GMM
+        if type.upper() in ["ALL", "GMM"]:
+            try:
+                df_gmm = pd.read_excel(METLIFE_PATHS["RENOVACIONES_GMM"], sheet_name=SHEET_NAMES["RENOVACIONES_GMM"])
+                df_gmm = clean_gmm(df_gmm)
+                
+                # Filter by date on FFINVIG
+                if "FFINVIG" in df_gmm.columns:
+                    mask = (df_gmm["FFINVIG"] >= start_str) & (df_gmm["FFINVIG"] <= end_str)
+                    df_gmm = df_gmm[mask]
+                
+                results.extend(clean_data(df_gmm))
+            except Exception as e:
+                 print(f"Error loading GMM: {e}")
+
+    elif insurer.lower() == "sura":
         try:
-            df_gmm = pd.read_excel(METLIFE_PATHS["RENOVACIONES_GMM"], sheet_name=SHEET_NAMES["RENOVACIONES_GMM"])
-            df_gmm = clean_gmm(df_gmm)
+            df_sura = pd.read_excel(SURA_PATHS["RENOVACIONES"])
+            df_sura = clean_sura(df_sura)
             
-            # Filter by date on FFINVIG
-            if "FFINVIG" in df_gmm.columns:
-                mask = (df_gmm["FFINVIG"] >= start_str) & (df_gmm["FFINVIG"] <= end_str)
-                df_gmm = df_gmm[mask]
-            
-            results.extend(clean_data(df_gmm))
+            # Filter by date on FIN VIGENCIA
+            if "FIN VIGENCIA" in df_sura.columns:
+                mask = (df_sura["FIN VIGENCIA"] >= start_str) & (df_sura["FIN VIGENCIA"] <= end_str)
+                df_sura = df_sura[mask]
+                
+            results.extend(clean_data(df_sura))
         except Exception as e:
-             print(f"Error loading GMM: {e}")
+            print(f"Error loading SURA: {e}")
 
     return results
 
