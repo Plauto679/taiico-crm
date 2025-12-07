@@ -1,29 +1,28 @@
 import { fetchFromApi } from '@/lib/api';
 import { MetlifeVidaRaw, MetlifeGMMRaw } from '@/lib/types/metlife';
 
-export async function getCobranzaVida(): Promise<MetlifeVidaRaw[]> {
-    return fetchFromApi<MetlifeVidaRaw[]>('/cobranza/vida');
+export async function getCobranzaVida(startDate?: string, endDate?: string): Promise<MetlifeVidaRaw[]> {
+    let url = '/cobranza/vida';
+    const params = new URLSearchParams();
+    if (startDate) params.set('start_date', startDate);
+    if (endDate) params.set('end_date', endDate);
+
+    if (params.toString()) {
+        url += `?${params.toString()}`;
+    }
+
+    return fetchFromApi<MetlifeVidaRaw[]>(url);
 }
 
-export async function getCobranzaGMM(): Promise<MetlifeGMMRaw[]> {
-    return fetchFromApi<MetlifeGMMRaw[]>('/cobranza/gmm');
-}
+export async function getCobranzaGMM(startDate?: string, endDate?: string): Promise<MetlifeGMMRaw[]> {
+    let url = '/cobranza/gmm';
+    const params = new URLSearchParams();
+    if (startDate) params.set('start_date', startDate);
+    if (endDate) params.set('end_date', endDate);
 
-export async function updateCobranzaVida(data: MetlifeVidaRaw[]): Promise<void> {
-    // TODO: Implement update endpoint in Python if needed
-    console.warn("Update not implemented in Python backend yet");
-}
+    if (params.toString()) {
+        url += `?${params.toString()}`;
+    }
 
-export async function updateCobranzaGMM(data: MetlifeGMMRaw[]): Promise<void> {
-    // TODO: Implement update endpoint in Python if needed
-    console.warn("Update not implemented in Python backend yet");
-}
-
-// Placeholder for logic to match payments
-export function reconcilePayments(policies: MetlifeVidaRaw[], payments: any[]) {
-    // TODO: Implement reconciliation logic
-    // This requires knowing the format of the "monthly billing statements" from insurers
-    // which is mentioned in the prompt but not detailed with a file path.
-    // For now, we assume we are just loading/updating the base.
-    return policies;
+    return fetchFromApi<MetlifeGMMRaw[]>(url);
 }

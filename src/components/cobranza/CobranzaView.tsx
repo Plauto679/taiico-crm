@@ -19,20 +19,79 @@ export function CobranzaView({ vidaData, gmmData }: CobranzaViewProps) {
         exportToExcel(data, fileName);
     };
 
+    // Columns requested: '# de Póliza', 'Producto', 'Conducto de Cobro', 'Fecha de Pago del Recibo', 'Año de Vida Póliza', 'Prima Pagada', 'Comisión Bruto', 'Comisión Neta'
     const vidaColumns = [
-        { header: 'Póliza', accessorKey: '# de Póliza' as keyof MetlifeVidaRaw },
+        { header: '# de Póliza', accessorKey: '# de Póliza' as keyof MetlifeVidaRaw },
         { header: 'Producto', accessorKey: 'Producto' as keyof MetlifeVidaRaw },
-        { header: 'Estatus Recibo', accessorKey: 'Estatus Recibo' as keyof MetlifeVidaRaw },
-        { header: 'Prima Pagada', accessorKey: 'Prima Pagada' as keyof MetlifeVidaRaw },
-        { header: 'Comisión Neta', accessorKey: 'Comisión Neta' as keyof MetlifeVidaRaw },
+        { header: 'Conducto de Cobro', accessorKey: 'Conducto de Cobro' as keyof MetlifeVidaRaw },
+        { header: 'Fecha de Pago', accessorKey: 'Fecha de Pago del Recibo' as keyof MetlifeVidaRaw },
+        { header: 'Año Póliza', accessorKey: 'Año de Vida Póliza' as keyof MetlifeVidaRaw },
+        {
+            header: 'Prima Pagada',
+            accessorKey: (row: MetlifeVidaRaw) => {
+                const val = row['Prima Pagada'];
+                if (val === undefined || val === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val as number);
+            }
+        },
+        {
+            header: 'Comisión Bruto',
+            accessorKey: (row: MetlifeVidaRaw) => {
+                const val = row['Comisión Bruto'];
+                if (val === undefined || val === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val as number);
+            }
+        },
+        {
+            header: 'Comisión Neta',
+            accessorKey: (row: MetlifeVidaRaw) => {
+                const val = row['Comisión Neta'];
+                if (val === undefined || val === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val as number);
+            }
+        },
     ];
 
+    // Columns requested: '# de Póliza', 'Producto', 'Conducto de Cobro', 'Fecha de Pago del Recibo', 'Año de Vida Póliza', 'Estado', 'Prima Pagada', 'Comisión Bruto', 'Comisión Neta', 'IVA Causado'
     const gmmColumns = [
-        { header: 'Póliza', accessorKey: '# de Póliza' as keyof MetlifeGMMRaw },
+        { header: '# de Póliza', accessorKey: '# de Póliza' as keyof MetlifeGMMRaw },
         { header: 'Producto', accessorKey: 'Producto' as keyof MetlifeGMMRaw },
-        { header: 'Estatus Recibo', accessorKey: 'Estatus Recibo' as keyof MetlifeGMMRaw },
-        { header: 'Prima Pagada', accessorKey: 'Prima Pagada' as keyof MetlifeGMMRaw },
-        { header: 'Comisión Neta', accessorKey: 'Comisión Neta' as keyof MetlifeGMMRaw },
+        { header: 'Conducto de Cobro', accessorKey: 'Conducto de Cobro' as keyof MetlifeGMMRaw },
+        { header: 'Fecha de Pago', accessorKey: 'Fecha de Pago del Recibo' as keyof MetlifeGMMRaw },
+        { header: 'Año Póliza', accessorKey: 'Año de Vida Póliza' as keyof MetlifeGMMRaw },
+        { header: 'Estado', accessorKey: 'Estado' as keyof MetlifeGMMRaw },
+        {
+            header: 'Prima Pagada',
+            accessorKey: (row: MetlifeGMMRaw) => {
+                const val = row['Prima Pagada'];
+                if (val === undefined || val === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val as number);
+            }
+        },
+        {
+            header: 'Comisión Bruto',
+            accessorKey: (row: MetlifeGMMRaw) => {
+                const val = row['Comisión Bruto'];
+                if (val === undefined || val === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val as number);
+            }
+        },
+        {
+            header: 'Comisión Neta',
+            accessorKey: (row: MetlifeGMMRaw) => {
+                const val = row['Comisión Neta'];
+                if (val === undefined || val === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val as number);
+            }
+        },
+        {
+            header: 'IVA Causado',
+            accessorKey: (row: MetlifeGMMRaw) => {
+                const val = row['IVA Causado'];
+                if (val === undefined || val === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val as number);
+            }
+        },
     ];
 
     return (

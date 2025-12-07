@@ -7,14 +7,41 @@ export function DateRangeFilter() {
     const router = useRouter();
     const searchParams = useSearchParams();
 
-    const [startDate, setStartDate] = useState(searchParams.get('startDate') || '');
-    const [endDate, setEndDate] = useState(searchParams.get('endDate') || '');
+    // Helper to get default dates
+    const getDefaults = () => {
+        const today = new Date();
+        const start = new Date(today);
+        start.setMonth(today.getMonth() - 1);
+        const end = new Date(today);
+        end.setMonth(today.getMonth() + 1);
+        return {
+            start: start.toISOString().split('T')[0],
+            end: end.toISOString().split('T')[0]
+        };
+    };
 
-    // Update local state if URL params change externally
+    const defaults = getDefaults();
+
+    // Initialize state from URL or defaults
+    const [startDate, setStartDate] = useState(searchParams.get('startDate') || defaults.start);
+    const [endDate, setEndDate] = useState(searchParams.get('endDate') || defaults.end);
+
+    // Effect to update URL with defaults on mount if missing
     useEffect(() => {
-        setStartDate(searchParams.get('startDate') || '');
-        setEndDate(searchParams.get('endDate') || '');
-    }, [searchParams]);
+        const currentStart = searchParams.get('startDate');
+        const currentEnd = searchParams.get('endDate');
+
+        if (!currentStart && !currentEnd) {
+            const params = new URLSearchParams(searchParams.toString());
+            params.set('startDate', defaults.start);
+            params.set('endDate', defaults.end);
+            router.replace(`?${params.toString()}`);
+        } else {
+            // Sync state if URL changes
+            setStartDate(currentStart || defaults.start);
+            setEndDate(currentEnd || defaults.end);
+        }
+    }, [searchParams, router, defaults.start, defaults.end]);
 
     const handleApply = () => {
         const params = new URLSearchParams(searchParams.toString());
@@ -35,11 +62,13 @@ export function DateRangeFilter() {
     };
 
     const handleClear = () => {
-        setStartDate('');
-        setEndDate('');
+        // Reset to defaults instead of empty
+        const defs = getDefaults();
+        setStartDate(defs.start);
+        setEndDate(defs.end);
         const params = new URLSearchParams(searchParams.toString());
-        params.delete('startDate');
-        params.delete('endDate');
+        params.set('startDate', defs.start);
+        params.set('endDate', defs.end);
         router.push(`?${params.toString()}`);
     };
 
@@ -76,14 +105,12 @@ export function DateRangeFilter() {
                 >
                     Filtrar
                 </button>
-                {(startDate || endDate) && (
-                    <button
-                        onClick={handleClear}
-                        className="rounded-md bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
-                    >
-                        Limpiar
-                    </button>
-                )}
+                <button
+                    onClick={handleClear}
+                    className="rounded-md bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
+                >
+                    Restablecer
+                </button>
             </div>
         </div>
     );
