@@ -1,5 +1,5 @@
 import { fetchFromApi } from '@/lib/api';
-import { ClientProfile } from '@/lib/types/cartera';
+import { ClientProfile, CarteraMetlifeVida, CarteraMetlifeGMM, CarteraSura } from '@/lib/types/cartera';
 
 export async function searchClients(query: string): Promise<ClientProfile[]> {
     if (!query) return [];
@@ -18,4 +18,16 @@ export async function searchClients(query: string): Promise<ClientProfile[]> {
             renovacion: null // Placeholder
         }]
     }));
+}
+
+export async function getCarteraData(
+    insurer: string,
+    type: string = 'ALL'
+): Promise<(CarteraMetlifeVida | CarteraMetlifeGMM | CarteraSura)[]> {
+    const params = new URLSearchParams({
+        insurer,
+        type
+    });
+
+    return fetchFromApi<(CarteraMetlifeVida | CarteraMetlifeGMM | CarteraSura)[]>(`/cartera/data?${params.toString()}`);
 }
