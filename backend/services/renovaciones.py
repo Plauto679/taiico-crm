@@ -116,7 +116,7 @@ def clean_vida(df: pd.DataFrame) -> pd.DataFrame:
     requested_cols = [
         "POLIZA_ACTUAL", "CONTRATANTE", "INI_VIG", 
         "FIN_VIG", "FORMA_PAGO", "CONDUCTO_COBRO", 
-        "PRIMA_ANUAL", "PRIMA_MODAL", "PAGADO_HASTA",
+        "AGENTE", "PRIMA_ANUAL", "PRIMA_MODAL", "PAGADO_HASTA",
         "ESTATUS_DE_RENOVACION"
     ]
     

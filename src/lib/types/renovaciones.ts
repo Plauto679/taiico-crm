@@ -19,6 +19,7 @@ export interface RenovacionVida {
     FIN_VIG: string; // Date YYYY-MM-DD
     FORMA_PAGO: string;
     CONDUCTO_COBRO: string;
+    AGENTE: string;
     PRIMA_ANUAL: number;
     PRIMA_MODAL: number;
     PAGADO_HASTA: string; // Date YYYY-MM-DD

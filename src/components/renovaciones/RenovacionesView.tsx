@@ -67,10 +67,10 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
     const vidaColumns = [
         { header: 'Póliza Actual', accessorKey: 'POLIZA_ACTUAL' as keyof RenovacionVida },
         { header: 'Contratante', accessorKey: 'CONTRATANTE' as keyof RenovacionVida },
-        { header: 'Inicio Vigencia', accessorKey: 'INI_VIG' as keyof RenovacionVida },
         { header: 'Fin Vigencia', accessorKey: 'FIN_VIG' as keyof RenovacionVida },
         { header: 'Forma Pago', accessorKey: 'FORMA_PAGO' as keyof RenovacionVida },
         { header: 'Conducto Cobro', accessorKey: 'CONDUCTO_COBRO' as keyof RenovacionVida },
+        { header: 'Agente', accessorKey: 'AGENTE' as keyof RenovacionVida },
         {
             header: 'Prima Anual',
             accessorKey: (row: RenovacionVida) => {

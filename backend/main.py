@@ -1,6 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-from services import cobranza, renovaciones, cartera
+from services import cobranza, renovaciones, cartera, auth
+from pydantic import BaseModel
 
 app = FastAPI(title="TAIICO CRM API")
 
@@ -12,6 +13,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+@app.post("/login")
+async def login(request: LoginRequest):
+    if auth.verify_credentials(request.username, request.password):
+        return {"success": True, "message": "Login successful"}
+    else:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @app.get("/")
 def read_root():

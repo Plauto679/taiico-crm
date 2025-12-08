@@ -25,6 +25,8 @@ SURA_PATHS = {
     "CARTERA": BASE_DIR / "Relaciones de cartera" / "Cartera SURA.xlsx",
 }
 
+USERS_DB = BASE_DIR / "Users" / "Users & Passwords.xlsx"
+
 SHEET_NAMES = {
     "COBRANZA_VIDA": "Vida",
     "COBRANZA_GMM": "GMM",
