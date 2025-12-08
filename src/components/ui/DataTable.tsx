@@ -17,6 +17,7 @@ interface DataTableProps<T> {
     data: T[];
     columns: Column<T>[];
     className?: string;
+    onRowClick?: (row: T) => void;
 }
 
 type SortDirection = 'asc' | 'desc' | null;
@@ -26,7 +27,7 @@ interface SortConfig<T> {
     direction: SortDirection;
 }
 
-export function DataTable<T>({ data, columns, className }: DataTableProps<T>) {
+export function DataTable<T>({ data, columns, className, onRowClick }: DataTableProps<T>) {
     const [sortConfig, setSortConfig] = useState<SortConfig<T>>({ key: null, direction: null });
     const [filters, setFilters] = useState<Record<string, string>>({});
 
@@ -150,7 +151,14 @@ export function DataTable<T>({ data, columns, className }: DataTableProps<T>) {
                         </tr>
                     ) : (
                         processedData.map((row, rowIdx) => (
-                            <tr key={rowIdx} className="hover:bg-gray-50">
+                            <tr
+                                key={rowIdx}
+                                className={clsx(
+                                    "hover:bg-gray-50 transition-colors",
+                                    onRowClick && "cursor-pointer hover:bg-blue-50"
+                                )}
+                                onClick={() => onRowClick && onRowClick(row)}
+                            >
                                 {columns.map((col, colIdx) => (
                                     <td key={colIdx} className="px-4 py-2 text-gray-700 whitespace-nowrap">
                                         {typeof col.accessorKey === 'function'

@@ -4,7 +4,8 @@ import { ClientProfile } from '@/lib/types/cartera';
 export async function searchClients(query: string): Promise<ClientProfile[]> {
     if (!query) return [];
 
-    const results = await fetchFromApi<any[]>('/cartera/search', { query });
+    const queryString = new URLSearchParams({ query }).toString();
+    const results = await fetchFromApi<any[]>(`/cartera/search?${queryString}`);
 
     return results.map(item => ({
         id: `${item['Tipo']}-${item['Póliza'] || item['# de Póliza']}`,

@@ -231,12 +231,14 @@ async def get_upcoming_renewals(
 async def update_renewal_status(
     insurer: str = Body(..., embed=True),
     type: str = Body(..., embed=True),
-    policy_number: str = Body(..., embed=True),
+    policy_number: str | int = Body(..., embed=True),
     new_status: str = Body(..., embed=True)
 ):
     """
     Update the ESTATUS_DE_RENOVACION for a specific policy.
     """
+    print(f"Received update request: Insurer={insurer}, Type={type}, Policy={policy_number}, Status={new_status}")
+    
     file_path = None
     sheet_name = None
     id_col = None
@@ -256,42 +258,48 @@ async def update_renewal_status(
         id_col = "POLIZA"
         
     if not file_path or not os.path.exists(file_path):
+        print(f"File not found: {file_path}")
         raise HTTPException(status_code=404, detail="File not found")
 
     try:
         # Read the Excel file
-        # Note: We read all sheets to preserve them if we write back, 
-        # but for simplicity and safety with pandas, we might just process the target sheet.
-        # However, to avoid deleting other sheets, we should try to use ExcelWriter in append/replace mode if supported,
-        # or read all, update one, write all.
-        
-        # Reading the specific sheet to update
+        print(f"Reading file: {file_path}, Sheet: {sheet_name}")
         df = pd.read_excel(file_path, sheet_name=sheet_name)
         
         # Ensure column exists
         if "ESTATUS_DE_RENOVACION" not in df.columns:
+            print("Adding ESTATUS_DE_RENOVACION column")
             df["ESTATUS_DE_RENOVACION"] = None
             
         # Find and update the row
         # Convert ID column to string for comparison to be safe
-        df[id_col] = df[id_col].astype(str)
+        # Also clean the policy_number input
+        policy_str = str(policy_number).strip()
+        
+        # Create a temporary string column for matching
+        df['__id_str'] = df[id_col].astype(str).str.strip().str.replace('.0', '', regex=False)
+        policy_str_clean = policy_str.replace('.0', '')
+        
+        print(f"Searching for policy: {policy_str_clean} in column {id_col}")
         
         # Check if policy exists
-        if policy_number not in df[id_col].values:
-             raise HTTPException(status_code=404, detail="Policy not found")
+        if policy_str_clean not in df['__id_str'].values:
+             print(f"Policy {policy_str_clean} not found. Available IDs sample: {df['__id_str'].head().tolist()}")
+             raise HTTPException(status_code=404, detail=f"Policy {policy_number} not found")
              
         # Update status
-        mask = df[id_col] == str(policy_number)
+        mask = df['__id_str'] == policy_str_clean
         df.loc[mask, "ESTATUS_DE_RENOVACION"] = new_status
         
-        # Save back to Excel
-        # Using ExcelWriter with if_sheet_exists='replace' requires pandas >= 1.3 and engine='openpyxl'
-        # We'll try to preserve other sheets by reading them if necessary, 
-        # but for now let's assume single sheet or main sheet update is okay if we use mode='a'
+        # Drop temp column
+        df = df.drop(columns=['__id_str'])
         
+        # Save back to Excel
+        print("Saving changes...")
         with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
             df.to_excel(writer, sheet_name=sheet_name if isinstance(sheet_name, str) else "Sheet1", index=False)
             
+        print("Update successful")
         return {"message": "Status updated successfully"}
 
     except Exception as e:

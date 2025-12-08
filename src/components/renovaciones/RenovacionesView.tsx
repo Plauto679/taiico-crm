@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { DataTable } from '@/components/ui/DataTable';
 import { RenovacionGMM, RenovacionVida, RenovacionSura } from '@/lib/types/renovaciones';
 import { exportToExcel } from '@/lib/utils/export';
 import { updateRenewalStatus } from '@/modules/renovaciones/service';
-import { Check, X } from 'lucide-react';
+import { EditStatusModal } from './EditStatusModal';
 
 interface RenovacionesViewProps {
     vidaRenewals?: RenovacionVida[];
@@ -14,108 +14,10 @@ interface RenovacionesViewProps {
     insurer: string;
 }
 
-// Editable Cell Component
-const EditableStatusCell = ({
-    value,
-    row,
-    insurer,
-    type,
-    idField
-}: {
-    value: string | undefined,
-    row: any,
-    insurer: string,
-    type: string,
-    idField: string
-}) => {
-    const [status, setStatus] = useState(value || '');
-    const [isEditing, setIsEditing] = useState(false);
-    const [isSaving, setIsSaving] = useState(false);
-    const inputRef = useRef<HTMLInputElement>(null);
-
-    // Sync local state if prop changes (e.g. refresh)
-    useEffect(() => {
-        setStatus(value || '');
-    }, [value]);
-
-    const handleSave = async () => {
-        if (status !== (value || '')) {
-            setIsSaving(true);
-            try {
-                await updateRenewalStatus(insurer, type, row[idField], status);
-                console.log('Status updated');
-                setIsEditing(false);
-            } catch (error) {
-                console.error('Failed to update status', error);
-                alert('Error updating status');
-            } finally {
-                setIsSaving(false);
-            }
-        } else {
-            setIsEditing(false);
-        }
-    };
-
-    const handleCancel = () => {
-        setStatus(value || '');
-        setIsEditing(false);
-    };
-
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter') {
-            handleSave();
-        } else if (e.key === 'Escape') {
-            handleCancel();
-        }
-    };
-
-    if (isEditing) {
-        return (
-            <div className="flex items-center space-x-1">
-                <input
-                    ref={inputRef}
-                    type="text"
-                    value={status}
-                    onChange={(e) => setStatus(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    disabled={isSaving}
-                    autoFocus
-                    className="w-full min-w-[120px] bg-white border border-blue-500 rounded px-2 py-1 text-sm focus:outline-none"
-                />
-                <button
-                    onClick={handleSave}
-                    disabled={isSaving}
-                    className="p-1 text-green-600 hover:bg-green-100 rounded"
-                    title="Save"
-                >
-                    <Check size={16} />
-                </button>
-                <button
-                    onClick={handleCancel}
-                    disabled={isSaving}
-                    className="p-1 text-red-600 hover:bg-red-100 rounded"
-                    title="Cancel"
-                >
-                    <X size={16} />
-                </button>
-            </div>
-        );
-    }
-
-    return (
-        <div
-            onClick={() => setIsEditing(true)}
-            className="cursor-pointer hover:bg-gray-50 px-2 py-1 rounded border border-transparent hover:border-gray-200 min-h-[28px] flex items-center"
-        >
-            <span className={!status ? 'text-gray-400 italic' : ''}>
-                {status || 'Click to edit...'}
-            </span>
-        </div>
-    );
-};
-
 export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRenewals = [], insurer }: RenovacionesViewProps) {
     const [activeTab, setActiveTab] = useState<'VIDA' | 'GMM'>('VIDA');
+    const [selectedRow, setSelectedRow] = useState<any>(null);
+    const [isModalOpen, setIsModalOpen] = useState(false);
 
     const handleExport = () => {
         let data: any[] = [];
@@ -131,6 +33,35 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
 
         const fileName = `${prefix}_${new Date().toISOString().split('T')[0]}.xlsx`;
         exportToExcel(data, fileName);
+    };
+
+    const handleRowClick = (row: any) => {
+        setSelectedRow(row);
+        setIsModalOpen(true);
+    };
+
+    const handleSaveStatus = async (newStatus: string) => {
+        if (!selectedRow) return;
+
+        let type = 'ALL';
+        let id = '';
+
+        if (insurer === 'Metlife') {
+            type = activeTab;
+            id = activeTab === 'VIDA' ? selectedRow.POLIZA_ACTUAL : selectedRow.NPOLIZA;
+        } else if (insurer === 'SURA') {
+            type = 'ALL';
+            id = selectedRow.POLIZA;
+        }
+
+        await updateRenewalStatus(insurer, type, id, newStatus);
+
+        // Optimistically update the UI (or trigger a refresh if we had one)
+        // For now, we update the local object so it reflects in the table immediately if re-rendered
+        // But since data comes from props, we rely on the page refresh or we can mutate the prop data (not ideal but works for simple cases)
+        // A better way is to use router.refresh() from next/navigation but we are in a client component.
+        // Let's just update the selectedRow object which is a reference to the data item
+        selectedRow.ESTATUS_DE_RENOVACION = newStatus;
     };
 
     const vidaColumns = [
@@ -155,19 +86,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
             }
         },
         { header: 'Pagado Hasta', accessorKey: 'PAGADO_HASTA' as keyof RenovacionVida },
-        {
-            header: 'Estatus Renovación',
-            accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionVida,
-            cell: (info: any) => (
-                <EditableStatusCell
-                    value={info.getValue()}
-                    row={info.row.original}
-                    insurer="Metlife"
-                    type="VIDA"
-                    idField="POLIZA_ACTUAL"
-                />
-            )
-        }
+        { header: 'Estatus Renovación', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionVida }
     ];
 
     const gmmColumns = [
@@ -205,19 +124,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                 return `${(row.COASEGURO * 100).toFixed(0)}%`;
             }
         },
-        {
-            header: 'Estatus Renovación',
-            accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionGMM,
-            cell: (info: any) => (
-                <EditableStatusCell
-                    value={info.getValue()}
-                    row={info.row.original}
-                    insurer="Metlife"
-                    type="GMM"
-                    idField="NPOLIZA"
-                />
-            )
-        }
+        { header: 'Estatus Renovación', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionGMM }
     ];
 
     const suraColumns = [
@@ -235,19 +142,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         },
         { header: 'Periodicidad', accessorKey: 'PERIODICIDAD_PAGO' as keyof RenovacionSura },
         { header: 'Prospectador', accessorKey: 'PROSPECTADOR' as keyof RenovacionSura },
-        {
-            header: 'Estatus',
-            accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionSura,
-            cell: (info: any) => (
-                <EditableStatusCell
-                    value={info.getValue()}
-                    row={info.row.original}
-                    insurer="SURA"
-                    type="ALL"
-                    idField="POLIZA"
-                />
-            )
-        },
+        { header: 'Estatus', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionSura },
     ];
 
     return (
@@ -287,14 +182,44 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
             <div className="flex-1 min-h-0 overflow-hidden">
                 {insurer === 'Metlife' ? (
                     activeTab === 'VIDA' ? (
-                        <DataTable data={vidaRenewals} columns={vidaColumns} className="h-full overflow-auto" />
+                        <DataTable
+                            data={vidaRenewals}
+                            columns={vidaColumns}
+                            className="h-full overflow-auto"
+                            onRowClick={handleRowClick}
+                        />
                     ) : (
-                        <DataTable data={gmmRenewals} columns={gmmColumns} className="h-full overflow-auto" />
+                        <DataTable
+                            data={gmmRenewals}
+                            columns={gmmColumns}
+                            className="h-full overflow-auto"
+                            onRowClick={handleRowClick}
+                        />
                     )
                 ) : (
-                    <DataTable data={suraRenewals} columns={suraColumns} className="h-full overflow-auto" />
+                    <DataTable
+                        data={suraRenewals}
+                        columns={suraColumns}
+                        className="h-full overflow-auto"
+                        onRowClick={handleRowClick}
+                    />
                 )}
             </div>
+
+            {selectedRow && (
+                <EditStatusModal
+                    isOpen={isModalOpen}
+                    onClose={() => setIsModalOpen(false)}
+                    onSave={handleSaveStatus}
+                    currentStatus={selectedRow.ESTATUS_DE_RENOVACION}
+                    policyNumber={
+                        insurer === 'Metlife'
+                            ? (activeTab === 'VIDA' ? selectedRow.POLIZA_ACTUAL : selectedRow.NPOLIZA)
+                            : selectedRow.POLIZA
+                    }
+                    insurer={insurer}
+                />
+            )}
         </div>
     );
 }

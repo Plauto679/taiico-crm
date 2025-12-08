@@ -7,7 +7,7 @@ app = FastAPI(title="TAIICO CRM API")
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:7777"],  # Next.js frontend
+    allow_origins=["http://localhost:3000", "http://localhost:7777", "*"],  # Next.js frontend
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
