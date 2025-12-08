@@ -1,13 +1,13 @@
 import { fetchFromApi } from '@/lib/api';
-import { RenewalItem, RenovacionGMM, RenovacionVida } from '@/lib/types/renovaciones';
+import { RenovacionGMM, RenovacionVida, RenovacionSura } from '@/lib/types/renovaciones';
 
 export async function getUpcomingRenewals(
     days: number = 30,
-    type: 'ALL' | 'VIDA' | 'GMM' = 'ALL',
+    type: string = 'ALL',
     insurer: string = 'Metlife',
     startDate?: string,
     endDate?: string
-): Promise<RenewalItem[]> {
+): Promise<(RenovacionGMM | RenovacionVida | RenovacionSura)[]> {
     const params: Record<string, string> = {
         days: days.toString(),
         type,
@@ -18,16 +18,17 @@ export async function getUpcomingRenewals(
     if (endDate) params.end_date = endDate;
 
     const queryString = new URLSearchParams(params).toString();
+    console.log(`Fetching Renovaciones: /renovaciones/upcoming?${queryString}`);
 
-    // The backend returns a list of objects matching the requested schema
-    return fetchFromApi<RenewalItem[]>(`/renovaciones/upcoming?${queryString}`);
+    return fetchFromApi<(RenovacionGMM | RenovacionVida | RenovacionSura)[]>(`/renovaciones/upcoming?${queryString}`);
 }
 
 export async function updateRenewalStatus(
     insurer: string,
     type: string,
-    policyNumber: string,
-    newStatus: string
+    policyNumber: string | number,
+    newStatus: string,
+    expediente?: string
 ): Promise<void> {
     await fetchFromApi('/renovaciones/update', {
         method: 'POST',
@@ -39,6 +40,7 @@ export async function updateRenewalStatus(
             type,
             policy_number: policyNumber,
             new_status: newStatus,
+            expediente
         }),
     });
 }

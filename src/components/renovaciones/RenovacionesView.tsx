@@ -40,7 +40,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         setIsModalOpen(true);
     };
 
-    const handleSaveStatus = async (newStatus: string) => {
+    const handleSaveStatus = async (newStatus: string, expediente?: string) => {
         if (!selectedRow) return;
 
         let type = 'ALL';
@@ -54,14 +54,30 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
             id = selectedRow.POLIZA;
         }
 
-        await updateRenewalStatus(insurer, type, id, newStatus);
+        await updateRenewalStatus(insurer, type, id, newStatus, expediente);
 
-        // Optimistically update the UI (or trigger a refresh if we had one)
-        // For now, we update the local object so it reflects in the table immediately if re-rendered
-        // But since data comes from props, we rely on the page refresh or we can mutate the prop data (not ideal but works for simple cases)
-        // A better way is to use router.refresh() from next/navigation but we are in a client component.
-        // Let's just update the selectedRow object which is a reference to the data item
+        // Optimistically update the UI
         selectedRow.ESTATUS_DE_RENOVACION = newStatus;
+        if (expediente !== undefined) {
+            selectedRow.EXPEDIENTE = expediente;
+        }
+    };
+
+    const renderExpedienteLink = (row: any) => {
+        if (row.EXPEDIENTE) {
+            return (
+                <a
+                    href={row.EXPEDIENTE}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:underline font-medium"
+                    onClick={(e) => e.stopPropagation()} // Prevent row click when clicking link
+                >
+                    LINK
+                </a>
+            );
+        }
+        return null;
     };
 
     const vidaColumns = [
@@ -86,7 +102,12 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
             }
         },
         { header: 'Pagado Hasta', accessorKey: 'PAGADO_HASTA' as keyof RenovacionVida },
-        { header: 'Estatus Renovación', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionVida }
+        { header: 'Estatus Renovación', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionVida },
+        {
+            header: 'Expediente',
+            accessorKey: 'EXPEDIENTE' as keyof RenovacionVida,
+            cell: (info: any) => renderExpedienteLink(info.row.original)
+        }
     ];
 
     const gmmColumns = [
@@ -124,7 +145,12 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                 return `${(row.COASEGURO * 100).toFixed(0)}%`;
             }
         },
-        { header: 'Estatus Renovación', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionGMM }
+        { header: 'Estatus Renovación', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionGMM },
+        {
+            header: 'Expediente',
+            accessorKey: 'EXPEDIENTE' as keyof RenovacionGMM,
+            cell: (info: any) => renderExpedienteLink(info.row.original)
+        }
     ];
 
     const suraColumns = [
@@ -143,6 +169,11 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         { header: 'Periodicidad', accessorKey: 'PERIODICIDAD_PAGO' as keyof RenovacionSura },
         { header: 'Prospectador', accessorKey: 'PROSPECTADOR' as keyof RenovacionSura },
         { header: 'Estatus', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionSura },
+        {
+            header: 'Expediente',
+            accessorKey: 'EXPEDIENTE' as keyof RenovacionSura,
+            cell: (info: any) => renderExpedienteLink(info.row.original)
+        }
     ];
 
     return (
@@ -212,6 +243,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                     onClose={() => setIsModalOpen(false)}
                     onSave={handleSaveStatus}
                     currentStatus={selectedRow.ESTATUS_DE_RENOVACION}
+                    currentExpediente={selectedRow.EXPEDIENTE}
                     policyNumber={
                         insurer === 'Metlife'
                             ? (activeTab === 'VIDA' ? selectedRow.POLIZA_ACTUAL : selectedRow.NPOLIZA)

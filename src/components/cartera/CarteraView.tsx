@@ -123,7 +123,7 @@ export function CarteraView({ data, insurer, type }: CarteraViewProps) {
                 {data.length > 0 ? (
                     <DataTable
                         data={data}
-                        columns={getColumns()}
+                        columns={getColumns() as any}
                     />
                 ) : (
                     <div className="flex items-center justify-center h-full text-gray-500">

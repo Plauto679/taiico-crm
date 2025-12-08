@@ -33,7 +33,7 @@ export default async function RenovacionesPage({
         gmmRenewals = gmm;
     } else if (insurer === 'SURA') {
         // For SURA we fetch 'ALL' or just default since we handle it as one block in backend
-        suraRenewals = await getUpcomingRenewals(days, 'ALL', insurer, startDate, endDate) as Promise<RenovacionSura[]>;
+        suraRenewals = (await getUpcomingRenewals(days, 'ALL', insurer, startDate, endDate)) as RenovacionSura[];
     }
 
     return (

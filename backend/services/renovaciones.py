@@ -85,7 +85,7 @@ def clean_gmm(df: pd.DataFrame) -> pd.DataFrame:
     requested_cols = [
         "NPOLIZA", "POLORIG", "CONTRATANTE", "FFINVIG", 
         "PRIMA.1", "IVA", "NOMBREL", "DEDUCIBLE", "PAGADOHASTA",
-        "COASEGURO", "ESTATUS_DE_RENOVACION"
+        "COASEGURO", "ESTATUS_DE_RENOVACION", "EXPEDIENTE"
     ]
     
     # Ensure all columns exist
@@ -93,7 +93,11 @@ def clean_gmm(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = None
             
-    return df[requested_cols]
+    # Remove duplicates based on Policy Number (NPOLIZA)
+    # This ensures we only see one row per policy, even if the source has multiple rows (e.g. per insured)
+    df = df[requested_cols].drop_duplicates(subset=["NPOLIZA"])
+            
+    return df
 
 def clean_vida(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -117,7 +121,7 @@ def clean_vida(df: pd.DataFrame) -> pd.DataFrame:
         "POLIZA_ACTUAL", "CONTRATANTE", "INI_VIG", 
         "FIN_VIG", "FORMA_PAGO", "CONDUCTO_COBRO", 
         "AGENTE", "PRIMA_ANUAL", "PRIMA_MODAL", "PAGADO_HASTA",
-        "ESTATUS_DE_RENOVACION"
+        "ESTATUS_DE_RENOVACION", "EXPEDIENTE"
     ]
     
     # Ensure all columns exist
@@ -146,7 +150,7 @@ def clean_sura(df: pd.DataFrame) -> pd.DataFrame:
     requested_cols = [
         "POLIZA", "NOMBRE", "INICIO VIGENCIA", "FIN VIGENCIA", 
         "RAMO", "PRIMA", "PERIODICIDAD_PAGO", "PROSPECTADOR", 
-        "ESTATUS_DE_RENOVACION"
+        "ESTATUS_DE_RENOVACION", "EXPEDIENTE"
     ]
     
     for col in requested_cols:
@@ -232,12 +236,13 @@ async def update_renewal_status(
     insurer: str = Body(..., embed=True),
     type: str = Body(..., embed=True),
     policy_number: str | int = Body(..., embed=True),
-    new_status: str = Body(..., embed=True)
+    new_status: str = Body(..., embed=True),
+    expediente: Optional[str] = Body(None, embed=True)
 ):
     """
-    Update the ESTATUS_DE_RENOVACION for a specific policy.
+    Update the ESTATUS_DE_RENOVACION and EXPEDIENTE for a specific policy.
     """
-    print(f"Received update request: Insurer={insurer}, Type={type}, Policy={policy_number}, Status={new_status}")
+    print(f"Received update request: Insurer={insurer}, Type={type}, Policy={policy_number}, Status={new_status}, Expediente={expediente}")
     
     file_path = None
     sheet_name = None
@@ -266,10 +271,14 @@ async def update_renewal_status(
         print(f"Reading file: {file_path}, Sheet: {sheet_name}")
         df = pd.read_excel(file_path, sheet_name=sheet_name)
         
-        # Ensure column exists
+        # Ensure columns exist
         if "ESTATUS_DE_RENOVACION" not in df.columns:
             print("Adding ESTATUS_DE_RENOVACION column")
             df["ESTATUS_DE_RENOVACION"] = None
+        
+        if "EXPEDIENTE" not in df.columns:
+            print("Adding EXPEDIENTE column")
+            df["EXPEDIENTE"] = None
             
         # Find and update the row
         # Convert ID column to string for comparison to be safe
@@ -291,6 +300,10 @@ async def update_renewal_status(
         mask = df['__id_str'] == policy_str_clean
         df.loc[mask, "ESTATUS_DE_RENOVACION"] = new_status
         
+        # Update expediente if provided (allow empty string to clear it)
+        if expediente is not None:
+             df.loc[mask, "EXPEDIENTE"] = expediente
+        
         # Drop temp column
         df = df.drop(columns=['__id_str'])
         
@@ -300,10 +313,10 @@ async def update_renewal_status(
             df.to_excel(writer, sheet_name=sheet_name if isinstance(sheet_name, str) else "Sheet1", index=False)
             
         print("Update successful")
-        return {"message": "Status updated successfully"}
+        return {"message": "Policy updated successfully"}
 
     except Exception as e:
-        print(f"Error updating status: {e}")
+        print(f"Error updating policy: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Keep legacy endpoints for backward compatibility if needed, but redirecting logic
