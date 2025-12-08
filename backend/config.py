@@ -21,6 +21,7 @@ METLIFE_PATHS = {
 
 SURA_PATHS = {
     "RENOVACIONES": BASE_DIR / "Fechas de emision de Polizas y renovaciones" / "SURA.xlsx",
+    "COBRANZA": BASE_DIR / "Bases de cobranza y comisiones" / "SURA base cobranza.xlsx",
 }
 
 SHEET_NAMES = {

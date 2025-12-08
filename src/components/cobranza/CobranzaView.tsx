@@ -2,114 +2,169 @@
 
 import { useState } from 'react';
 import { DataTable } from '@/components/ui/DataTable';
-import { MetlifeVidaRaw, MetlifeGMMRaw } from '@/lib/types/metlife';
+import { CobranzaGMM, CobranzaVida, CobranzaSura } from '@/lib/types/cobranza';
 import { exportToExcel } from '@/lib/utils/export';
 
 interface CobranzaViewProps {
-    vidaData: MetlifeVidaRaw[];
-    gmmData: MetlifeGMMRaw[];
+    vidaData?: CobranzaVida[];
+    gmmData?: CobranzaGMM[];
+    suraData?: CobranzaSura[];
+    insurer?: string;
 }
 
-export function CobranzaView({ vidaData, gmmData }: CobranzaViewProps) {
+export function CobranzaView({ vidaData = [], gmmData = [], suraData = [], insurer = 'Metlife' }: CobranzaViewProps) {
     const [activeTab, setActiveTab] = useState<'VIDA' | 'GMM'>('VIDA');
 
     const handleExport = () => {
-        const data = activeTab === 'VIDA' ? vidaData : gmmData;
-        const fileName = `Cobranza_${activeTab}_${new Date().toISOString().split('T')[0]}.xlsx`;
+        let data: any[] = [];
+        let prefix = '';
+
+        if (insurer === 'Metlife') {
+            data = activeTab === 'VIDA' ? vidaData : gmmData;
+            prefix = `Cobranza_Metlife_${activeTab}`;
+        } else if (insurer === 'SURA') {
+            data = suraData;
+            prefix = `Cobranza_SURA`;
+        }
+
+        const fileName = `${prefix}_${new Date().toISOString().split('T')[0]}.xlsx`;
         exportToExcel(data, fileName);
     };
 
-    // Columns requested: '# de Póliza', 'Producto', 'Conducto de Cobro', 'Fecha de Pago del Recibo', 'Año de Vida Póliza', 'Prima Pagada', 'Comisión Bruto', 'Comisión Neta'
     const vidaColumns = [
-        { header: '# de Póliza', accessorKey: '# de Póliza' as keyof MetlifeVidaRaw },
-        { header: 'Producto', accessorKey: 'Producto' as keyof MetlifeVidaRaw },
-        { header: 'Conducto de Cobro', accessorKey: 'Conducto de Cobro' as keyof MetlifeVidaRaw },
-        { header: 'Fecha de Pago', accessorKey: 'Fecha de Pago del Recibo' as keyof MetlifeVidaRaw },
-        { header: 'Año Póliza', accessorKey: 'Año de Vida Póliza' as keyof MetlifeVidaRaw },
+        { header: '# Póliza', accessorKey: '# de Póliza' as keyof CobranzaVida },
+        { header: 'Producto', accessorKey: 'Producto' as keyof CobranzaVida },
+        { header: 'Conducto', accessorKey: 'Conducto de Cobro' as keyof CobranzaVida },
+        { header: 'Fecha Pago', accessorKey: 'Fecha de Pago del Recibo' as keyof CobranzaVida },
+        { header: 'Año Póliza', accessorKey: 'Año de Vida Póliza' as keyof CobranzaVida },
         {
             header: 'Prima Pagada',
-            accessorKey: (row: MetlifeVidaRaw) => {
-                const val = row['Prima Pagada'];
-                if (val === undefined || val === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val as number);
+            accessorKey: (row: CobranzaVida) => {
+                if (row['Prima Pagada'] === undefined || row['Prima Pagada'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Prima Pagada']);
             }
         },
         {
             header: 'Comisión Bruto',
-            accessorKey: (row: MetlifeVidaRaw) => {
-                const val = row['Comisión Bruto'];
-                if (val === undefined || val === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val as number);
+            accessorKey: (row: CobranzaVida) => {
+                if (row['Comisión Bruto'] === undefined || row['Comisión Bruto'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Comisión Bruto']);
             }
         },
         {
             header: 'Comisión Neta',
-            accessorKey: (row: MetlifeVidaRaw) => {
-                const val = row['Comisión Neta'];
-                if (val === undefined || val === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val as number);
+            accessorKey: (row: CobranzaVida) => {
+                if (row['Comisión Neta'] === undefined || row['Comisión Neta'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Comisión Neta']);
             }
         },
     ];
 
-    // Columns requested: '# de Póliza', 'Producto', 'Conducto de Cobro', 'Fecha de Pago del Recibo', 'Año de Vida Póliza', 'Estado', 'Prima Pagada', 'Comisión Bruto', 'Comisión Neta', 'IVA Causado'
     const gmmColumns = [
-        { header: '# de Póliza', accessorKey: '# de Póliza' as keyof MetlifeGMMRaw },
-        { header: 'Producto', accessorKey: 'Producto' as keyof MetlifeGMMRaw },
-        { header: 'Conducto de Cobro', accessorKey: 'Conducto de Cobro' as keyof MetlifeGMMRaw },
-        { header: 'Fecha de Pago', accessorKey: 'Fecha de Pago del Recibo' as keyof MetlifeGMMRaw },
-        { header: 'Año Póliza', accessorKey: 'Año de Vida Póliza' as keyof MetlifeGMMRaw },
-        { header: 'Estado', accessorKey: 'Estado' as keyof MetlifeGMMRaw },
+        { header: '# Póliza', accessorKey: '# de Póliza' as keyof CobranzaGMM },
+        { header: 'Producto', accessorKey: 'Producto' as keyof CobranzaGMM },
+        { header: 'Conducto', accessorKey: 'Conducto de Cobro' as keyof CobranzaGMM },
+        { header: 'Fecha Pago', accessorKey: 'Fecha de Pago del Recibo' as keyof CobranzaGMM },
+        { header: 'Año Póliza', accessorKey: 'Año de Vida Póliza' as keyof CobranzaGMM },
+        { header: 'Estado', accessorKey: 'Estado' as keyof CobranzaGMM },
         {
             header: 'Prima Pagada',
-            accessorKey: (row: MetlifeGMMRaw) => {
-                const val = row['Prima Pagada'];
-                if (val === undefined || val === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val as number);
+            accessorKey: (row: CobranzaGMM) => {
+                if (row['Prima Pagada'] === undefined || row['Prima Pagada'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Prima Pagada']);
             }
         },
         {
             header: 'Comisión Bruto',
-            accessorKey: (row: MetlifeGMMRaw) => {
-                const val = row['Comisión Bruto'];
-                if (val === undefined || val === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val as number);
+            accessorKey: (row: CobranzaGMM) => {
+                if (row['Comisión Bruto'] === undefined || row['Comisión Bruto'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Comisión Bruto']);
             }
         },
         {
             header: 'Comisión Neta',
-            accessorKey: (row: MetlifeGMMRaw) => {
-                const val = row['Comisión Neta'];
-                if (val === undefined || val === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val as number);
+            accessorKey: (row: CobranzaGMM) => {
+                if (row['Comisión Neta'] === undefined || row['Comisión Neta'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Comisión Neta']);
             }
         },
         {
             header: 'IVA Causado',
-            accessorKey: (row: MetlifeGMMRaw) => {
-                const val = row['IVA Causado'];
-                if (val === undefined || val === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val as number);
+            accessorKey: (row: CobranzaGMM) => {
+                if (row['IVA Causado'] === undefined || row['IVA Causado'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['IVA Causado']);
             }
         },
+    ];
+
+    // 'Póliza', 'Contratante', 'Ramo', 'Prima Total', 'Prima Neta', '% Comisión pagado', 'Monto Comisión Neta', 'Total Comisión pagado' & 'Fecha aplicación de la póliza'
+    const suraColumns = [
+        { header: 'Póliza', accessorKey: 'Póliza' as keyof CobranzaSura },
+        { header: 'Contratante', accessorKey: 'Contratante' as keyof CobranzaSura },
+        { header: 'Ramo', accessorKey: 'Ramo' as keyof CobranzaSura },
+        {
+            header: 'Prima Total',
+            accessorKey: (row: CobranzaSura) => {
+                if (row['Prima Total'] === undefined || row['Prima Total'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Prima Total']);
+            }
+        },
+        {
+            header: 'Prima Neta',
+            accessorKey: (row: CobranzaSura) => {
+                if (row['Prima Neta'] === undefined || row['Prima Neta'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Prima Neta']);
+            }
+        },
+        {
+            header: '% Comisión',
+            accessorKey: (row: CobranzaSura) => {
+                if (row['% Comisión pagado'] === undefined || row['% Comisión pagado'] === null) return '-';
+                return `${(row['% Comisión pagado'] * 100).toFixed(2)}%`;
+            }
+        },
+        {
+            header: 'Monto Comisión',
+            accessorKey: (row: CobranzaSura) => {
+                if (row['Monto Comisión Neta'] === undefined || row['Monto Comisión Neta'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Monto Comisión Neta']);
+            }
+        },
+        {
+            header: 'Total Comisión',
+            accessorKey: (row: CobranzaSura) => {
+                if (row['Total Comisión pagado'] === undefined || row['Total Comisión pagado'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Total Comisión pagado']);
+            }
+        },
+        { header: 'Fecha Aplicación', accessorKey: 'Fecha aplicación de la póliza' as keyof CobranzaSura },
     ];
 
     return (
         <div className="flex flex-col h-full space-y-4">
             <div className="flex items-center justify-between border-b pb-2 flex-none">
                 <div className="flex space-x-4">
-                    <button
-                        className={`px-4 py-2 font-medium ${activeTab === 'VIDA' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
-                        onClick={() => setActiveTab('VIDA')}
-                    >
-                        Vida
-                    </button>
-                    <button
-                        className={`px-4 py-2 font-medium ${activeTab === 'GMM' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
-                        onClick={() => setActiveTab('GMM')}
-                    >
-                        GMM
-                    </button>
+                    {insurer === 'Metlife' && (
+                        <>
+                            <button
+                                className={`px-4 py-2 font-medium ${activeTab === 'VIDA' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+                                onClick={() => setActiveTab('VIDA')}
+                            >
+                                Vida
+                            </button>
+                            <button
+                                className={`px-4 py-2 font-medium ${activeTab === 'GMM' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+                                onClick={() => setActiveTab('GMM')}
+                            >
+                                GMM
+                            </button>
+                        </>
+                    )}
+                    {insurer === 'SURA' && (
+                        <span className="px-4 py-2 font-medium border-b-2 border-blue-600 text-blue-600">
+                            SURA Cobranza
+                        </span>
+                    )}
                 </div>
                 <button
                     onClick={handleExport}
@@ -120,10 +175,14 @@ export function CobranzaView({ vidaData, gmmData }: CobranzaViewProps) {
             </div>
 
             <div className="flex-1 min-h-0 overflow-hidden">
-                {activeTab === 'VIDA' ? (
-                    <DataTable data={vidaData} columns={vidaColumns} className="h-full overflow-auto" />
+                {insurer === 'Metlife' ? (
+                    activeTab === 'VIDA' ? (
+                        <DataTable data={vidaData} columns={vidaColumns} className="h-full overflow-auto" />
+                    ) : (
+                        <DataTable data={gmmData} columns={gmmColumns} className="h-full overflow-auto" />
+                    )
                 ) : (
-                    <DataTable data={gmmData} columns={gmmColumns} className="h-full overflow-auto" />
+                    <DataTable data={suraData} columns={suraColumns} className="h-full overflow-auto" />
                 )}
             </div>
         </div>

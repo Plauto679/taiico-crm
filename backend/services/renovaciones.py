@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Body
 import pandas as pd
 from typing import List, Optional
 from datetime import datetime, timedelta
 from config import METLIFE_PATHS, SURA_PATHS, SHEET_NAMES
 import numpy as np
+import os
 
 router = APIRouter(
     prefix="/renovaciones",
@@ -81,11 +82,10 @@ def clean_gmm(df: pd.DataFrame) -> pd.DataFrame:
         df["COASEGURO"] = pd.to_numeric(df["COASEGURO"], errors="coerce") / 100.0
 
     # 4. Select requested columns
-    # 'NPOLIZA', 'POLORIG', 'CONTRATANTE' 'FFINVIG' 'PRIMA.1' 'IVA' NOMBREL 'DEDUCIBLE' 'PAGADOHASTA'
     requested_cols = [
         "NPOLIZA", "POLORIG", "CONTRATANTE", "FFINVIG", 
         "PRIMA.1", "IVA", "NOMBREL", "DEDUCIBLE", "PAGADOHASTA",
-        "COASEGURO"
+        "COASEGURO", "ESTATUS_DE_RENOVACION"
     ]
     
     # Ensure all columns exist
@@ -113,11 +113,11 @@ def clean_vida(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = df[col].apply(clean_money)
 
     # 3. Select requested columns
-    # 'POLIZA_ACTUAL' 'CONTRATANTE' 'INI_VIG' 'FIN_VIG' 'FORMA_PAGO' 'CONDUCTO_COBRO' 'PRIMA_ANUAL', 'PRIMA_MODAL', 'PAGADO_HASTA'
     requested_cols = [
         "POLIZA_ACTUAL", "CONTRATANTE", "INI_VIG", 
         "FIN_VIG", "FORMA_PAGO", "CONDUCTO_COBRO", 
-        "PRIMA_ANUAL", "PRIMA_MODAL", "PAGADO_HASTA"
+        "PRIMA_ANUAL", "PRIMA_MODAL", "PAGADO_HASTA",
+        "ESTATUS_DE_RENOVACION"
     ]
     
     # Ensure all columns exist
@@ -226,6 +226,77 @@ async def get_upcoming_renewals(
             print(f"Error loading SURA: {e}")
 
     return results
+
+@router.post("/update")
+async def update_renewal_status(
+    insurer: str = Body(..., embed=True),
+    type: str = Body(..., embed=True),
+    policy_number: str = Body(..., embed=True),
+    new_status: str = Body(..., embed=True)
+):
+    """
+    Update the ESTATUS_DE_RENOVACION for a specific policy.
+    """
+    file_path = None
+    sheet_name = None
+    id_col = None
+    
+    if insurer.lower() == "metlife":
+        if type.upper() == "VIDA":
+            file_path = METLIFE_PATHS["RENOVACIONES_VIDA"]
+            sheet_name = SHEET_NAMES["RENOVACIONES_VIDA"]
+            id_col = "POLIZA_ACTUAL"
+        elif type.upper() == "GMM":
+            file_path = METLIFE_PATHS["RENOVACIONES_GMM"]
+            sheet_name = SHEET_NAMES["RENOVACIONES_GMM"]
+            id_col = "NPOLIZA"
+    elif insurer.lower() == "sura":
+        file_path = SURA_PATHS["RENOVACIONES"]
+        sheet_name = 0 # Default sheet for SURA
+        id_col = "POLIZA"
+        
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    try:
+        # Read the Excel file
+        # Note: We read all sheets to preserve them if we write back, 
+        # but for simplicity and safety with pandas, we might just process the target sheet.
+        # However, to avoid deleting other sheets, we should try to use ExcelWriter in append/replace mode if supported,
+        # or read all, update one, write all.
+        
+        # Reading the specific sheet to update
+        df = pd.read_excel(file_path, sheet_name=sheet_name)
+        
+        # Ensure column exists
+        if "ESTATUS_DE_RENOVACION" not in df.columns:
+            df["ESTATUS_DE_RENOVACION"] = None
+            
+        # Find and update the row
+        # Convert ID column to string for comparison to be safe
+        df[id_col] = df[id_col].astype(str)
+        
+        # Check if policy exists
+        if policy_number not in df[id_col].values:
+             raise HTTPException(status_code=404, detail="Policy not found")
+             
+        # Update status
+        mask = df[id_col] == str(policy_number)
+        df.loc[mask, "ESTATUS_DE_RENOVACION"] = new_status
+        
+        # Save back to Excel
+        # Using ExcelWriter with if_sheet_exists='replace' requires pandas >= 1.3 and engine='openpyxl'
+        # We'll try to preserve other sheets by reading them if necessary, 
+        # but for now let's assume single sheet or main sheet update is okay if we use mode='a'
+        
+        with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+            df.to_excel(writer, sheet_name=sheet_name if isinstance(sheet_name, str) else "Sheet1", index=False)
+            
+        return {"message": "Status updated successfully"}
+
+    except Exception as e:
+        print(f"Error updating status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Keep legacy endpoints for backward compatibility if needed, but redirecting logic
 @router.get("/vida")

@@ -22,3 +22,23 @@ export async function getUpcomingRenewals(
     // The backend returns a list of objects matching the requested schema
     return fetchFromApi<RenewalItem[]>(`/renovaciones/upcoming?${queryString}`);
 }
+
+export async function updateRenewalStatus(
+    insurer: string,
+    type: string,
+    policyNumber: string,
+    newStatus: string
+): Promise<void> {
+    await fetchFromApi('/renovaciones/update', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            insurer,
+            type,
+            policy_number: policyNumber,
+            new_status: newStatus,
+        }),
+    });
+}

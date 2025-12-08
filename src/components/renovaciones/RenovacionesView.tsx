@@ -1,9 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { DataTable } from '@/components/ui/DataTable';
 import { RenovacionGMM, RenovacionVida, RenovacionSura } from '@/lib/types/renovaciones';
 import { exportToExcel } from '@/lib/utils/export';
+import { updateRenewalStatus } from '@/modules/renovaciones/service';
+import { Check, X } from 'lucide-react';
 
 interface RenovacionesViewProps {
     vidaRenewals?: RenovacionVida[];
@@ -11,6 +13,106 @@ interface RenovacionesViewProps {
     suraRenewals?: RenovacionSura[];
     insurer: string;
 }
+
+// Editable Cell Component
+const EditableStatusCell = ({
+    value,
+    row,
+    insurer,
+    type,
+    idField
+}: {
+    value: string | undefined,
+    row: any,
+    insurer: string,
+    type: string,
+    idField: string
+}) => {
+    const [status, setStatus] = useState(value || '');
+    const [isEditing, setIsEditing] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    // Sync local state if prop changes (e.g. refresh)
+    useEffect(() => {
+        setStatus(value || '');
+    }, [value]);
+
+    const handleSave = async () => {
+        if (status !== (value || '')) {
+            setIsSaving(true);
+            try {
+                await updateRenewalStatus(insurer, type, row[idField], status);
+                console.log('Status updated');
+                setIsEditing(false);
+            } catch (error) {
+                console.error('Failed to update status', error);
+                alert('Error updating status');
+            } finally {
+                setIsSaving(false);
+            }
+        } else {
+            setIsEditing(false);
+        }
+    };
+
+    const handleCancel = () => {
+        setStatus(value || '');
+        setIsEditing(false);
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+            handleSave();
+        } else if (e.key === 'Escape') {
+            handleCancel();
+        }
+    };
+
+    if (isEditing) {
+        return (
+            <div className="flex items-center space-x-1">
+                <input
+                    ref={inputRef}
+                    type="text"
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    disabled={isSaving}
+                    autoFocus
+                    className="w-full min-w-[120px] bg-white border border-blue-500 rounded px-2 py-1 text-sm focus:outline-none"
+                />
+                <button
+                    onClick={handleSave}
+                    disabled={isSaving}
+                    className="p-1 text-green-600 hover:bg-green-100 rounded"
+                    title="Save"
+                >
+                    <Check size={16} />
+                </button>
+                <button
+                    onClick={handleCancel}
+                    disabled={isSaving}
+                    className="p-1 text-red-600 hover:bg-red-100 rounded"
+                    title="Cancel"
+                >
+                    <X size={16} />
+                </button>
+            </div>
+        );
+    }
+
+    return (
+        <div
+            onClick={() => setIsEditing(true)}
+            className="cursor-pointer hover:bg-gray-50 px-2 py-1 rounded border border-transparent hover:border-gray-200 min-h-[28px] flex items-center"
+        >
+            <span className={!status ? 'text-gray-400 italic' : ''}>
+                {status || 'Click to edit...'}
+            </span>
+        </div>
+    );
+};
 
 export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRenewals = [], insurer }: RenovacionesViewProps) {
     const [activeTab, setActiveTab] = useState<'VIDA' | 'GMM'>('VIDA');
@@ -53,6 +155,19 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
             }
         },
         { header: 'Pagado Hasta', accessorKey: 'PAGADO_HASTA' as keyof RenovacionVida },
+        {
+            header: 'Estatus Renovación',
+            accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionVida,
+            cell: (info: any) => (
+                <EditableStatusCell
+                    value={info.getValue()}
+                    row={info.row.original}
+                    insurer="Metlife"
+                    type="VIDA"
+                    idField="POLIZA_ACTUAL"
+                />
+            )
+        }
     ];
 
     const gmmColumns = [
@@ -89,6 +204,19 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                 if (row.COASEGURO === undefined || row.COASEGURO === null) return '-';
                 return `${(row.COASEGURO * 100).toFixed(0)}%`;
             }
+        },
+        {
+            header: 'Estatus Renovación',
+            accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionGMM,
+            cell: (info: any) => (
+                <EditableStatusCell
+                    value={info.getValue()}
+                    row={info.row.original}
+                    insurer="Metlife"
+                    type="GMM"
+                    idField="NPOLIZA"
+                />
+            )
         }
     ];
 
@@ -107,7 +235,19 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         },
         { header: 'Periodicidad', accessorKey: 'PERIODICIDAD_PAGO' as keyof RenovacionSura },
         { header: 'Prospectador', accessorKey: 'PROSPECTADOR' as keyof RenovacionSura },
-        { header: 'Estatus', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionSura },
+        {
+            header: 'Estatus',
+            accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionSura,
+            cell: (info: any) => (
+                <EditableStatusCell
+                    value={info.getValue()}
+                    row={info.row.original}
+                    insurer="SURA"
+                    type="ALL"
+                    idField="POLIZA"
+                />
+            )
+        },
     ];
 
     return (

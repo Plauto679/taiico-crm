@@ -9,6 +9,7 @@ export interface RenovacionGMM {
     DEDUCIBLE: number;
     PAGADOHASTA: string; // Date YYYY-MM-DD
     COASEGURO?: number; // Optional as it wasn't strictly in the display list but is useful
+    ESTATUS_DE_RENOVACION?: string;
 }
 
 export interface RenovacionVida {
@@ -21,6 +22,7 @@ export interface RenovacionVida {
     PRIMA_ANUAL: number;
     PRIMA_MODAL: number;
     PAGADO_HASTA: string; // Date YYYY-MM-DD
+    ESTATUS_DE_RENOVACION?: string;
 }
 
 export interface RenovacionSura {

@@ -1,28 +1,30 @@
 import { fetchFromApi } from '@/lib/api';
-import { MetlifeVidaRaw, MetlifeGMMRaw } from '@/lib/types/metlife';
+import { CobranzaVida, CobranzaGMM, CobranzaSura } from '@/lib/types/cobranza';
 
-export async function getCobranzaVida(startDate?: string, endDate?: string): Promise<MetlifeVidaRaw[]> {
-    let url = '/cobranza/vida';
-    const params = new URLSearchParams();
-    if (startDate) params.set('start_date', startDate);
-    if (endDate) params.set('end_date', endDate);
+export async function getCobranzaVida(startDate?: string, endDate?: string, insurer: string = 'Metlife'): Promise<CobranzaVida[] | CobranzaSura[]> {
+    const params: Record<string, string> = { insurer };
+    if (startDate) params.start_date = startDate;
+    if (endDate) params.end_date = endDate;
 
-    if (params.toString()) {
-        url += `?${params.toString()}`;
+    const queryString = new URLSearchParams(params).toString();
+
+    if (insurer === 'SURA') {
+        return fetchFromApi<CobranzaSura[]>(`/cobranza/vida?${queryString}`);
     }
 
-    return fetchFromApi<MetlifeVidaRaw[]>(url);
+    return fetchFromApi<CobranzaVida[]>(`/cobranza/vida?${queryString}`);
 }
 
-export async function getCobranzaGMM(startDate?: string, endDate?: string): Promise<MetlifeGMMRaw[]> {
-    let url = '/cobranza/gmm';
-    const params = new URLSearchParams();
-    if (startDate) params.set('start_date', startDate);
-    if (endDate) params.set('end_date', endDate);
+export async function getCobranzaGMM(startDate?: string, endDate?: string, insurer: string = 'Metlife'): Promise<CobranzaGMM[] | CobranzaSura[]> {
+    const params: Record<string, string> = { insurer };
+    if (startDate) params.start_date = startDate;
+    if (endDate) params.end_date = endDate;
 
-    if (params.toString()) {
-        url += `?${params.toString()}`;
+    const queryString = new URLSearchParams(params).toString();
+
+    if (insurer === 'SURA') {
+        return fetchFromApi<CobranzaSura[]>(`/cobranza/gmm?${queryString}`);
     }
 
-    return fetchFromApi<MetlifeGMMRaw[]>(url);
+    return fetchFromApi<CobranzaGMM[]>(`/cobranza/gmm?${queryString}`);
 }
