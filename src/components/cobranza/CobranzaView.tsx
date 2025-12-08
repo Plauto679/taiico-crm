@@ -147,13 +147,13 @@ export function CobranzaView({ vidaData = [], gmmData = [], suraData = [], insur
                     {insurer === 'Metlife' && (
                         <>
                             <button
-                                className={`px-4 py-2 font-medium ${activeTab === 'VIDA' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+                                className={`px-4 py-2 font-medium ${activeTab === 'VIDA' ? 'border-b-2 border-white text-white' : 'text-white/70 hover:text-white'}`}
                                 onClick={() => setActiveTab('VIDA')}
                             >
                                 Vida
                             </button>
                             <button
-                                className={`px-4 py-2 font-medium ${activeTab === 'GMM' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+                                className={`px-4 py-2 font-medium ${activeTab === 'GMM' ? 'border-b-2 border-white text-white' : 'text-white/70 hover:text-white'}`}
                                 onClick={() => setActiveTab('GMM')}
                             >
                                 GMM
@@ -161,7 +161,7 @@ export function CobranzaView({ vidaData = [], gmmData = [], suraData = [], insur
                         </>
                     )}
                     {insurer === 'SURA' && (
-                        <span className="px-4 py-2 font-medium border-b-2 border-blue-600 text-blue-600">
+                        <span className="px-4 py-2 font-medium border-b-2 border-white text-white">
                             SURA Cobranza
                         </span>
                     )}

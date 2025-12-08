@@ -37,7 +37,7 @@ export default async function CobranzaPage({
         <div className="flex flex-col h-full">
             <div className="flex-none p-8 pb-4 space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <h1 className="text-2xl font-bold text-gray-900">Cobranza</h1>
+                    <h1 className="text-2xl font-bold text-white">Cobranza</h1>
 
                     {/* Insurer Selector */}
                     <div className="inline-flex rounded-md shadow-sm" role="group">
