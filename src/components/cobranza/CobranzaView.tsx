@@ -2,17 +2,18 @@
 
 import { useState } from 'react';
 import { DataTable } from '@/components/ui/DataTable';
-import { CobranzaGMM, CobranzaVida, CobranzaSura } from '@/lib/types/cobranza';
+import { CobranzaGMM, CobranzaVida, CobranzaSura, CobranzaAarco } from '@/lib/types/cobranza';
 import { exportToExcel } from '@/lib/utils/export';
 
 interface CobranzaViewProps {
     vidaData?: CobranzaVida[];
     gmmData?: CobranzaGMM[];
     suraData?: CobranzaSura[];
+    aarcoData?: CobranzaAarco[];
     insurer?: string;
 }
 
-export function CobranzaView({ vidaData = [], gmmData = [], suraData = [], insurer = 'Metlife' }: CobranzaViewProps) {
+export function CobranzaView({ vidaData = [], gmmData = [], suraData = [], aarcoData = [], insurer = 'Metlife' }: CobranzaViewProps) {
     const [activeTab, setActiveTab] = useState<'VIDA' | 'GMM'>('VIDA');
 
     const handleExport = () => {
@@ -25,6 +26,9 @@ export function CobranzaView({ vidaData = [], gmmData = [], suraData = [], insur
         } else if (insurer === 'SURA') {
             data = suraData;
             prefix = `Cobranza_SURA`;
+        } else if (insurer === 'AARCO_AXA') {
+            data = aarcoData;
+            prefix = `Cobranza_AARCO_AXA`;
         }
 
         const fileName = `${prefix}_${new Date().toISOString().split('T')[0]}.xlsx`;
@@ -140,6 +144,42 @@ export function CobranzaView({ vidaData = [], gmmData = [], suraData = [], insur
         { header: 'Fecha Aplicación', accessorKey: 'Fecha aplicación de la póliza' as keyof CobranzaSura },
     ];
 
+    const aarcoColumns = [
+        { header: 'CIA', accessorKey: 'CIA' as keyof CobranzaAarco },
+        { header: 'Póliza', accessorKey: 'NUM_POL' as keyof CobranzaAarco },
+        { header: 'Cliente', accessorKey: 'CLIENTE' as keyof CobranzaAarco },
+        { header: 'Prospectador', accessorKey: 'PROSPECTADOR' as keyof CobranzaAarco },
+        { header: 'Fecha Cobro', accessorKey: 'F_COBRO' as keyof CobranzaAarco },
+        {
+            header: 'Prima Neta',
+            accessorKey: (row: CobranzaAarco) => {
+                if (row['PRIMA_NETA_MN'] === undefined || row['PRIMA_NETA_MN'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['PRIMA_NETA_MN']);
+            }
+        },
+        {
+            header: 'Comisión Apli.',
+            accessorKey: (row: CobranzaAarco) => {
+                if (row['COM_APL_MN'] === undefined || row['COM_APL_MN'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['COM_APL_MN']);
+            }
+        },
+        {
+            header: '% Com. Prosp.',
+            accessorKey: (row: CobranzaAarco) => {
+                if (row['% COMISION PROSPECTADOR'] === undefined || row['% COMISION PROSPECTADOR'] === null) return '-';
+                return row['% COMISION PROSPECTADOR']; // Assuming it's already a percentage number or we can format if needed. User just said money format for others.
+            }
+        },
+        {
+            header: '$ Com. Prosp.',
+            accessorKey: (row: CobranzaAarco) => {
+                if (row['$ COMISION PROSPECTADOR'] === undefined || row['$ COMISION PROSPECTADOR'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['$ COMISION PROSPECTADOR']);
+            }
+        },
+    ];
+
     return (
         <div className="flex flex-col h-full space-y-4">
             <div className="flex items-center justify-between border-b pb-2 flex-none">
@@ -165,6 +205,11 @@ export function CobranzaView({ vidaData = [], gmmData = [], suraData = [], insur
                             SURA Cobranza
                         </span>
                     )}
+                    {insurer === 'AARCO_AXA' && (
+                        <span className="px-4 py-2 font-medium border-b-2 border-white text-white">
+                            AARCO & AXA Cobranza
+                        </span>
+                    )}
                 </div>
                 <button
                     onClick={handleExport}
@@ -181,8 +226,10 @@ export function CobranzaView({ vidaData = [], gmmData = [], suraData = [], insur
                     ) : (
                         <DataTable data={gmmData} columns={gmmColumns} className="h-full overflow-auto" />
                     )
-                ) : (
+                ) : insurer === 'SURA' ? (
                     <DataTable data={suraData} columns={suraColumns} className="h-full overflow-auto" />
+                ) : (
+                    <DataTable data={aarcoData} columns={aarcoColumns} className="h-full overflow-auto" />
                 )}
             </div>
         </div>

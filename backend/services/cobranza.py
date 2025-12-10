@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 import pandas as pd
-from config import METLIFE_PATHS, SURA_PATHS, SHEET_NAMES
+from config import METLIFE_PATHS, SURA_PATHS, AARCO_PATHS, SHEET_NAMES
 import numpy as np
 from typing import Optional, List
 from datetime import datetime, timedelta
@@ -136,6 +136,36 @@ def clean_sura_cobranza(df: pd.DataFrame) -> pd.DataFrame:
             
     return df[requested_cols].replace({np.nan: None})
 
+def clean_aarco(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean and normalize AARCO/AXA Cobranza data.
+    """
+    # Columns: ['CIA', 'NUM_POL', 'CLIENTE', 'PROSPECTADOR', 'F_COBRO', 'PRIMA_NETA_MN', 'COM_APL_MN', '% COMISION PROSPECTADOR', '$ COMISION PROSPECTADOR']
+    
+    df.columns = df.columns.str.strip()
+    
+    # Date conversion
+    if 'F_COBRO' in df.columns:
+        df['F_COBRO'] = df['F_COBRO'].apply(parse_date)
+        
+    # Money conversion
+    money_cols = ['PRIMA_NETA_MN', 'COM_APL_MN', '$ COMISION PROSPECTADOR']
+    for col in money_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(clean_money)
+            
+    requested_cols = [
+        'CIA', 'NUM_POL', 'CLIENTE', 'PROSPECTADOR', 'F_COBRO', 
+        'PRIMA_NETA_MN', 'COM_APL_MN', '% COMISION PROSPECTADOR', 
+        '$ COMISION PROSPECTADOR'
+    ]
+    
+    for col in requested_cols:
+        if col not in df.columns:
+            df[col] = None
+            
+    return df[requested_cols].replace({np.nan: None})
+
 @router.get("/vida")
 async def get_cobranza_vida(
     start_date: Optional[str] = Query(None, description="Start date YYYY-MM-DD"),
@@ -172,10 +202,21 @@ async def get_cobranza_vida(
             # Optional: Filter by 'Daños/Vida' if we want to mimic the endpoint structure
             # But SURA might be mixed. Let's return all for now or filter if 'Vida' is in the column.
             return df.to_dict(orient="records")
+        
+        elif insurer.upper() == "AARCO_AXA":
+            df = pd.read_excel(AARCO_PATHS["COBRANZA"])
+            df = clean_aarco(df)
+            
+            if start_date and end_date:
+                if 'F_COBRO' in df.columns:
+                    mask = (df['F_COBRO'] >= start_date) & (df['F_COBRO'] <= end_date)
+                    df = df[mask]
+            
+            return df.to_dict(orient="records")
             
         return []
     except Exception as e:
-        print(f"Error loading Cobranza Vida: {e}")
+        print(f"Error loading Cobranza: {e}")
         return []
 
 @router.get("/gmm")
@@ -207,6 +248,12 @@ async def get_cobranza_gmm(
                     mask = (df['Fecha aplicación de la póliza'] >= start_date) & (df['Fecha aplicación de la póliza'] <= end_date)
                     df = df[mask]
             return df.to_dict(orient="records")
+        
+        elif insurer.upper() == "AARCO_AXA":
+            # For AARCO_AXA we return nothing here as it's not GMM specific, 
+            # we will return it in the /vida endpoint or create a new one but frontend uses these.
+            # Best to return it in one of them. Let's redirect to use /vida for simple list fetching.
+            return []
 
         return []
     except Exception as e:

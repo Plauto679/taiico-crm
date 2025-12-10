@@ -25,6 +25,10 @@ SURA_PATHS = {
     "CARTERA": BASE_DIR / "Relaciones de cartera" / "Cartera SURA.xlsx",
 }
 
+AARCO_PATHS = {
+    "COBRANZA": BASE_DIR / "Bases de cobranza y comisiones" / "AARCO base cobranza.xlsx",
+}
+
 USERS_DB = BASE_DIR / "Users" / "Users & Passwords.xlsx"
 
 SHEET_NAMES = {
