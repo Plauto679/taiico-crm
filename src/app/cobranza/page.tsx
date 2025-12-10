@@ -30,7 +30,7 @@ export default async function CobranzaPage({
         suraData = await getCobranzaVida(startDate, endDate, insurer) as CobranzaSura[];
     } else if (insurer === 'AARCO_AXA') {
         // Fetch AARCO & AXA Data
-        aarcoData = await getCobranzaVida(startDate, endDate, insurer) as CobranzaAarco[];
+        aarcoData = (await getCobranzaVida(startDate, endDate, insurer)) as unknown as CobranzaAarco[];
     }
 
     return (
