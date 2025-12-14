@@ -15,6 +15,7 @@ cd ..
 
 echo "[2/2] Installing Frontend Dependencies..."
 npm install
+npm install recharts
 
 echo "========================================="
 echo "        Installation Complete!           "

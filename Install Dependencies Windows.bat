@@ -10,6 +10,7 @@ cd ..
 
 echo [2/2] Installing Frontend Dependencies...
 call npm install
+call npm install recharts
 
 echo =========================================
 echo         Installation Complete!           
