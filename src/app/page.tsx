@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { DollarSign, Calendar, Users } from 'lucide-react';
+import { DollarSign, Calendar, Users, BarChart3 } from 'lucide-react';
 
 export default function Home() {
   return (
@@ -16,7 +16,7 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-8 md:grid-cols-3 w-full max-w-5xl">
+      <div className="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-4 w-full max-w-6xl">
         <Link href="/cobranza" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-blue-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
           <div className="flex flex-col items-center text-center space-y-4">
             <div className="rounded-full bg-blue-100 p-4 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors duration-300">
@@ -49,6 +49,18 @@ export default function Home() {
             <div>
               <h2 className="text-2xl font-bold text-gray-900">Cartera</h2>
               <p className="text-gray-500 mt-2">Perfiles de clientes y pólizas</p>
+            </div>
+          </div>
+        </Link>
+
+        <Link href="/dashboards" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-orange-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
+          <div className="flex flex-col items-center text-center space-y-4">
+            <div className="rounded-full bg-orange-100 p-4 text-orange-600 group-hover:bg-orange-600 group-hover:text-white transition-colors duration-300">
+              <BarChart3 className="h-8 w-8" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">Dashboards</h2>
+              <p className="text-gray-500 mt-2">Visualización de datos y métricas</p>
             </div>
           </div>
         </Link>
