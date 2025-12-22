@@ -11,6 +11,7 @@ export interface RenovacionGMM {
     COASEGURO?: number; // Optional as it wasn't strictly in the display list but is useful
     ESTATUS_DE_RENOVACION?: string;
     EXPEDIENTE?: string;
+    Email?: string;
 }
 
 export interface RenovacionVida {
@@ -26,6 +27,7 @@ export interface RenovacionVida {
     PAGADO_HASTA: string; // Date YYYY-MM-DD
     ESTATUS_DE_RENOVACION?: string;
     EXPEDIENTE?: string;
+    Email?: string;
 }
 
 export interface RenovacionSura {
@@ -39,6 +41,7 @@ export interface RenovacionSura {
     PROSPECTADOR: string;
     ESTATUS_DE_RENOVACION: string;
     EXPEDIENTE?: string;
+    Email?: string;
 }
 
 // Union type for cases where we might handle them generically, though usually we won't

@@ -107,7 +107,8 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
             header: 'Expediente',
             accessorKey: 'EXPEDIENTE' as keyof RenovacionVida,
             cell: (info: any) => renderExpedienteLink(info.row.original)
-        }
+        },
+        { header: 'Email', accessorKey: 'Email' as keyof RenovacionVida }
     ];
 
     const gmmColumns = [
@@ -150,7 +151,8 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
             header: 'Expediente',
             accessorKey: 'EXPEDIENTE' as keyof RenovacionGMM,
             cell: (info: any) => renderExpedienteLink(info.row.original)
-        }
+        },
+        { header: 'Email', accessorKey: 'Email' as keyof RenovacionGMM }
     ];
 
     const suraColumns = [
@@ -173,7 +175,8 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
             header: 'Expediente',
             accessorKey: 'EXPEDIENTE' as keyof RenovacionSura,
             cell: (info: any) => renderExpedienteLink(info.row.original)
-        }
+        },
+        { header: 'Email', accessorKey: 'Email' as keyof RenovacionSura }
     ];
 
     return (
@@ -250,6 +253,17 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                             : selectedRow.POLIZA
                     }
                     insurer={insurer}
+                    type={insurer === 'Metlife' ? activeTab : 'ALL'}
+                    clientName={
+                        insurer === 'Metlife'
+                            ? selectedRow.CONTRATANTE
+                            : selectedRow.NOMBRE
+                    }
+                    endDate={
+                        insurer === 'Metlife'
+                            ? (activeTab === 'VIDA' ? selectedRow.FIN_VIG : selectedRow.FFINVIG)
+                            : selectedRow['FIN VIGENCIA']
+                    }
                 />
             )}
         </div>

@@ -5,6 +5,103 @@ from datetime import datetime, timedelta
 from config import METLIFE_PATHS, SURA_PATHS, SHEET_NAMES
 import numpy as np
 import os
+import smtplib
+from email.message import EmailMessage
+from pathlib import Path
+from config import METLIFE_PATHS, SURA_PATHS, SHEET_NAMES, CLIENT_EMAILS_PATH
+
+# Load env variables if not already loaded (simple loader as per user usage)
+# Since we created .env in backend/, we can load it.
+ENV_PATH = Path('backend/.env').resolve() if os.path.exists('backend/.env') else Path('.env').resolve()
+
+def load_env_file():
+    if not ENV_PATH.exists():
+        return
+    for raw_line in ENV_PATH.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+load_env_file()
+
+def normalize_name(value: str) -> str:
+    if not value:
+        return ""
+    return " ".join(str(value).strip().upper().split())
+
+def get_client_email(client_name: str) -> Optional[str]:
+    """
+    Search for client email in CLIENT_EMAILS_PATH.
+    """
+    if not CLIENT_EMAILS_PATH.exists():
+        print(f"Client emails file found: {CLIENT_EMAILS_PATH}")
+        return None
+        
+    try:
+        df = pd.read_excel(CLIENT_EMAILS_PATH)
+        # Columns: 'Clientes', 'Mail'
+        if 'Clientes' not in df.columns or 'Mail' not in df.columns:
+            print("Columns 'Clientes' or 'Mail' not found in email file")
+            return None
+            
+        norm_name = normalize_name(client_name)
+        df['__norm'] = df['Clientes'].apply(normalize_name)
+        
+        match = df[df['__norm'] == norm_name]
+        if not match.empty:
+            return str(match.iloc[0]['Mail']).strip()
+            
+        return None
+    except Exception as e:
+        print(f"Error reading client emails: {e}")
+        return None
+
+def send_email_smtp(subject: str, body: str, recipients: List[str], attachments: List[dict] = []):
+    host = os.environ.get("SMTP_HOST")
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    user = os.environ.get("SMTP_USER")
+    password = os.environ.get("SMTP_PASSWORD")
+    sender = os.environ.get("SMTP_SENDER", user)
+    use_starttls = os.environ.get("SMTP_USE_STARTTLS", "true").lower() in {"1", "true", "yes"}
+
+    if not all([host, user, password, sender]):
+        raise RuntimeError("Missing SMTP configuration")
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = sender
+    message["To"] = ", ".join(recipients)
+    
+    # CCs
+    cc_list = ["pamela.alfaro@taiico.com", "clientes@taiico.com", "christopher.tinoco@taiico.com"]
+    message["Cc"] = ", ".join(cc_list)
+    
+    message.set_content(body)
+
+    for att in attachments:
+        name = att.get("name")
+        content = att.get("content")
+        if name and content:
+            message.add_attachment(
+                content,
+                maintype="application",
+                subtype="octet-stream", # Generic binary
+                filename=name,
+            )
+
+    with smtplib.SMTP(host, port) as server:
+        if use_starttls:
+            server.starttls()
+        server.login(user, password)
+        server.send_message(message)
+
 
 router = APIRouter(
     prefix="/renovaciones",
@@ -85,7 +182,7 @@ def clean_gmm(df: pd.DataFrame) -> pd.DataFrame:
     requested_cols = [
         "NPOLIZA", "POLORIG", "CONTRATANTE", "FFINVIG", 
         "PRIMA.1", "IVA", "NOMBREL", "DEDUCIBLE", "PAGADOHASTA",
-        "COASEGURO", "ESTATUS_DE_RENOVACION", "EXPEDIENTE"
+        "COASEGURO", "ESTATUS_DE_RENOVACION", "EXPEDIENTE", "Email"
     ]
     
     # Ensure all columns exist
@@ -121,7 +218,7 @@ def clean_vida(df: pd.DataFrame) -> pd.DataFrame:
         "POLIZA_ACTUAL", "CONTRATANTE", "INI_VIG", 
         "FIN_VIG", "FORMA_PAGO", "CONDUCTO_COBRO", 
         "AGENTE", "PRIMA_ANUAL", "PRIMA_MODAL", "PAGADO_HASTA",
-        "ESTATUS_DE_RENOVACION", "EXPEDIENTE"
+        "ESTATUS_DE_RENOVACION", "EXPEDIENTE", "Email"
     ]
     
     # Ensure all columns exist
@@ -150,7 +247,7 @@ def clean_sura(df: pd.DataFrame) -> pd.DataFrame:
     requested_cols = [
         "POLIZA", "NOMBRE", "INICIO VIGENCIA", "FIN VIGENCIA", 
         "RAMO", "PRIMA", "PERIODICIDAD_PAGO", "PROSPECTADOR", 
-        "ESTATUS_DE_RENOVACION", "EXPEDIENTE"
+        "ESTATUS_DE_RENOVACION", "EXPEDIENTE", "Email"
     ]
     
     for col in requested_cols:
@@ -259,8 +356,14 @@ async def update_renewal_status(
             id_col = "NPOLIZA"
     elif insurer.lower() == "sura":
         file_path = SURA_PATHS["RENOVACIONES"]
-        sheet_name = 0 # Default sheet for SURA
-        id_col = "POLIZA"
+        # Determine actual sheet name for SURA
+        try:
+            xl = pd.ExcelFile(file_path)
+            sheet_name = xl.sheet_names[0] # Use the first sheet
+            id_col = "POLIZA"
+        except Exception as e:
+            print(f"Error getting sheet name for SURA: {e}")
+            raise HTTPException(status_code=500, detail="Error accessing SURA file")
         
     if not file_path or not os.path.exists(file_path):
         print(f"File not found: {file_path}")
@@ -310,7 +413,7 @@ async def update_renewal_status(
         # Save back to Excel
         print("Saving changes...")
         with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-            df.to_excel(writer, sheet_name=sheet_name if isinstance(sheet_name, str) else "Sheet1", index=False)
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
             
         print("Update successful")
         return {"message": "Policy updated successfully"}
@@ -324,6 +427,141 @@ async def update_renewal_status(
 async def get_renovaciones_vida(days: int = 30):
     return await get_upcoming_renewals(days=days, insurer="Metlife", type="VIDA")
 
-@router.get("/gmm")
-async def get_renovaciones_gmm(days: int = 30):
-    return await get_upcoming_renewals(days=days, insurer="Metlife", type="GMM")
+@router.post("/send-email")
+async def send_renewal_email_endpoint(
+    insurer: str = Body(..., embed=True),
+    type: str = Body(..., embed=True),
+    policy_number: str | int = Body(..., embed=True),
+    client_name: str = Body(..., embed=True),
+    end_date: str = Body(..., embed=True), # Fin de Vigencia
+    expediente: Optional[str] = Body(None, embed=True)
+):
+    """
+    Send renewal email to the client using SMTP.
+    Matches client name to email, constructs body, sends email, and updates 'Email' column.
+    """
+    print(f"Sending email for: {client_name}, Policy: {policy_number}")
+    
+    # 1. Get Client Email
+    recipient_email = get_client_email(client_name)
+    if not recipient_email:
+        raise HTTPException(status_code=404, detail=f"No existe correo para cliente {client_name}. Favor de agregarlo en la base de 'Clientes Correos Taiico'.")
+
+    # 2. Build Email Content
+    subject = f"Renovacion {policy_number} {client_name}"
+    
+    body = (
+        f"Buen día,\n"
+        f"Comparto póliza {policy_number} con fecha Fin de Vigencia {end_date}.\n\n"
+        f"La renovacion se encuentra adjunta en el correo.\n"
+        f"Nos mantenemos en contacto para cualquier duda\n\n"
+        f"Atentamente Taiico Life Advisors"
+    )
+
+    # 3. Handle Attachments (Expediente)
+    # Expediente can be a folder path. If so, attach all files inside.
+    attachments = []
+    
+    if expediente:
+        # Clean path: remove quotes if present, strip whitespace
+        expediente = expediente.strip().strip("'").strip('"')
+        print(f"Processing Expediente path: {expediente}")
+        
+        if os.path.exists(expediente):
+            if os.path.isdir(expediente):
+                print(f"Path is a directory: {expediente}")
+                # Is a directory, walk through it (non-recursive for now, or just top level files?)
+                # User said "all the files that are inside". I'll assume top-level files to avoid nested chaos.
+                try:
+                    files = os.listdir(expediente)
+                    print(f"Found {len(files)} files in directory")
+                    for filename in files:
+                        file_path = os.path.join(expediente, filename)
+                        if os.path.isfile(file_path):
+                            # Skip hidden files
+                            if filename.startswith('.'):
+                                continue
+                            try:
+                                with open(file_path, "rb") as f:
+                                    attachments.append({
+                                        "name": filename,
+                                        "content": f.read()
+                                    })
+                            except Exception as e:
+                                print(f"Error reading file {filename}: {e}")
+                except Exception as e:
+                     print(f"Error reading directory {expediente}: {e}")
+
+            elif os.path.isfile(expediente):
+                 # Is a file
+                try:
+                    with open(expediente, "rb") as f:
+                        attachments.append({
+                            "name": os.path.basename(expediente),
+                            "content": f.read()
+                        })
+                except Exception as e:
+                    print(f"Error reading file {expediente}: {e}")
+        
+        elif expediente.startswith("http"):
+             body += f"\n\nLink al expediente: {expediente}"
+    
+    # 4. Send Email
+    try:
+        recipients = [r.strip() for r in recipient_email.split(",") if r.strip()]
+        send_email_smtp(subject, body, recipients, attachments)
+    except Exception as e:
+        print(f"SMTP Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al enviar correo: {str(e)}")
+
+    # 5. Update 'Email' column in source file to 'Enviado'
+    # Reuse update logic or copy-paste simplified version
+    try:
+        file_path = None
+        sheet_name = None
+        id_col = None
+        
+        if insurer.lower() == "metlife":
+            if type.upper() == "VIDA":
+                file_path = METLIFE_PATHS["RENOVACIONES_VIDA"]
+                sheet_name = SHEET_NAMES["RENOVACIONES_VIDA"]
+                id_col = "POLIZA_ACTUAL"
+            elif type.upper() == "GMM":
+                file_path = METLIFE_PATHS["RENOVACIONES_GMM"]
+                sheet_name = SHEET_NAMES["RENOVACIONES_GMM"]
+                id_col = "NPOLIZA"
+        elif insurer.lower() == "sura":
+            file_path = SURA_PATHS["RENOVACIONES"]
+            # Determine actual sheet name for SURA
+            if os.path.exists(file_path):
+                 xl = pd.ExcelFile(file_path)
+                 sheet_name = xl.sheet_names[0]
+            else:
+                 sheet_name = "Sheet1" # Fallback
+            id_col = "POLIZA"
+            
+        if file_path and os.path.exists(file_path):
+            df = pd.read_excel(file_path, sheet_name=sheet_name)
+            if "Email" not in df.columns:
+                df["Email"] = None
+            
+            policy_str = str(policy_number).strip()
+            df['__id_str'] = df[id_col].astype(str).str.strip().str.replace('.0', '', regex=False)
+            policy_str_clean = policy_str.replace('.0', '')
+            
+            mask = df['__id_str'] == policy_str_clean
+            if mask.any():
+                df.loc[mask, "Email"] = "Enviado"
+                df = df.drop(columns=['__id_str'])
+                with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+                    df.to_excel(writer, sheet_name=sheet_name, index=False)
+            else:
+                print("Policy not found for updating Email status")
+
+    except Exception as e:
+        print(f"Error updating Excel status: {e}")
+        # Don't fail the request if email sent but excel update failed? Or warn?
+        # User requirement: "whenever the email is sucesfully sent, the value of the column 'Email' should say 'Enviado'"
+        
+
+    return {"message": f"Correo enviado a {recipient_email}"}

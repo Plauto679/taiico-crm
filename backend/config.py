@@ -29,6 +29,8 @@ AARCO_PATHS = {
     "COBRANZA": BASE_DIR / "Bases de cobranza y comisiones" / "AARCO base cobranza.xlsx",
 }
 
+CLIENT_EMAILS_PATH = BASE_DIR / "Correos de los clientes" / "Clientes Correos Taiico.xlsx"
+
 USERS_DB = BASE_DIR / "Users" / "Users & Passwords.xlsx"
 
 SHEET_NAMES = {

@@ -44,3 +44,27 @@ export async function updateRenewalStatus(
         }),
     });
 }
+
+export async function sendRenewalEmail(
+    insurer: string,
+    type: string,
+    policyNumber: string | number,
+    clientName: string,
+    endDate: string,
+    expediente?: string
+): Promise<any> {
+    return fetchFromApi('/renovaciones/send-email', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            insurer,
+            type,
+            policy_number: policyNumber,
+            client_name: clientName,
+            end_date: endDate,
+            expediente: expediente
+        }),
+    });
+}
