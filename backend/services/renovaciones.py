@@ -8,7 +8,7 @@ import os
 import smtplib
 from email.message import EmailMessage
 from pathlib import Path
-from config import METLIFE_PATHS, SURA_PATHS, SHEET_NAMES, CLIENT_EMAILS_PATH
+from config import METLIFE_PATHS, SURA_PATHS, AARCO_PATHS, SHEET_NAMES, CLIENT_EMAILS_PATH
 
 # Load env variables if not already loaded (simple loader as per user usage)
 # Since we created .env in backend/, we can load it.
@@ -326,6 +326,20 @@ async def get_upcoming_renewals(
         except Exception as e:
             print(f"Error loading SURA: {e}")
 
+    elif insurer.upper() == "AARCO_AXA":
+        try:
+            df_aarco = pd.read_excel(AARCO_PATHS["RENOVACIONES"])
+            df_aarco = clean_aarco(df_aarco)
+            
+            # Filter by date on FIN VIG ACTUAL
+            if "FIN VIG ACTUAL" in df_aarco.columns:
+                mask = (df_aarco["FIN VIG ACTUAL"] >= start_str) & (df_aarco["FIN VIG ACTUAL"] <= end_str)
+                df_aarco = df_aarco[mask]
+                
+            results.extend(clean_data(df_aarco))
+        except Exception as e:
+            print(f"Error loading AARCO: {e}")
+
     return results
 
 @router.post("/update")
@@ -364,7 +378,24 @@ async def update_renewal_status(
         except Exception as e:
             print(f"Error getting sheet name for SURA: {e}")
             raise HTTPException(status_code=500, detail="Error accessing SURA file")
-        
+
+    elif insurer.upper() == "AARCO_AXA":
+        file_path = AARCO_PATHS["RENOVACIONES"]
+        # Determine actual sheet name
+        try:
+            xl = pd.ExcelFile(file_path)
+            sheet_name = xl.sheet_names[0]
+            # Use exact ID col from user description or cleaned df? 
+            # In update, we read raw excel, so we need raw column name.
+            # User provided: "NUM POL  ACTUAL" (two spaces in description).
+            # But wait, if we read raw, we must match raw.
+            # actually, let's normalize columns in the raw df immediately after read to be safe?
+            # Or just use the double space here.
+            id_col = "NUM POL  ACTUAL" 
+        except Exception as e:
+             print(f"Error getting sheet name for AARCO: {e}")
+             raise HTTPException(status_code=500, detail="Error accessing AARCO file")
+             
     if not file_path or not os.path.exists(file_path):
         print(f"File not found: {file_path}")
         raise HTTPException(status_code=404, detail="File not found")
@@ -389,6 +420,18 @@ async def update_renewal_status(
         policy_str = str(policy_number).strip()
         
         # Create a temporary string column for matching
+        # Handle the column mapping for AARCO if needed
+        # If we didn't rename cols in df yet, we access by id_col
+        
+        if id_col not in df.columns and insurer.upper() == "AARCO_AXA":
+             # Try double space version if single space not found
+             if "NUM POL  ACTUAL" in df.columns:
+                 id_col = "NUM POL  ACTUAL"
+                 
+        if id_col not in df.columns:
+             print(f"ID Column {id_col} not found in {df.columns.tolist()}")
+             raise HTTPException(status_code=500, detail=f"ID Column {id_col} not found")
+
         df['__id_str'] = df[id_col].astype(str).str.strip().str.replace('.0', '', regex=False)
         policy_str_clean = policy_str.replace('.0', '')
         
@@ -539,6 +582,14 @@ async def send_renewal_email_endpoint(
             else:
                  sheet_name = "Sheet1" # Fallback
             id_col = "POLIZA"
+        elif insurer.upper() == "AARCO_AXA":
+            file_path = AARCO_PATHS["RENOVACIONES"]
+            if os.path.exists(file_path):
+                 xl = pd.ExcelFile(file_path)
+                 sheet_name = xl.sheet_names[0]
+            else:
+                 sheet_name = "Sheet1"
+            id_col = "NUM POL ACTUAL"
             
         if file_path and os.path.exists(file_path):
             df = pd.read_excel(file_path, sheet_name=sheet_name)
@@ -565,3 +616,46 @@ async def send_renewal_email_endpoint(
         
 
     return {"message": f"Correo enviado a {recipient_email}"}
+
+def clean_aarco(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean and normalize AARCO & AXA data.
+    """
+    # Columns requested: "NUM POL ACTUAL", "CIA ACTUAL", "Ramo", "PRODUCTO ACTUAL", "INI VIG ACTUAL", "FIN VIG ACTUAL", "CLIENTE ACTUAL", "P NET NEGOCIO MN ACTUAL" + Status cols
+    
+    # 0. Normalize Column Names
+    # User's file has "NUM POL  ACTUAL" (double space), we want single space
+    df.columns = [c.replace("  ", " ") for c in df.columns]
+
+    # 1. Date Conversion
+    date_cols = ["INI VIG ACTUAL", "FIN VIG ACTUAL"]
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(parse_vida_date) # Generic parser
+
+    # 2. Money Conversion
+    money_cols = ["P NET NEGOCIO MN ACTUAL"]
+    for col in money_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(clean_money)
+
+    requested_cols = [
+        "NUM POL ACTUAL", "CIA ACTUAL", "Ramo", "PRODUCTO ACTUAL", 
+        "INI VIG ACTUAL", "FIN VIG ACTUAL", "CLIENTE ACTUAL", 
+        "P NET NEGOCIO MN ACTUAL",
+        "ESTATUS_DE_RENOVACION", "EXPEDIENTE", "Email"
+    ]
+    
+    # Ensure all columns exist
+    for col in requested_cols:
+        if col not in df.columns:
+            # Try some common mappings if exact name not found?
+            # User provided explicit list, so likely they exist.
+            # Except maybe "Email" which is "EMAIL" in user input description?
+            if col == "Email" and "EMAIL" in df.columns:
+                df["Email"] = df["EMAIL"]
+            else:
+                df[col] = None
+            
+    return df[requested_cols]
+

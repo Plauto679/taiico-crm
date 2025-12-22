@@ -1,5 +1,5 @@
 import { fetchFromApi } from '@/lib/api';
-import { RenovacionGMM, RenovacionVida, RenovacionSura } from '@/lib/types/renovaciones';
+import { RenovacionGMM, RenovacionVida, RenovacionSura, RenovacionAarco } from '@/lib/types/renovaciones';
 
 export async function getUpcomingRenewals(
     days: number = 30,
@@ -7,7 +7,7 @@ export async function getUpcomingRenewals(
     insurer: string = 'Metlife',
     startDate?: string,
     endDate?: string
-): Promise<(RenovacionGMM | RenovacionVida | RenovacionSura)[]> {
+): Promise<(RenovacionGMM | RenovacionVida | RenovacionSura | RenovacionAarco)[]> {
     const params: Record<string, string> = {
         days: days.toString(),
         type,
@@ -20,7 +20,7 @@ export async function getUpcomingRenewals(
     const queryString = new URLSearchParams(params).toString();
     console.log(`Fetching Renovaciones: /renovaciones/upcoming?${queryString}`);
 
-    return fetchFromApi<(RenovacionGMM | RenovacionVida | RenovacionSura)[]>(`/renovaciones/upcoming?${queryString}`);
+    return fetchFromApi<(RenovacionGMM | RenovacionVida | RenovacionSura | RenovacionAarco)[]>(`/renovaciones/upcoming?${queryString}`);
 }
 
 export async function updateRenewalStatus(

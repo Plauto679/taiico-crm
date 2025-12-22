@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { DataTable } from '@/components/ui/DataTable';
-import { RenovacionGMM, RenovacionVida, RenovacionSura } from '@/lib/types/renovaciones';
+import { RenovacionGMM, RenovacionVida, RenovacionSura, RenovacionAarco } from '@/lib/types/renovaciones';
 import { exportToExcel } from '@/lib/utils/export';
 import { updateRenewalStatus } from '@/modules/renovaciones/service';
 import { EditStatusModal } from './EditStatusModal';
@@ -11,10 +11,11 @@ interface RenovacionesViewProps {
     vidaRenewals?: RenovacionVida[];
     gmmRenewals?: RenovacionGMM[];
     suraRenewals?: RenovacionSura[];
+    aarcoRenewals?: RenovacionAarco[];
     insurer: string;
 }
 
-export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRenewals = [], insurer }: RenovacionesViewProps) {
+export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRenewals = [], aarcoRenewals = [], insurer }: RenovacionesViewProps) {
     const [activeTab, setActiveTab] = useState<'VIDA' | 'GMM'>('VIDA');
     const [selectedRow, setSelectedRow] = useState<any>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -29,6 +30,9 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         } else if (insurer === 'SURA') {
             data = suraRenewals;
             prefix = `Renovaciones_SURA`;
+        } else if (insurer === 'AARCO_AXA') {
+            data = aarcoRenewals;
+            prefix = `Renovaciones_AARCO_AXA`;
         }
 
         const fileName = `${prefix}_${new Date().toISOString().split('T')[0]}.xlsx`;
@@ -52,6 +56,9 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         } else if (insurer === 'SURA') {
             type = 'ALL';
             id = selectedRow.POLIZA;
+        } else if (insurer === 'AARCO_AXA') {
+            type = 'ALL';
+            id = selectedRow['NUM POL ACTUAL'];
         }
 
         await updateRenewalStatus(insurer, type, id, newStatus, expediente);
@@ -179,6 +186,30 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         { header: 'Email', accessorKey: 'Email' as keyof RenovacionSura }
     ];
 
+    const aarcoColumns = [
+        { header: 'Póliza', accessorKey: 'NUM POL ACTUAL' as keyof RenovacionAarco },
+        { header: 'Aseguradora', accessorKey: 'CIA ACTUAL' as keyof RenovacionAarco },
+        { header: 'Ramo', accessorKey: 'Ramo' as keyof RenovacionAarco },
+        { header: 'Producto', accessorKey: 'PRODUCTO ACTUAL' as keyof RenovacionAarco },
+        { header: 'Inicio Vigencia', accessorKey: 'INI VIG ACTUAL' as keyof RenovacionAarco },
+        { header: 'Fin Vigencia', accessorKey: 'FIN VIG ACTUAL' as keyof RenovacionAarco },
+        { header: 'Cliente', accessorKey: 'CLIENTE ACTUAL' as keyof RenovacionAarco },
+        {
+            header: 'Prima Neta',
+            accessorKey: (row: RenovacionAarco) => {
+                if (row['P NET NEGOCIO MN ACTUAL'] === undefined || row['P NET NEGOCIO MN ACTUAL'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['P NET NEGOCIO MN ACTUAL']);
+            }
+        },
+        { header: 'Estatus', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionAarco },
+        {
+            header: 'Expediente',
+            accessorKey: 'EXPEDIENTE' as keyof RenovacionAarco,
+            cell: (info: any) => renderExpedienteLink(info.row.original)
+        },
+        { header: 'Email', accessorKey: 'Email' as keyof RenovacionAarco }
+    ];
+
     return (
         <div className="flex flex-col h-full space-y-4">
             <div className="flex items-center justify-between border-b pb-2 flex-none">
@@ -202,6 +233,11 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                     {insurer === 'SURA' && (
                         <span className="px-4 py-2 font-medium border-b-2 border-white text-white">
                             SURA Renovaciones
+                        </span>
+                    )}
+                    {insurer === 'AARCO_AXA' && (
+                        <span className="px-4 py-2 font-medium border-b-2 border-white text-white">
+                            AARCO & AXA Renovaciones
                         </span>
                     )}
                 </div>
@@ -230,10 +266,17 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                             onRowClick={handleRowClick}
                         />
                     )
-                ) : (
+                ) : insurer === 'SURA' ? (
                     <DataTable
                         data={suraRenewals}
                         columns={suraColumns}
+                        className="h-full overflow-auto"
+                        onRowClick={handleRowClick}
+                    />
+                ) : (
+                    <DataTable
+                        data={aarcoRenewals}
+                        columns={aarcoColumns}
                         className="h-full overflow-auto"
                         onRowClick={handleRowClick}
                     />
@@ -250,19 +293,25 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                     policyNumber={
                         insurer === 'Metlife'
                             ? (activeTab === 'VIDA' ? selectedRow.POLIZA_ACTUAL : selectedRow.NPOLIZA)
-                            : selectedRow.POLIZA
+                            : insurer === 'SURA'
+                                ? selectedRow.POLIZA
+                                : selectedRow['NUM POL ACTUAL']
                     }
                     insurer={insurer}
                     type={insurer === 'Metlife' ? activeTab : 'ALL'}
                     clientName={
                         insurer === 'Metlife'
                             ? selectedRow.CONTRATANTE
-                            : selectedRow.NOMBRE
+                            : insurer === 'SURA'
+                                ? selectedRow.NOMBRE
+                                : selectedRow['CLIENTE ACTUAL']
                     }
                     endDate={
                         insurer === 'Metlife'
                             ? (activeTab === 'VIDA' ? selectedRow.FIN_VIG : selectedRow.FFINVIG)
-                            : selectedRow['FIN VIGENCIA']
+                            : insurer === 'SURA'
+                                ? selectedRow['FIN VIGENCIA']
+                                : selectedRow['FIN VIG ACTUAL']
                     }
                 />
             )}

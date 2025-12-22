@@ -1,7 +1,7 @@
 import { getUpcomingRenewals } from '@/modules/renovaciones/service';
 import { RenovacionesView } from '@/components/renovaciones/RenovacionesView';
 import { DateRangeFilter } from '@/components/ui/DateRangeFilter';
-import { RenovacionGMM, RenovacionVida, RenovacionSura } from '@/lib/types/renovaciones';
+import { RenovacionGMM, RenovacionVida, RenovacionSura, RenovacionAarco } from '@/lib/types/renovaciones';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
@@ -23,6 +23,7 @@ export default async function RenovacionesPage({
     let vidaRenewals: RenovacionVida[] = [];
     let gmmRenewals: RenovacionGMM[] = [];
     let suraRenewals: RenovacionSura[] = [];
+    let aarcoRenewals: RenovacionAarco[] = [];
 
     if (insurer === 'Metlife') {
         const [vida, gmm] = await Promise.all([
@@ -34,6 +35,8 @@ export default async function RenovacionesPage({
     } else if (insurer === 'SURA') {
         // For SURA we fetch 'ALL' or just default since we handle it as one block in backend
         suraRenewals = (await getUpcomingRenewals(days, 'ALL', insurer, startDate, endDate)) as RenovacionSura[];
+    } else if (insurer === 'AARCO_AXA') {
+        aarcoRenewals = (await getUpcomingRenewals(days, 'ALL', insurer, startDate, endDate)) as RenovacionAarco[];
     }
 
     return (
@@ -44,13 +47,13 @@ export default async function RenovacionesPage({
 
                     {/* Insurer Selector */}
                     <div className="inline-flex rounded-md shadow-sm" role="group">
-                        {['Metlife', 'SURA', 'AXA', 'AARCO'].map((ins) => (
+                        {['Metlife', 'SURA', 'AARCO_AXA'].map((ins) => (
                             <Link
                                 key={ins}
                                 href={`?insurer=${ins}${startDate ? `&startDate=${startDate}` : ''}${endDate ? `&endDate=${endDate}` : ''}`}
                                 className={`px-4 py-2 text-sm font-medium border border-gray-200 first:rounded-l-lg last:rounded-r-lg ${insurer === ins ? 'bg-blue-600 text-white' : 'bg-white text-gray-900 hover:bg-gray-100'}`}
                             >
-                                {ins}
+                                {ins === 'AARCO_AXA' ? 'AARCO & AXA' : ins}
                             </Link>
                         ))}
                     </div>
@@ -65,6 +68,7 @@ export default async function RenovacionesPage({
                     vidaRenewals={vidaRenewals}
                     gmmRenewals={gmmRenewals}
                     suraRenewals={suraRenewals}
+                    aarcoRenewals={aarcoRenewals}
                     insurer={insurer}
                 />
             </div>

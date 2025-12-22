@@ -27,6 +27,7 @@ SURA_PATHS = {
 
 AARCO_PATHS = {
     "COBRANZA": BASE_DIR / "Bases de cobranza y comisiones" / "AARCO base cobranza.xlsx",
+    "RENOVACIONES": BASE_DIR / "Fechas de emision de Polizas y renovaciones" / "AARCO & AXA.xlsx",
 }
 
 CLIENT_EMAILS_PATH = BASE_DIR / "Correos de los clientes" / "Clientes Correos Taiico.xlsx"

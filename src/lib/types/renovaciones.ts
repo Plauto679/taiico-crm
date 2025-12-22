@@ -44,5 +44,19 @@ export interface RenovacionSura {
     Email?: string;
 }
 
+export interface RenovacionAarco {
+    'NUM POL ACTUAL': string;
+    'CIA ACTUAL': string;
+    Ramo: string;
+    'PRODUCTO ACTUAL': string;
+    'INI VIG ACTUAL': string; // Date YYYY-MM-DD
+    'FIN VIG ACTUAL': string; // Date YYYY-MM-DD
+    'CLIENTE ACTUAL': string;
+    'P NET NEGOCIO MN ACTUAL': number;
+    ESTATUS_DE_RENOVACION: string;
+    EXPEDIENTE?: string;
+    Email?: string;
+}
+
 // Union type for cases where we might handle them generically, though usually we won't
-export type RenewalItem = RenovacionGMM | RenovacionVida | RenovacionSura;
+export type RenewalItem = RenovacionGMM | RenovacionVida | RenovacionSura | RenovacionAarco;
