@@ -45,15 +45,19 @@ export interface RenovacionSura {
 }
 
 export interface RenovacionAarco {
-    'NUM POL ACTUAL': string;
-    'CIA ACTUAL': string;
-    Ramo: string;
-    'PRODUCTO ACTUAL': string;
-    'INI VIG ACTUAL': string; // Date YYYY-MM-DD
-    'FIN VIG ACTUAL': string; // Date YYYY-MM-DD
-    'CLIENTE ACTUAL': string;
-    'P NET NEGOCIO MN ACTUAL': number;
-    ESTATUS_DE_RENOVACION: string;
+    POLIZA: string;
+    ASEGURADORA: string;
+    PROMOTORIA: string;
+    AGENTE: string;
+    PROSPECTADOR: string;
+    RAMO: string;
+    PRODUCTO: string;
+    CONTRATANTE: string;
+    ASEGURADO: string;
+    'INICIO VIGENCIA': string; // Date YYYY-MM-DD
+    'FIN VIGENCIA': string; // Date YYYY-MM-DD
+    'PRIMA NETA ANUAL': number;
+    ESTATUS_DE_RENOVACION: string; // Mapped from ESTATUS in backend
     EXPEDIENTE?: string;
     Email?: string;
 }

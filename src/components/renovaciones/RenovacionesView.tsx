@@ -58,7 +58,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
             id = selectedRow.POLIZA;
         } else if (insurer === 'AARCO_AXA') {
             type = 'ALL';
-            id = selectedRow['NUM POL ACTUAL'];
+            id = selectedRow.POLIZA;
         }
 
         await updateRenewalStatus(insurer, type, id, newStatus, expediente);
@@ -187,21 +187,25 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
     ];
 
     const aarcoColumns = [
-        { header: 'Póliza', accessorKey: 'NUM POL ACTUAL' as keyof RenovacionAarco },
-        { header: 'Aseguradora', accessorKey: 'CIA ACTUAL' as keyof RenovacionAarco },
-        { header: 'Ramo', accessorKey: 'Ramo' as keyof RenovacionAarco },
-        { header: 'Producto', accessorKey: 'PRODUCTO ACTUAL' as keyof RenovacionAarco },
-        { header: 'Inicio Vigencia', accessorKey: 'INI VIG ACTUAL' as keyof RenovacionAarco },
-        { header: 'Fin Vigencia', accessorKey: 'FIN VIG ACTUAL' as keyof RenovacionAarco },
-        { header: 'Cliente', accessorKey: 'CLIENTE ACTUAL' as keyof RenovacionAarco },
+        { header: 'Póliza', accessorKey: 'POLIZA' as keyof RenovacionAarco },
+        { header: 'Aseguradora', accessorKey: 'ASEGURADORA' as keyof RenovacionAarco },
+        { header: 'Promotoría', accessorKey: 'PROMOTORIA' as keyof RenovacionAarco },
+        { header: 'Agente', accessorKey: 'AGENTE' as keyof RenovacionAarco },
+        { header: 'Prospectador', accessorKey: 'PROSPECTADOR' as keyof RenovacionAarco },
+        { header: 'Ramo', accessorKey: 'RAMO' as keyof RenovacionAarco },
+        { header: 'Producto', accessorKey: 'PRODUCTO' as keyof RenovacionAarco },
+        { header: 'Contratante', accessorKey: 'CONTRATANTE' as keyof RenovacionAarco },
+        { header: 'Asegurado', accessorKey: 'ASEGURADO' as keyof RenovacionAarco },
+        { header: 'Inicio Vigencia', accessorKey: 'INICIO VIGENCIA' as keyof RenovacionAarco },
+        { header: 'Fin Vigencia', accessorKey: 'FIN VIGENCIA' as keyof RenovacionAarco },
         {
             header: 'Prima Neta',
             accessorKey: (row: RenovacionAarco) => {
-                if (row['P NET NEGOCIO MN ACTUAL'] === undefined || row['P NET NEGOCIO MN ACTUAL'] === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['P NET NEGOCIO MN ACTUAL']);
+                if (row['PRIMA NETA ANUAL'] === undefined || row['PRIMA NETA ANUAL'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['PRIMA NETA ANUAL']);
             }
         },
-        { header: 'Estatus', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionAarco },
+        { header: 'Estatus de Renovación', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionAarco },
         {
             header: 'Expediente',
             accessorKey: 'EXPEDIENTE' as keyof RenovacionAarco,
@@ -295,7 +299,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                             ? (activeTab === 'VIDA' ? selectedRow.POLIZA_ACTUAL : selectedRow.NPOLIZA)
                             : insurer === 'SURA'
                                 ? selectedRow.POLIZA
-                                : selectedRow['NUM POL ACTUAL']
+                                : selectedRow.POLIZA
                     }
                     insurer={insurer}
                     type={insurer === 'Metlife' ? activeTab : 'ALL'}
@@ -304,14 +308,14 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                             ? selectedRow.CONTRATANTE
                             : insurer === 'SURA'
                                 ? selectedRow.NOMBRE
-                                : selectedRow['CLIENTE ACTUAL']
+                                : selectedRow.CONTRATANTE
                     }
                     endDate={
                         insurer === 'Metlife'
                             ? (activeTab === 'VIDA' ? selectedRow.FIN_VIG : selectedRow.FFINVIG)
                             : insurer === 'SURA'
                                 ? selectedRow['FIN VIGENCIA']
-                                : selectedRow['FIN VIG ACTUAL']
+                                : selectedRow['FIN VIGENCIA']
                     }
                 />
             )}

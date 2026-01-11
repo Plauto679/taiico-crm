@@ -331,9 +331,9 @@ async def get_upcoming_renewals(
             df_aarco = pd.read_excel(AARCO_PATHS["RENOVACIONES"])
             df_aarco = clean_aarco(df_aarco)
             
-            # Filter by date on FIN VIG ACTUAL
-            if "FIN VIG ACTUAL" in df_aarco.columns:
-                mask = (df_aarco["FIN VIG ACTUAL"] >= start_str) & (df_aarco["FIN VIG ACTUAL"] <= end_str)
+            # Filter by date on FIN VIGENCIA
+            if "FIN VIGENCIA" in df_aarco.columns:
+                mask = (df_aarco["FIN VIGENCIA"] >= start_str) & (df_aarco["FIN VIGENCIA"] <= end_str)
                 df_aarco = df_aarco[mask]
                 
             results.extend(clean_data(df_aarco))
@@ -424,8 +424,11 @@ async def update_renewal_status(
         # If we didn't rename cols in df yet, we access by id_col
         
         if id_col not in df.columns and insurer.upper() == "AARCO_AXA":
-             # Try double space version if single space not found
-             if "NUM POL  ACTUAL" in df.columns:
+             # New schema uses "POLIZA"
+             if "POLIZA" in df.columns:
+                 id_col = "POLIZA"
+             # Try double space version if single space not found (legacy check)
+             elif "NUM POL  ACTUAL" in df.columns:
                  id_col = "NUM POL  ACTUAL"
                  
         if id_col not in df.columns:
@@ -589,7 +592,8 @@ async def send_renewal_email_endpoint(
                  sheet_name = xl.sheet_names[0]
             else:
                  sheet_name = "Sheet1"
-            id_col = "NUM POL ACTUAL"
+            # Updated to new schema
+            id_col = "POLIZA"
             
         if file_path and os.path.exists(file_path):
             df = pd.read_excel(file_path, sheet_name=sheet_name)
@@ -620,42 +624,51 @@ async def send_renewal_email_endpoint(
 def clean_aarco(df: pd.DataFrame) -> pd.DataFrame:
     """
     Clean and normalize AARCO & AXA data.
+    New Schema: ['PROMOTORIA', 'AGENTE', 'ASEGURADORA', 'POLIZA', 'RAMO', 'PRODUCTO',
+       'CONTRATANTE', 'ASEGURADO', 'INICIO VIGENCIA', 'FIN VIGENCIA',
+       'FRECUENCIA PAGO', 'CONDUCTO COBRO', 'PRIMA NETA ANUAL',
+       'PRIMA TOTAL ANUAL', 'EXPEDIENTE', 'PROSPECTADOR', 'ESTATUS',
+       'Email']
     """
-    # Columns requested: "NUM POL ACTUAL", "CIA ACTUAL", "Ramo", "PRODUCTO ACTUAL", "INI VIG ACTUAL", "FIN VIG ACTUAL", "CLIENTE ACTUAL", "P NET NEGOCIO MN ACTUAL" + Status cols
     
-    # 0. Normalize Column Names
-    # User's file has "NUM POL  ACTUAL" (double space), we want single space
-    df.columns = [c.replace("  ", " ") for c in df.columns]
-
-    # 1. Date Conversion
-    date_cols = ["INI VIG ACTUAL", "FIN VIG ACTUAL"]
+    # 0. Datetime Conversion
+    # The user mentioned types are datetime64[ns], but reading from Excel might need explicit conversion/parsing
+    date_cols = ["INICIO VIGENCIA", "FIN VIGENCIA"]
     for col in date_cols:
         if col in df.columns:
-            df[col] = df[col].apply(parse_vida_date) # Generic parser
-
-    # 2. Money Conversion
-    money_cols = ["P NET NEGOCIO MN ACTUAL"]
+            # First ensure it's datetime, falling back to string parsing if needed
+            df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d')
+            # Or use generic parser? pd.to_datetime usually smart enough used like this.
+            # If they are already datetime objects from Excel, this works.
+            
+    # 1. Money Conversion
+    money_cols = ["PRIMA NETA ANUAL", "PRIMA TOTAL ANUAL"]
     for col in money_cols:
         if col in df.columns:
             df[col] = df[col].apply(clean_money)
 
     requested_cols = [
-        "NUM POL ACTUAL", "CIA ACTUAL", "Ramo", "PRODUCTO ACTUAL", 
-        "INI VIG ACTUAL", "FIN VIG ACTUAL", "CLIENTE ACTUAL", 
-        "P NET NEGOCIO MN ACTUAL",
-        "ESTATUS_DE_RENOVACION", "EXPEDIENTE", "Email"
+        "POLIZA", "ASEGURADORA", "PROMOTORIA", "AGENTE", "PROSPECTADOR", "RAMO", "PRODUCTO", 
+        "CONTRATANTE", "ASEGURADO", "INICIO VIGENCIA", "FIN VIGENCIA", 
+        "PRIMA NETA ANUAL", "EXPEDIENTE", "Email"
     ]
     
     # Ensure all columns exist
     for col in requested_cols:
         if col not in df.columns:
-            # Try some common mappings if exact name not found?
-            # User provided explicit list, so likely they exist.
-            # Except maybe "Email" which is "EMAIL" in user input description?
-            if col == "Email" and "EMAIL" in df.columns:
+             if col == "Email" and "EMAIL" in df.columns: # Case sensitivity check
                 df["Email"] = df["EMAIL"]
-            else:
+             else:
                 df[col] = None
-            
+    
+    # Logic for ESTATUS_DE_RENOVACION (Editable Column) vs ESTATUS (Raw Column)
+    # If the file already has ESTATUS_DE_RENOVACION (saved from previous edits), keep it.
+    # If not, initialize it as None (or empty string/Default).
+    if "ESTATUS_DE_RENOVACION" not in df.columns:
+        df["ESTATUS_DE_RENOVACION"] = None
+
+    # We Append it to requested cols to ensure it is returned
+    requested_cols.append("ESTATUS_DE_RENOVACION")
+
     return df[requested_cols]
 
