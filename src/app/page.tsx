@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { DollarSign, Calendar, Users, BarChart3 } from 'lucide-react';
+import { DollarSign, Calendar, Users, BarChart3, Briefcase } from 'lucide-react';
 
 export default function Home() {
   return (
@@ -44,7 +44,7 @@ export default function Home() {
         <Link href="/cartera" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-purple-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
           <div className="flex flex-col items-center text-center space-y-4">
             <div className="rounded-full bg-purple-100 p-4 text-purple-600 group-hover:bg-purple-600 group-hover:text-white transition-colors duration-300">
-              <Users className="h-8 w-8" />
+              <Briefcase className="h-8 w-8" />
             </div>
             <div>
               <h2 className="text-2xl font-bold text-gray-900">Cartera</h2>

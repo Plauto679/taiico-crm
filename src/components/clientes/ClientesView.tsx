@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { Cliente } from '@/lib/types/clientes';
 import { DataTable } from '@/components/ui/DataTable';
 import { AddClientModal } from './AddClientModal';
-import { addClient } from '@/modules/clientes/service';
+import { EditClientModal } from './EditClientModal';
+import { addClient, updateClient, deleteClient } from '@/modules/clientes/service';
 import { Search, UserPlus } from 'lucide-react';
 
 interface ClientesViewProps {
@@ -17,6 +18,7 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
     const [clients] = useState<Cliente[]>(initialClients);
     const [searchTerm, setSearchTerm] = useState('');
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+    const [selectedClient, setSelectedClient] = useState<Cliente | null>(null);
 
     const filteredClients = clients.filter(client =>
         client.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -25,6 +27,16 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
 
     const handleAddClient = async (newClient: Cliente) => {
         await addClient(newClient);
+        router.refresh();
+    };
+
+    const handleUpdateClient = async (originalNombre: string, updatedClient: Cliente) => {
+        await updateClient(originalNombre, updatedClient);
+        router.refresh();
+    };
+
+    const handleDeleteClient = async (nombre: string) => {
+        await deleteClient(nombre);
         router.refresh();
     };
 
@@ -44,7 +56,7 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
                     <input
                         type="text"
                         placeholder="Buscar cliente..."
-                        className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                        className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
@@ -62,6 +74,7 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
                 <DataTable
                     data={filteredClients}
                     columns={columns}
+                    onRowClick={(row) => setSelectedClient(row)}
                 />
             </div>
 
@@ -69,6 +82,14 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
                 isOpen={isAddModalOpen}
                 onClose={() => setIsAddModalOpen(false)}
                 onSave={handleAddClient}
+            />
+
+            <EditClientModal
+                isOpen={!!selectedClient}
+                onClose={() => setSelectedClient(null)}
+                client={selectedClient}
+                onSave={handleUpdateClient}
+                onDelete={handleDeleteClient}
             />
         </div>
     );

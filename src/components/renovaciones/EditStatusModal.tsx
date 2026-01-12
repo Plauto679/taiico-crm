@@ -1,8 +1,7 @@
-'use client';
-
 import { useState, useEffect } from 'react';
 import { X, Check, Mail } from 'lucide-react';
 import { sendRenewalEmail } from '@/modules/renovaciones/service';
+import { searchClient } from '@/modules/clientes/service';
 
 interface EditStatusModalProps {
     isOpen: boolean;
@@ -34,18 +33,25 @@ export const EditStatusModal = ({
     const [status, setStatus] = useState<string | null>(currentStatus || null);
     const [expediente, setExpediente] = useState<string>(currentExpediente || '');
     const [email, setEmail] = useState<string>(currentEmail || '');
+    const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
     const [isSending, setIsSending] = useState(false);
-    const [sendError, setSendError] = useState<string | null>(null);
-    const [sendSuccess, setSendSuccess] = useState(false);
 
     useEffect(() => {
         setStatus(currentStatus || null);
         setExpediente(currentExpediente || '');
-        setEmail(currentEmail || ''); // Initialize email state
-        setSendError(null);
-        setSendSuccess(false);
+        setEmail(currentEmail || '');
         setIsSending(false);
-    }, [currentStatus, currentExpediente, currentEmail, isOpen]);
+        setRegisteredEmail(null);
+
+        // Fetch registered email if modal is open
+        if (isOpen && clientName) {
+            searchClient(clientName).then(res => {
+                if (res && res.email) {
+                    setRegisteredEmail(res.email);
+                }
+            }).catch(err => console.error("Error searching client:", err));
+        }
+    }, [currentStatus, currentExpediente, currentEmail, isOpen, clientName]);
 
     if (!isOpen) return null;
 
@@ -55,7 +61,25 @@ export const EditStatusModal = ({
     };
 
     const handleSendEmail = async () => {
-        if (!confirm(`¿Enviar correo de renovación a ${clientName}?`)) return;
+        // Determine effective email
+        const effectiveEmail = email ? email : registeredEmail;
+
+        let confirmMsg = "";
+
+        if (effectiveEmail) {
+            confirmMsg = `¿Enviar correo de renovación a ${clientName} (${effectiveEmail})?`;
+        } else {
+            confirmMsg = `Ningún correo registrado, Favor de agregarl el Email en el registro agregarlo en la base de clientes.`;
+            // User requested this text specifically. It serves as a warning.
+            // Should we allow proceed?
+            // Since backend will fail, maybe just show alert?
+            // But user wording "Instead of writing... you can put..." implies replacement of the question.
+            // If we assume it's a blocking alert:
+            alert(confirmMsg);
+            return;
+        }
+
+        if (!confirm(confirmMsg)) return;
 
         setIsSending(true);
         try {
@@ -130,8 +154,13 @@ export const EditStatusModal = ({
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
                             className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-gray-900"
-                            placeholder="ejemplo@correo.com"
+                            placeholder={registeredEmail || "ejemplo@correo.com"}
                         />
+                        {registeredEmail && !email && (
+                            <p className="text-xs text-green-600 mt-1">
+                                Correo registrado: {registeredEmail}
+                            </p>
+                        )}
                     </div>
                 </div>
 

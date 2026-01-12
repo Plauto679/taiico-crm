@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-from services import cobranza, renovaciones, cartera, auth
+from services import cobranza, renovaciones, cartera, auth, clientes
 from pydantic import BaseModel
 
 app = FastAPI(title="TAIICO CRM API")

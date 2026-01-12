@@ -80,8 +80,11 @@ def send_email_smtp(subject: str, body: str, recipients: List[str], attachments:
     message["To"] = ", ".join(recipients)
     
     # CCs
-    cc_list = ["pamela.alfaro@taiico.com", "clientes@taiico.com", "christopher.tinoco@taiico.com"]
-    message["Cc"] = ", ".join(cc_list)
+    # CCs
+    # cc_list = ["pamela.alfaro@taiico.com", "clientes@taiico.com", "christopher.tinoco@taiico.com"]
+    # message["Cc"] = ", ".join(cc_list)
+    # User requested removal for now.
+    pass
     
     message.set_content(body)
 
@@ -512,6 +515,7 @@ async def send_renewal_email_endpoint(
     # This matches the Update logic to find the file/sheet/id
     
     recipient_email = None
+    is_manual_email = False
     
     # ... (Reuse file match logic)
     file_path = None
@@ -569,6 +573,7 @@ async def send_renewal_email_endpoint(
                          val = row.iloc[0][email_col]
                          if pd.notna(val) and str(val).strip() and "@" in str(val):
                              recipient_email = str(val).strip()
+                             is_manual_email = True
                              print(f"Found overridden email in Excel: {recipient_email}")
          except Exception as e:
              print(f"Error looking up email in Excel: {e}")
@@ -643,6 +648,14 @@ async def send_renewal_email_endpoint(
     try:
         recipients = [r.strip() for r in recipient_email.split(",") if r.strip()]
         send_email_smtp(subject, body, recipients, attachments)
+        
+        if is_manual_email:
+             try:
+                 primary_email = recipients[0]
+                 upsert_client_internal(client_name, primary_email)
+             except Exception as e:
+                 print(f"Error auto-saving client: {e}")
+                 
     except Exception as e:
         print(f"SMTP Error: {e}")
         raise HTTPException(status_code=500, detail=f"Error al enviar correo: {str(e)}")
@@ -684,8 +697,10 @@ async def send_renewal_email_endpoint(
             
         if file_path and os.path.exists(file_path):
             df = pd.read_excel(file_path, sheet_name=sheet_name)
-            if "Email" not in df.columns:
-                df["Email"] = None
+            
+            # Ensure ESTATUS_DE_RENOVACION exists
+            if "ESTATUS_DE_RENOVACION" not in df.columns:
+                df["ESTATUS_DE_RENOVACION"] = None
             
             policy_str = str(policy_number).strip()
             df['__id_str'] = df[id_col].astype(str).str.strip().str.replace('.0', '', regex=False)
@@ -693,7 +708,8 @@ async def send_renewal_email_endpoint(
             
             mask = df['__id_str'] == policy_str_clean
             if mask.any():
-                df.loc[mask, "Email"] = "Enviado"
+                df.loc[mask, "ESTATUS_DE_RENOVACION"] = "Enviado"
+                # Do NOT update Email column as per user request
                 df = df.drop(columns=['__id_str'])
                 with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
                     df.to_excel(writer, sheet_name=sheet_name, index=False)
