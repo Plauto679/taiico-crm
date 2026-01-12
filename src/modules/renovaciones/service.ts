@@ -27,22 +27,29 @@ export async function updateRenewalStatus(
     insurer: string,
     type: string,
     policyNumber: string | number,
-    newStatus: string,
-    expediente?: string
-): Promise<void> {
-    await fetchFromApi('/renovaciones/update', {
+    newStatus: string | null,
+    expediente: string | null,
+    email?: string | null
+): Promise<any> {
+    const payload: any = {
+        insurer,
+        type,
+        policy_number: policyNumber,
+    };
+
+    if (newStatus) payload.new_status = newStatus;
+    if (expediente !== null) payload.expediente = expediente;
+    if (email !== null && email !== undefined) payload.email = email;
+
+    const response = await fetchFromApi('/renovaciones/update', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-            insurer,
-            type,
-            policy_number: policyNumber,
-            new_status: newStatus,
-            expediente
-        }),
+        body: JSON.stringify(payload),
     });
+
+    return response;
 }
 
 export async function sendRenewalEmail(

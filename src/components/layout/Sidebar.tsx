@@ -6,6 +6,7 @@ const NAV_ITEMS = [
     { name: 'Cobranza', href: '/cobranza', icon: DollarSign },
     { name: 'Renovaciones', href: '/renovaciones', icon: Calendar },
     { name: 'Cartera', href: '/cartera', icon: Users },
+    { name: 'Clientes', href: '/clientes', icon: Users },
     { name: 'Dashboards', href: '/dashboards', icon: BarChart3 },
 ];
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { DataTable } from '@/components/ui/DataTable';
 import { RenovacionGMM, RenovacionVida, RenovacionSura, RenovacionAarco } from '@/lib/types/renovaciones';
 import { exportToExcel } from '@/lib/utils/export';
@@ -16,6 +17,7 @@ interface RenovacionesViewProps {
 }
 
 export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRenewals = [], aarcoRenewals = [], insurer }: RenovacionesViewProps) {
+    const router = useRouter();
     const [activeTab, setActiveTab] = useState<'VIDA' | 'GMM'>('VIDA');
     const [selectedRow, setSelectedRow] = useState<any>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -44,10 +46,10 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         setIsModalOpen(true);
     };
 
-    const handleSaveStatus = async (newStatus: string, expediente?: string) => {
+    const handleSaveStatus = async (newStatus: string | null, expediente: string | null, email: string | null) => {
         if (!selectedRow) return;
 
-        let type = 'ALL';
+        let type = '';
         let id = '';
 
         if (insurer === 'Metlife') {
@@ -61,13 +63,10 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
             id = selectedRow.POLIZA;
         }
 
-        await updateRenewalStatus(insurer, type, id, newStatus, expediente);
+        await updateRenewalStatus(insurer, type, id, newStatus, expediente, email);
 
-        // Optimistically update the UI
-        selectedRow.ESTATUS_DE_RENOVACION = newStatus;
-        if (expediente !== undefined) {
-            selectedRow.EXPEDIENTE = expediente;
-        }
+        // Refresh data
+        router.refresh();
     };
 
     const renderExpedienteLink = (row: any) => {
@@ -137,7 +136,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                 return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row.IVA);
             }
         },
-        { header: 'Asegurado', accessorKey: 'NOMBREL' as keyof RenovacionGMM },
+
         {
             header: 'Deducible',
             accessorKey: (row: RenovacionGMM) => {
@@ -294,6 +293,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                     onSave={handleSaveStatus}
                     currentStatus={selectedRow.ESTATUS_DE_RENOVACION}
                     currentExpediente={selectedRow.EXPEDIENTE}
+                    currentEmail={selectedRow.Email}
                     policyNumber={
                         insurer === 'Metlife'
                             ? (activeTab === 'VIDA' ? selectedRow.POLIZA_ACTUAL : selectedRow.NPOLIZA)

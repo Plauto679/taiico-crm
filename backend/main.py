@@ -32,6 +32,7 @@ def read_root():
 app.include_router(cobranza.router)
 app.include_router(renovaciones.router)
 app.include_router(cartera.router)
+app.include_router(clientes.router)
 
 if __name__ == "__main__":
     import uvicorn

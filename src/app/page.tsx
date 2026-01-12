@@ -52,6 +52,17 @@ export default function Home() {
             </div>
           </div>
         </Link>
+        <Link href="/clientes" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-pink-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
+          <div className="flex flex-col items-center text-center space-y-4">
+            <div className="rounded-full bg-pink-100 p-4 text-pink-600 group-hover:bg-pink-600 group-hover:text-white transition-colors duration-300">
+              <Users className="h-8 w-8" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">Clientes</h2>
+              <p className="text-gray-500 mt-2">Directorio de contactos</p>
+            </div>
+          </div>
+        </Link>
 
         <Link href="/dashboards" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-orange-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
           <div className="flex flex-col items-center text-center space-y-4">

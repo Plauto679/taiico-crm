@@ -347,13 +347,14 @@ async def update_renewal_status(
     insurer: str = Body(..., embed=True),
     type: str = Body(..., embed=True),
     policy_number: str | int = Body(..., embed=True),
-    new_status: str = Body(..., embed=True),
-    expediente: Optional[str] = Body(None, embed=True)
+    new_status: str | None = Body(None, embed=True),
+    expediente: Optional[str] = Body(None, embed=True),
+    email: Optional[str] = Body(None, embed=True)
 ):
     """
-    Update the ESTATUS_DE_RENOVACION and EXPEDIENTE for a specific policy.
+    Update the ESTATUS_DE_RENOVACION, EXPEDIENTE, and EMAIL for a specific policy.
     """
-    print(f"Received update request: Insurer={insurer}, Type={type}, Policy={policy_number}, Status={new_status}, Expediente={expediente}")
+    print(f"Received update request: Insurer={insurer}, Type={type}, Policy={policy_number}, Status={new_status}, Expediente={expediente}, Email={email}")
     
     file_path = None
     sheet_name = None
@@ -385,13 +386,9 @@ async def update_renewal_status(
         try:
             xl = pd.ExcelFile(file_path)
             sheet_name = xl.sheet_names[0]
-            # Use exact ID col from user description or cleaned df? 
-            # In update, we read raw excel, so we need raw column name.
-            # User provided: "NUM POL  ACTUAL" (two spaces in description).
-            # But wait, if we read raw, we must match raw.
-            # actually, let's normalize columns in the raw df immediately after read to be safe?
-            # Or just use the double space here.
-            id_col = "NUM POL  ACTUAL" 
+            # Updated to new schema
+            id_col = "POLIZA"
+            
         except Exception as e:
              print(f"Error getting sheet name for AARCO: {e}")
              raise HTTPException(status_code=500, detail="Error accessing AARCO file")
@@ -413,6 +410,14 @@ async def update_renewal_status(
         if "EXPEDIENTE" not in df.columns:
             print("Adding EXPEDIENTE column")
             df["EXPEDIENTE"] = None
+            
+        if "Email" not in df.columns:
+             # Try case insensitive match first?
+             if "EMAIL" in df.columns:
+                 df.rename(columns={"EMAIL": "Email"}, inplace=True)
+             else:
+                 print("Adding Email column")
+                 df["Email"] = None
             
         # Find and update the row
         # Convert ID column to string for comparison to be safe
@@ -447,11 +452,18 @@ async def update_renewal_status(
              
         # Update status
         mask = df['__id_str'] == policy_str_clean
-        df.loc[mask, "ESTATUS_DE_RENOVACION"] = new_status
         
-        # Update expediente if provided (allow empty string to clear it)
+        # Only update status if provided (allows partial updates)
+        if new_status is not None:
+             df.loc[mask, "ESTATUS_DE_RENOVACION"] = new_status
+        
+        # Update expediente if provided
         if expediente is not None:
              df.loc[mask, "EXPEDIENTE"] = expediente
+             
+        # Update email if provided
+        if email is not None:
+             df.loc[mask, "Email"] = email
         
         # Drop temp column
         df = df.drop(columns=['__id_str'])
@@ -489,9 +501,84 @@ async def send_renewal_email_endpoint(
     print(f"Sending email for: {client_name}, Policy: {policy_number}")
     
     # 1. Get Client Email
-    recipient_email = get_client_email(client_name)
+    # Logic: 
+    # a. Check if "Email" column in the row (not passed here, but we can look it up while reading file?)
+    #    Actually better to pass it in from frontend if we trust frontend? 
+    #    No, reading from file is safer source of truth if we just saved it.
+    #    But to read it we need to open the file. We are already opening it to attach things? No.
+    #    Let's just use the `get_client_email` as fallback.
+    
+    # NEW LOGIC: Look up the specific policy row to see if there is an overridden email.
+    # This matches the Update logic to find the file/sheet/id
+    
+    recipient_email = None
+    
+    # ... (Reuse file match logic)
+    file_path = None
+    sheet_name = None
+    id_col = None
+    
+    # ... Match file paths ... (reuse logic from update or extract to helper?)
+    # For brevity, I'll copy the locator logic, or better, Refactor later? 
+    # Let's copy-paste the locator block here for stability.
+    
+    if insurer.lower() == "metlife":
+        if type.upper() == "VIDA":
+            file_path = METLIFE_PATHS["RENOVACIONES_VIDA"]
+            sheet_name = SHEET_NAMES["RENOVACIONES_VIDA"]
+            id_col = "POLIZA_ACTUAL"
+        elif type.upper() == "GMM":
+            file_path = METLIFE_PATHS["RENOVACIONES_GMM"]
+            sheet_name = SHEET_NAMES["RENOVACIONES_GMM"]
+            id_col = "NPOLIZA"
+    elif insurer.lower() == "sura":
+        file_path = SURA_PATHS["RENOVACIONES"]
+        try:
+             xl = pd.ExcelFile(file_path)
+             sheet_name = xl.sheet_names[0]
+             id_col = "POLIZA"
+        except: pass
+    elif insurer.upper() == "AARCO_AXA":
+         file_path = AARCO_PATHS["RENOVACIONES"]
+         try:
+             xl = pd.ExcelFile(file_path)
+             sheet_name = xl.sheet_names[0]
+             id_col = "POLIZA"
+         except: pass
+
+    if file_path and os.path.exists(file_path):
+         try:
+             df = pd.read_excel(file_path, sheet_name=sheet_name)
+             policy_str = str(policy_number).strip()
+             
+             # Handle AARCO legacy/fallback
+             if id_col not in df.columns and insurer.upper() == "AARCO_AXA":
+                 if "NUM POL  ACTUAL" in df.columns: id_col = "NUM POL  ACTUAL"
+                 
+             if id_col in df.columns:
+                 df['__id_str'] = df[id_col].astype(str).str.strip().str.replace('.0', '', regex=False)
+                 policy_str_clean = policy_str.replace('.0', '')
+                 
+                 row = df[df['__id_str'] == policy_str_clean]
+                 if not row.empty:
+                     # Check Email column
+                     # Column might be "Email" or "EMAIL"
+                     email_col = "Email" if "Email" in df.columns else "EMAIL" if "EMAIL" in df.columns else None
+                     
+                     if email_col:
+                         val = row.iloc[0][email_col]
+                         if pd.notna(val) and str(val).strip() and "@" in str(val):
+                             recipient_email = str(val).strip()
+                             print(f"Found overridden email in Excel: {recipient_email}")
+         except Exception as e:
+             print(f"Error looking up email in Excel: {e}")
+
+    # Fallback to general client list if not found in specific policy row
     if not recipient_email:
-        raise HTTPException(status_code=404, detail=f"No existe correo para cliente {client_name}. Favor de agregarlo en la base de 'Clientes Correos Taiico'.")
+        recipient_email = get_client_email(client_name)
+
+    if not recipient_email:
+        raise HTTPException(status_code=404, detail=f"No existe correo para cliente {client_name}. Favor de editar el Email en la póliza o agregarlo en la base de clientes.")
 
     # 2. Build Email Content
     subject = f"Renovacion {policy_number} {client_name}"
