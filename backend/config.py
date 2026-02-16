@@ -30,6 +30,10 @@ AARCO_PATHS = {
     "RENOVACIONES": BASE_DIR / "Fechas de emision de Polizas y renovaciones" / "AARCO & AXA.xlsx",
 }
 
+PROMOTORIA_SURA_PATHS = {
+    "RENOVACIONES": BASE_DIR / "Fechas de emision de Polizas y renovaciones" / "Promotoria SURA.xlsx",
+}
+
 CLIENT_EMAILS_PATH = BASE_DIR / "Correos de los clientes" / "Clientes Correos Taiico.xlsx"
 
 USERS_DB = BASE_DIR / "Users" / "Users & Passwords.xlsx"

@@ -8,7 +8,87 @@ import os
 import smtplib
 from email.message import EmailMessage
 from pathlib import Path
-from config import METLIFE_PATHS, SURA_PATHS, AARCO_PATHS, SHEET_NAMES, CLIENT_EMAILS_PATH
+from config import METLIFE_PATHS, SURA_PATHS, AARCO_PATHS, PROMOTORIA_SURA_PATHS, SHEET_NAMES, CLIENT_EMAILS_PATH
+
+# ... existing imports ...
+
+def clean_promotoria_sura(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean and normalize Promotoría SURA data.
+    Filters by ESTATUS='VIGENTE'.
+    """
+    # Columns requested: 'PÓLIZA', 'INICIO VIGENCIA', 'FIN VIGENCIA', 'CONTRATANTE', 'PRIMA ANUALIZADA', 'AGENTE', 'NOMBRE RAMO', 'PROCEDENCIA', 'Poliza anterior', 'Llave Póliza'
+    
+    # Filter by ESTATUS = 'VIGENTE' (case insensitive just in case)
+    if 'ESTATUS' in df.columns:
+        df = df[df['ESTATUS'].astype(str).str.upper() == 'VIGENTE']
+    
+    # 1. Date Conversion
+    date_cols = ["INICIO VIGENCIA", "FIN VIGENCIA"]
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(parse_vida_date) # Use generic parser
+            
+    # 2. Money Conversion
+    if "PRIMA ANUALIZADA" in df.columns:
+        df["PRIMA ANUALIZADA"] = df["PRIMA ANUALIZADA"].apply(clean_money)
+    
+    # 3. Aggregation by POLICY
+    # Columns to keep/agg:
+    # Key: PÓLIZA
+    # Sum: PRIMA ANUALIZADA
+    # Join: NOMBRE RAMO
+    # First: Others (INICIO VIGENCIA, FIN VIGENCIA, CONTRATANTE, AGENTE, PROCEDENCIA, Poliza anterior, Llave Póliza, ESTATUS_DE_RENOVACION, EXPEDIENTE, Email, PROMOTOR)
+    
+    if "PÓLIZA" in df.columns:
+        # Fill NA mainly for grouping if any (shouldn't be for policy)
+        df["PÓLIZA"] = df["PÓLIZA"].fillna("UNKNOWN")
+        
+        # Define aggregation rules
+        agg_rules = {
+            "PRIMA ANUALIZADA": "sum",
+            "NOMBRE RAMO": lambda x: ", ".join(sorted(set(str(v) for v in x if pd.notna(v) and str(v).strip()))),
+            # Take first for the rest
+            "INICIO VIGENCIA": "first",
+            "FIN VIGENCIA": "first",
+            "CONTRATANTE": "first",
+            "AGENTE": "first",
+            "PROCEDENCIA": "first",
+            "Poliza anterior": "first",
+            "Llave Póliza": "first",
+            "PROMOTOR": "first"
+        }
+        
+        # Add system columns if they exist (they might not be in the source yet if clean is called before saving/reading them back?)
+        # clean_promotoria_sura is called after read_excel.
+        # If columns don't exist in source, we created them in clean logic? 
+        # Wait, the column creation (filling None) happens AFTER this block in the original code.
+        # We should move column filling BEFORE aggregation or handle it carefully.
+        # Better to ensure they exist first.
+        
+        for col in ["ESTATUS_DE_RENOVACION", "EXPEDIENTE", "Email"]:
+            if col not in df.columns:
+                df[col] = None
+            agg_rules[col] = "first" # Take first status/email/file found
+            
+        # Only aggregate columns that actually exist in df
+        final_rules = {k: v for k, v in agg_rules.items() if k in df.columns}
+        
+        # Perform aggregation
+        df = df.groupby("PÓLIZA", as_index=False).agg(final_rules)
+
+    requested_cols = [
+        "PÓLIZA", "INICIO VIGENCIA", "FIN VIGENCIA", "CONTRATANTE", 
+        "PRIMA ANUALIZADA", "AGENTE", "NOMBRE RAMO", "PROCEDENCIA", 
+        "Poliza anterior", "Llave Póliza",
+        "ESTATUS_DE_RENOVACION", "EXPEDIENTE", "Email", "PROMOTOR"
+    ]
+    
+    for col in requested_cols:
+        if col not in df.columns:
+            df[col] = None
+            
+    return df[requested_cols]
 
 # Load env variables if not already loaded (simple loader as per user usage)
 # Since we created .env in backend/, we can load it.
@@ -343,6 +423,20 @@ async def get_upcoming_renewals(
         except Exception as e:
             print(f"Error loading AARCO: {e}")
 
+    elif insurer == "Promotoria SURA":
+        try:
+            df_promo = pd.read_excel(PROMOTORIA_SURA_PATHS["RENOVACIONES"])
+            df_promo = clean_promotoria_sura(df_promo)
+            
+            # Filter by date on FIN VIGENCIA
+            if "FIN VIGENCIA" in df_promo.columns:
+                mask = (df_promo["FIN VIGENCIA"] >= start_str) & (df_promo["FIN VIGENCIA"] <= end_str)
+                df_promo = df_promo[mask]
+                
+            results.extend(clean_data(df_promo))
+        except Exception as e:
+            print(f"Error loading Promotoria SURA: {e}")
+
     return results
 
 @router.post("/update")
@@ -395,6 +489,17 @@ async def update_renewal_status(
         except Exception as e:
              print(f"Error getting sheet name for AARCO: {e}")
              raise HTTPException(status_code=500, detail="Error accessing AARCO file")
+
+    elif insurer == "Promotoria SURA":
+        file_path = PROMOTORIA_SURA_PATHS["RENOVACIONES"]
+        try:
+            xl = pd.ExcelFile(file_path)
+            sheet_name = xl.sheet_names[0]
+            id_col = "PÓLIZA"
+        except Exception as e:
+             print(f"Error getting sheet name for Promotoria SURA: {e}")
+             raise HTTPException(status_code=500, detail="Error accessing Promotoria SURA file")
+
              
     if not file_path or not os.path.exists(file_path):
         print(f"File not found: {file_path}")

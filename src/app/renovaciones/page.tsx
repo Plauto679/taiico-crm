@@ -1,7 +1,7 @@
 import { getUpcomingRenewals } from '@/modules/renovaciones/service';
 import { RenovacionesView } from '@/components/renovaciones/RenovacionesView';
 import { DateRangeFilter } from '@/components/ui/DateRangeFilter';
-import { RenovacionGMM, RenovacionVida, RenovacionSura, RenovacionAarco } from '@/lib/types/renovaciones';
+import { RenovacionGMM, RenovacionVida, RenovacionSura, RenovacionAarco, RenovacionPromotoriaSura } from '@/lib/types/renovaciones';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
@@ -24,6 +24,7 @@ export default async function RenovacionesPage({
     let gmmRenewals: RenovacionGMM[] = [];
     let suraRenewals: RenovacionSura[] = [];
     let aarcoRenewals: RenovacionAarco[] = [];
+    let promotoriaSuraRenewals: RenovacionPromotoriaSura[] = [];
 
     if (insurer === 'Metlife') {
         const [vida, gmm] = await Promise.all([
@@ -37,6 +38,8 @@ export default async function RenovacionesPage({
         suraRenewals = (await getUpcomingRenewals(days, 'ALL', insurer, startDate, endDate)) as RenovacionSura[];
     } else if (insurer === 'AARCO_AXA') {
         aarcoRenewals = (await getUpcomingRenewals(days, 'ALL', insurer, startDate, endDate)) as RenovacionAarco[];
+    } else if (insurer === 'Promotoria SURA') {
+        promotoriaSuraRenewals = (await getUpcomingRenewals(days, 'ALL', insurer, startDate, endDate)) as unknown as RenovacionPromotoriaSura[];
     }
 
     return (
@@ -47,7 +50,7 @@ export default async function RenovacionesPage({
 
                     {/* Insurer Selector */}
                     <div className="inline-flex rounded-md shadow-sm" role="group">
-                        {['Metlife', 'SURA', 'AARCO_AXA'].map((ins) => (
+                        {['Metlife', 'SURA', 'AARCO_AXA', 'Promotoria SURA'].map((ins) => (
                             <Link
                                 key={ins}
                                 href={`?insurer=${ins}${startDate ? `&startDate=${startDate}` : ''}${endDate ? `&endDate=${endDate}` : ''}`}
@@ -69,6 +72,7 @@ export default async function RenovacionesPage({
                     gmmRenewals={gmmRenewals}
                     suraRenewals={suraRenewals}
                     aarcoRenewals={aarcoRenewals}
+                    promotoriaSuraRenewals={promotoriaSuraRenewals}
                     insurer={insurer}
                 />
             </div>

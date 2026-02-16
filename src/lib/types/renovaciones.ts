@@ -62,5 +62,22 @@ export interface RenovacionAarco {
     Email?: string;
 }
 
+export interface RenovacionPromotoriaSura {
+    'PÓLIZA': string;
+    'INICIO VIGENCIA': string; // Date YYYY-MM-DD
+    'FIN VIGENCIA': string; // Date YYYY-MM-DD
+    CONTRATANTE: string;
+    'PRIMA ANUALIZADA': number;
+    AGENTE: string;
+    'NOMBRE RAMO': string;
+    PROCEDENCIA: string;
+    'Poliza anterior': string;
+    'Llave Póliza': string;
+    ESTATUS_DE_RENOVACION: string;
+    EXPEDIENTE?: string;
+    Email?: string;
+    PROMOTOR?: string;
+}
+
 // Union type for cases where we might handle them generically, though usually we won't
-export type RenewalItem = RenovacionGMM | RenovacionVida | RenovacionSura | RenovacionAarco;
+export type RenewalItem = RenovacionGMM | RenovacionVida | RenovacionSura | RenovacionAarco | RenovacionPromotoriaSura;

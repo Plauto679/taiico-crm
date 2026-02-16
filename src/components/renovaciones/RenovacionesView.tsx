@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { DataTable } from '@/components/ui/DataTable';
-import { RenovacionGMM, RenovacionVida, RenovacionSura, RenovacionAarco } from '@/lib/types/renovaciones';
+import { RenovacionGMM, RenovacionVida, RenovacionSura, RenovacionAarco, RenovacionPromotoriaSura } from '@/lib/types/renovaciones';
 import { exportToExcel } from '@/lib/utils/export';
 import { updateRenewalStatus } from '@/modules/renovaciones/service';
 import { EditStatusModal } from './EditStatusModal';
@@ -13,10 +13,11 @@ interface RenovacionesViewProps {
     gmmRenewals?: RenovacionGMM[];
     suraRenewals?: RenovacionSura[];
     aarcoRenewals?: RenovacionAarco[];
+    promotoriaSuraRenewals?: RenovacionPromotoriaSura[];
     insurer: string;
 }
 
-export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRenewals = [], aarcoRenewals = [], insurer }: RenovacionesViewProps) {
+export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRenewals = [], aarcoRenewals = [], promotoriaSuraRenewals = [], insurer }: RenovacionesViewProps) {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<'VIDA' | 'GMM'>('VIDA');
     const [selectedRow, setSelectedRow] = useState<any>(null);
@@ -35,6 +36,9 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         } else if (insurer === 'AARCO_AXA') {
             data = aarcoRenewals;
             prefix = `Renovaciones_AARCO_AXA`;
+        } else if (insurer === 'Promotoria SURA') {
+            data = promotoriaSuraRenewals;
+            prefix = `Renovaciones_Promotoria_SURA`;
         }
 
         const fileName = `${prefix}_${new Date().toISOString().split('T')[0]}.xlsx`;
@@ -61,6 +65,9 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         } else if (insurer === 'AARCO_AXA') {
             type = 'ALL';
             id = selectedRow.POLIZA;
+        } else if (insurer === 'Promotoria SURA') {
+            type = 'ALL';
+            id = selectedRow.PÓLIZA;
         }
 
         await updateRenewalStatus(insurer, type, id, newStatus, expediente, email);
@@ -213,6 +220,32 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         { header: 'Email', accessorKey: 'Email' as keyof RenovacionAarco }
     ];
 
+    const promotoriaSuraColumns = [
+        { header: 'Póliza', accessorKey: 'PÓLIZA' as keyof RenovacionPromotoriaSura },
+        { header: 'Inicio Vigencia', accessorKey: 'INICIO VIGENCIA' as keyof RenovacionPromotoriaSura },
+        { header: 'Fin Vigencia', accessorKey: 'FIN VIGENCIA' as keyof RenovacionPromotoriaSura },
+        { header: 'Contratante', accessorKey: 'CONTRATANTE' as keyof RenovacionPromotoriaSura },
+        {
+            header: 'Prima Anualizada',
+            accessorKey: (row: RenovacionPromotoriaSura) => {
+                if (row['PRIMA ANUALIZADA'] === undefined || row['PRIMA ANUALIZADA'] === null) return 'N/A';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['PRIMA ANUALIZADA']);
+            }
+        },
+        { header: 'Agente', accessorKey: 'AGENTE' as keyof RenovacionPromotoriaSura },
+        { header: 'Nombre Ramo', accessorKey: 'NOMBRE RAMO' as keyof RenovacionPromotoriaSura },
+        { header: 'Procedencia', accessorKey: 'PROCEDENCIA' as keyof RenovacionPromotoriaSura },
+        { header: 'Poliza Anterior', accessorKey: 'Poliza anterior' as keyof RenovacionPromotoriaSura },
+        { header: 'Llave Póliza', accessorKey: 'Llave Póliza' as keyof RenovacionPromotoriaSura },
+        { header: 'Estatus de Renovación', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionPromotoriaSura },
+        {
+            header: 'Expediente',
+            accessorKey: 'EXPEDIENTE' as keyof RenovacionPromotoriaSura,
+            cell: (info: any) => renderExpedienteLink(info.row.original)
+        },
+        { header: 'Email', accessorKey: 'Email' as keyof RenovacionPromotoriaSura }
+    ];
+
     return (
         <div className="flex flex-col h-full space-y-4">
             <div className="flex items-center justify-between border-b pb-2 flex-none">
@@ -241,6 +274,11 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                     {insurer === 'AARCO_AXA' && (
                         <span className="px-4 py-2 font-medium border-b-2 border-white text-white">
                             AARCO & AXA Renovaciones
+                        </span>
+                    )}
+                    {insurer === 'Promotoria SURA' && (
+                        <span className="px-4 py-2 font-medium border-b-2 border-white text-white">
+                            Promotoría SURA Renovaciones
                         </span>
                     )}
                 </div>
@@ -276,10 +314,17 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                         className="h-full overflow-auto"
                         onRowClick={handleRowClick}
                     />
-                ) : (
+                ) : insurer === 'AARCO_AXA' ? (
                     <DataTable
                         data={aarcoRenewals}
                         columns={aarcoColumns}
+                        className="h-full overflow-auto"
+                        onRowClick={handleRowClick}
+                    />
+                ) : (
+                    <DataTable
+                        data={promotoriaSuraRenewals}
+                        columns={promotoriaSuraColumns}
                         className="h-full overflow-auto"
                         onRowClick={handleRowClick}
                     />
@@ -299,7 +344,9 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                             ? (activeTab === 'VIDA' ? selectedRow.POLIZA_ACTUAL : selectedRow.NPOLIZA)
                             : insurer === 'SURA'
                                 ? selectedRow.POLIZA
-                                : selectedRow.POLIZA
+                                : insurer === 'Promotoria SURA'
+                                    ? selectedRow['PÓLIZA']
+                                    : selectedRow.POLIZA
                     }
                     insurer={insurer}
                     type={insurer === 'Metlife' ? activeTab : 'ALL'}
@@ -308,14 +355,18 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                             ? selectedRow.CONTRATANTE
                             : insurer === 'SURA'
                                 ? selectedRow.NOMBRE
-                                : selectedRow.CONTRATANTE
+                                : insurer === 'Promotoria SURA'
+                                    ? selectedRow.CONTRATANTE
+                                    : selectedRow.CONTRATANTE
                     }
                     endDate={
                         insurer === 'Metlife'
                             ? (activeTab === 'VIDA' ? selectedRow.FIN_VIG : selectedRow.FFINVIG)
                             : insurer === 'SURA'
                                 ? selectedRow['FIN VIGENCIA']
-                                : selectedRow['FIN VIGENCIA']
+                                : insurer === 'Promotoria SURA'
+                                    ? selectedRow['FIN VIGENCIA']
+                                    : selectedRow['FIN VIGENCIA']
                     }
                 />
             )}
