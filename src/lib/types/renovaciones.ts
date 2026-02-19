@@ -64,6 +64,8 @@ export interface RenovacionAarco {
 
 export interface RenovacionPromotoriaSura {
     'PÓLIZA': string;
+    OFICINA: string;
+    RAMO: string;
     'INICIO VIGENCIA': string; // Date YYYY-MM-DD
     'FIN VIGENCIA': string; // Date YYYY-MM-DD
     CONTRATANTE: string;

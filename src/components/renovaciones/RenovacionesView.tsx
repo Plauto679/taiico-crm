@@ -222,6 +222,8 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
 
     const promotoriaSuraColumns = [
         { header: 'Póliza', accessorKey: 'PÓLIZA' as keyof RenovacionPromotoriaSura },
+        { header: 'Oficina', accessorKey: 'OFICINA' as keyof RenovacionPromotoriaSura },
+        { header: 'Ramo', accessorKey: 'RAMO' as keyof RenovacionPromotoriaSura },
         { header: 'Inicio Vigencia', accessorKey: 'INICIO VIGENCIA' as keyof RenovacionPromotoriaSura },
         { header: 'Fin Vigencia', accessorKey: 'FIN VIGENCIA' as keyof RenovacionPromotoriaSura },
         { header: 'Contratante', accessorKey: 'CONTRATANTE' as keyof RenovacionPromotoriaSura },

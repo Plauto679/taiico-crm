@@ -56,7 +56,9 @@ def clean_promotoria_sura(df: pd.DataFrame) -> pd.DataFrame:
             "PROCEDENCIA": "first",
             "Poliza anterior": "first",
             "Llave Póliza": "first",
-            "PROMOTOR": "first"
+            "PROMOTOR": "first",
+            "OFICINA": "first",
+            "RAMO": "first"
         }
         
         # Add system columns if they exist (they might not be in the source yet if clean is called before saving/reading them back?)
@@ -78,7 +80,7 @@ def clean_promotoria_sura(df: pd.DataFrame) -> pd.DataFrame:
         df = df.groupby("PÓLIZA", as_index=False).agg(final_rules)
 
     requested_cols = [
-        "PÓLIZA", "INICIO VIGENCIA", "FIN VIGENCIA", "CONTRATANTE", 
+        "PÓLIZA", "OFICINA", "RAMO", "INICIO VIGENCIA", "FIN VIGENCIA", "CONTRATANTE", 
         "PRIMA ANUALIZADA", "AGENTE", "NOMBRE RAMO", "PROCEDENCIA", 
         "Poliza anterior", "Llave Póliza",
         "ESTATUS_DE_RENOVACION", "EXPEDIENTE", "Email", "PROMOTOR"
