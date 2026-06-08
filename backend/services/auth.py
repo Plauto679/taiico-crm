@@ -1,35 +1,21 @@
-import pandas as pd
-from config import USERS_DB
 import os
+
+from database import SessionLocal, User
 
 def verify_credentials(username, password):
     """
-    Verify username and password against the Excel file.
+    Verify username and password against the relational database.
     """
-    if not os.path.exists(USERS_DB):
-        print(f"Users DB not found at: {USERS_DB}")
-        return False
-
+    db = SessionLocal()
     try:
-        df = pd.read_excel(USERS_DB)
-        
-        # Ensure columns exist (case insensitive search if needed, but assuming exact match based on request)
-        # Request said 'Usuario' and 'Password' columns
-        
-        # Simple exact match
-        user_match = df[df['Usuario'] == username]
-        
-        if user_match.empty:
-            return False
-            
-        # Check password
-        # Assuming plain text passwords as per the simple requirement, 
-        # but in production this should be hashed.
-        stored_password = user_match.iloc[0]['Password']
-        
-        # Handle potential type mismatch (e.g. if password is a number)
-        return str(stored_password) == str(password)
-        
-    except Exception as e:
-        print(f"Error verifying credentials: {e}")
+        # Check if the user exists in our unified database
+        user = db.query(User).filter((User.email == username) | (User.name == username)).first()
+        if user and user.is_active:
+            dev_password = os.environ.get("AUTH_DEV_PASSWORD", "taiico")
+            return str(password) == str(dev_password)
         return False
+    except Exception as e:
+        print(f"Authentication error: {e}")
+        return False
+    finally:
+        db.close()

@@ -23,6 +23,18 @@
 # misc
 .DS_Store
 *.pem
+local-secrets/
+backend/local-secrets/
+
+# python
+__pycache__/
+*.py[cod]
+
+# local databases and backups
+*.db
+*.sqlite
+*.sqlite3
+*.backup-*.db
 
 # debug
 npm-debug.log*
@@ -32,6 +44,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+!backend/.env.example
 
 # vercel
 .vercel

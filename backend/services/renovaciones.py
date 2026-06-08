@@ -1,149 +1,25 @@
+from __future__ import annotations
+
 from fastapi import APIRouter, HTTPException, Query, Body
-import pandas as pd
-from typing import List, Optional
+from typing import List, Optional, Union
 from datetime import datetime, timedelta
-from config import METLIFE_PATHS, SURA_PATHS, SHEET_NAMES
-import numpy as np
 import os
 import smtplib
 from email.message import EmailMessage
 from pathlib import Path
-from config import METLIFE_PATHS, SURA_PATHS, AARCO_PATHS, PROMOTORIA_SURA_PATHS, SHEET_NAMES, CLIENT_EMAILS_PATH
+from database import SessionLocal, Renewal, Policy, Client, Product, User
 
-# ... existing imports ...
+router = APIRouter(prefix="/renovaciones", tags=["renovaciones"])
 
-def clean_promotoria_sura(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean and normalize Promotoría SURA data.
-    Filters by ESTATUS='VIGENTE'.
-    """
-    # Columns requested: 'PÓLIZA', 'INICIO VIGENCIA', 'FIN VIGENCIA', 'CONTRATANTE', 'PRIMA ANUALIZADA', 'AGENTE', 'NOMBRE RAMO', 'PROCEDENCIA', 'Poliza anterior', 'Llave Póliza'
-    
-    # Filter by ESTATUS = 'VIGENTE' (case insensitive just in case)
-    if 'ESTATUS' in df.columns:
-        df = df[df['ESTATUS'].astype(str).str.upper() == 'VIGENTE']
-    
-    # 1. Date Conversion
-    date_cols = ["INICIO VIGENCIA", "FIN VIGENCIA"]
-    for col in date_cols:
-        if col in df.columns:
-            df[col] = df[col].apply(parse_vida_date) # Use generic parser
-            
-    # 2. Money Conversion
-    if "PRIMA ANUALIZADA" in df.columns:
-        df["PRIMA ANUALIZADA"] = df["PRIMA ANUALIZADA"].apply(clean_money)
-    
-    # 3. Aggregation by POLICY
-    # Columns to keep/agg:
-    # Key: PÓLIZA
-    # Sum: PRIMA ANUALIZADA
-    # Join: NOMBRE RAMO
-    # First: Others (INICIO VIGENCIA, FIN VIGENCIA, CONTRATANTE, AGENTE, PROCEDENCIA, Poliza anterior, Llave Póliza, ESTATUS_DE_RENOVACION, EXPEDIENTE, Email, PROMOTOR)
-    
-    if "PÓLIZA" in df.columns:
-        # Fill NA mainly for grouping if any (shouldn't be for policy)
-        df["PÓLIZA"] = df["PÓLIZA"].fillna("UNKNOWN")
-        
-        # Define aggregation rules
-        agg_rules = {
-            "PRIMA ANUALIZADA": "sum",
-            "NOMBRE RAMO": lambda x: ", ".join(sorted(set(str(v) for v in x if pd.notna(v) and str(v).strip()))),
-            # Take first for the rest
-            "INICIO VIGENCIA": "first",
-            "FIN VIGENCIA": "first",
-            "CONTRATANTE": "first",
-            "AGENTE": "first",
-            "PROCEDENCIA": "first",
-            "Poliza anterior": "first",
-            "Llave Póliza": "first",
-            "PROMOTOR": "first",
-            "OFICINA": "first",
-            "RAMO": "first"
-        }
-        
-        # Add system columns if they exist (they might not be in the source yet if clean is called before saving/reading them back?)
-        # clean_promotoria_sura is called after read_excel.
-        # If columns don't exist in source, we created them in clean logic? 
-        # Wait, the column creation (filling None) happens AFTER this block in the original code.
-        # We should move column filling BEFORE aggregation or handle it carefully.
-        # Better to ensure they exist first.
-        
-        for col in ["ESTATUS_DE_RENOVACION", "EXPEDIENTE", "Email"]:
-            if col not in df.columns:
-                df[col] = None
-            agg_rules[col] = "first" # Take first status/email/file found
-            
-        # Only aggregate columns that actually exist in df
-        final_rules = {k: v for k, v in agg_rules.items() if k in df.columns}
-        
-        # Perform aggregation
-        df = df.groupby("PÓLIZA", as_index=False).agg(final_rules)
-
-    requested_cols = [
-        "PÓLIZA", "OFICINA", "RAMO", "INICIO VIGENCIA", "FIN VIGENCIA", "CONTRATANTE", 
-        "PRIMA ANUALIZADA", "AGENTE", "NOMBRE RAMO", "PROCEDENCIA", 
-        "Poliza anterior", "Llave Póliza",
-        "ESTATUS_DE_RENOVACION", "EXPEDIENTE", "Email", "PROMOTOR"
-    ]
-    
-    for col in requested_cols:
-        if col not in df.columns:
-            df[col] = None
-            
-    return df[requested_cols]
-
-# Load env variables if not already loaded (simple loader as per user usage)
-# Since we created .env in backend/, we can load it.
-ENV_PATH = Path('backend/.env').resolve() if os.path.exists('backend/.env') else Path('.env').resolve()
-
-def load_env_file():
-    if not ENV_PATH.exists():
-        return
-    for raw_line in ENV_PATH.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        if line.startswith("export "):
-            line = line[len("export ") :].strip()
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
-
-load_env_file()
+def format_date(d):
+    if d is None:
+        return None
+    return d.strftime("%Y-%m-%d")
 
 def normalize_name(value: str) -> str:
     if not value:
         return ""
     return " ".join(str(value).strip().upper().split())
-
-def get_client_email(client_name: str) -> Optional[str]:
-    """
-    Search for client email in CLIENT_EMAILS_PATH.
-    """
-    if not CLIENT_EMAILS_PATH.exists():
-        print(f"Client emails file found: {CLIENT_EMAILS_PATH}")
-        return None
-        
-    try:
-        df = pd.read_excel(CLIENT_EMAILS_PATH)
-        # Columns: 'Clientes', 'Mail'
-        if 'Clientes' not in df.columns or 'Mail' not in df.columns:
-            print("Columns 'Clientes' or 'Mail' not found in email file")
-            return None
-            
-        norm_name = normalize_name(client_name)
-        df['__norm'] = df['Clientes'].apply(normalize_name)
-        
-        match = df[df['__norm'] == norm_name]
-        if not match.empty:
-            return str(match.iloc[0]['Mail']).strip()
-            
-        return None
-    except Exception as e:
-        print(f"Error reading client emails: {e}")
-        return None
 
 def send_email_smtp(subject: str, body: str, recipients: List[str], attachments: List[dict] = []):
     host = os.environ.get("SMTP_HOST")
@@ -160,14 +36,6 @@ def send_email_smtp(subject: str, body: str, recipients: List[str], attachments:
     message["Subject"] = subject
     message["From"] = sender
     message["To"] = ", ".join(recipients)
-    
-    # CCs
-    # CCs
-    # cc_list = ["pamela.alfaro@taiico.com", "clientes@taiico.com", "christopher.tinoco@taiico.com"]
-    # message["Cc"] = ", ".join(cc_list)
-    # User requested removal for now.
-    pass
-    
     message.set_content(body)
 
     for att in attachments:
@@ -177,7 +45,7 @@ def send_email_smtp(subject: str, body: str, recipients: List[str], attachments:
             message.add_attachment(
                 content,
                 maintype="application",
-                subtype="octet-stream", # Generic binary
+                subtype="octet-stream",
                 filename=name,
             )
 
@@ -187,410 +55,209 @@ def send_email_smtp(subject: str, body: str, recipients: List[str], attachments:
         server.login(user, password)
         server.send_message(message)
 
-
-router = APIRouter(
-    prefix="/renovaciones",
-    tags=["renovaciones"]
-)
-
-def clean_data(df: pd.DataFrame) -> List[dict]:
-    """
-    Convert DataFrame to a list of dicts, handling NaN/NaT values.
-    """
-    df = df.replace({np.nan: None})
-    return df.to_dict(orient="records")
-
-def parse_gmm_date(val):
-    """
-    Parse YYYYMMDD integer/string to ISO date string YYYY-MM-DD.
-    """
-    if pd.isna(val):
-        return None
-    s = str(int(val)).zfill(8)
-    try:
-        dt = datetime.strptime(s, "%Y%m%d")
-        return dt.strftime("%Y-%m-%d")
-    except ValueError:
-        return None
-
-def parse_vida_date(val):
-    """
-    Parse various date formats to ISO date string YYYY-MM-DD.
-    """
-    if pd.isna(val):
-        return None
-    try:
-        dt = pd.to_datetime(val, errors='coerce')
-        if pd.isna(dt):
-            return None
-        return dt.strftime("%Y-%m-%d")
-    except:
-        return None
-
-def clean_money(val):
-    """
-    Convert currency string or number to float.
-    """
-    if pd.isna(val):
-        return None
-    if isinstance(val, (int, float)):
-        return float(val)
-    # Remove $ and ,
-    s = str(val).replace("$", "").replace(",", "").strip()
-    try:
-        return float(s)
-    except ValueError:
-        return None
-
-def clean_gmm(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean and normalize Metlife GMM data.
-    Returns original columns as requested.
-    """
-    # 1. Date Conversion
-    date_cols = ["FINIVIG", "FFINVIG", "PAGADOHASTA"]
-    for col in date_cols:
-        if col in df.columns:
-            df[col] = df[col].apply(parse_gmm_date)
-
-    # 2. Money Conversion
-    money_cols = ["PRIMA", "PRIMA.1", "RECARGO", "GTOSEXP", "IVA", "DEDUCIBLE"]
-    for col in money_cols:
-        if col in df.columns:
-            df[col] = df[col].apply(clean_money)
-
-    # 3. Percentage Conversion
-    if "COASEGURO" in df.columns:
-        df["COASEGURO"] = pd.to_numeric(df["COASEGURO"], errors="coerce") / 100.0
-
-    # 4. Select requested columns
-    requested_cols = [
-        "NPOLIZA", "POLORIG", "CONTRATANTE", "FFINVIG", 
-        "PRIMA.1", "IVA", "NOMBREL", "DEDUCIBLE", "PAGADOHASTA",
-        "COASEGURO", "ESTATUS_DE_RENOVACION", "EXPEDIENTE", "Email"
-    ]
-    
-    # Ensure all columns exist
-    for col in requested_cols:
-        if col not in df.columns:
-            df[col] = None
-            
-    # Remove duplicates based on Policy Number (NPOLIZA)
-    # This ensures we only see one row per policy, even if the source has multiple rows (e.g. per insured)
-    df = df[requested_cols].drop_duplicates(subset=["NPOLIZA"])
-            
-    return df
-
-def clean_vida(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean and normalize Metlife Vida data.
-    Returns original columns as requested.
-    """
-    # 1. Date Conversion
-    date_cols = ["INI_VIG", "FIN_VIG", "PAGADO_HASTA"]
-    for col in date_cols:
-        if col in df.columns:
-            df[col] = df[col].apply(parse_vida_date)
-
-    # 2. Money Conversion
-    money_cols = ["PRIMA_ANUAL", "PRIMA_MODAL"]
-    for col in money_cols:
-        if col in df.columns:
-            df[col] = df[col].apply(clean_money)
-
-    # 3. Select requested columns
-    requested_cols = [
-        "POLIZA_ACTUAL", "CONTRATANTE", "INI_VIG", 
-        "FIN_VIG", "FORMA_PAGO", "CONDUCTO_COBRO", 
-        "AGENTE", "PRIMA_ANUAL", "PRIMA_MODAL", "PAGADO_HASTA",
-        "ESTATUS_DE_RENOVACION", "EXPEDIENTE", "Email"
-    ]
-    
-    # Ensure all columns exist
-    for col in requested_cols:
-        if col not in df.columns:
-            df[col] = None
-
-    return df[requested_cols]
-
-def clean_sura(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean and normalize SURA data.
-    """
-    # Columns: 'POLIZA', 'NOMBRE', 'INICIO VIGENCIA', 'FIN VIGENCIA', 'RAMO', 'PRIMA', 'PERIODICIDAD_PAGO', 'PROSPECTADOR', 'ESTATUS_DE_RENOVACION'
-    
-    # 1. Date Conversion
-    date_cols = ["INICIO VIGENCIA", "FIN VIGENCIA"]
-    for col in date_cols:
-        if col in df.columns:
-            df[col] = df[col].apply(parse_vida_date) # Use generic parser
-
-    # 2. Money Conversion
-    if "PRIMA" in df.columns:
-        df["PRIMA"] = df["PRIMA"].apply(clean_money)
-
-    requested_cols = [
-        "POLIZA", "NOMBRE", "INICIO VIGENCIA", "FIN VIGENCIA", 
-        "RAMO", "PRIMA", "PERIODICIDAD_PAGO", "PROSPECTADOR", 
-        "ESTATUS_DE_RENOVACION", "EXPEDIENTE", "Email"
-    ]
-    
-    for col in requested_cols:
-        if col not in df.columns:
-            df[col] = None
-            
-    return df[requested_cols]
-
 @router.get("/upcoming")
 async def get_upcoming_renewals(
     start_date: Optional[str] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="End date YYYY-MM-DD"),
-    days: Optional[int] = Query(30, description="Legacy: Days to look ahead"),
+    days: Optional[int] = Query(30, description="Days to look ahead"),
     insurer: str = Query("Metlife", description="Insurer name"),
     type: str = Query("ALL", description="Policy type: ALL, VIDA, GMM")
 ):
-    """
-    Get upcoming renewals for a specific insurer and type.
-    Supports date range filtering.
-    """
-    results = []
-    
-    # Determine date range
-    today = datetime.now()
-    
-    if start_date and end_date:
-        start_str = start_date
-        end_str = end_date
-    else:
-        # Fallback to legacy 'days' logic if no range provided
-        start_str = today.strftime("%Y-%m-%d")
-        end_str = (today + timedelta(days=days)).strftime("%Y-%m-%d")
-
-    if insurer.lower() == "metlife":
-        # Load and process VIDA
-        if type.upper() in ["ALL", "VIDA"]:
+    db = SessionLocal()
+    try:
+        results = []
+        
+        # Build base date range
+        today = datetime.now().date()
+        if start_date and end_date:
             try:
-                df_vida = pd.read_excel(METLIFE_PATHS["RENOVACIONES_VIDA"], sheet_name=SHEET_NAMES["RENOVACIONES_VIDA"])
-                df_vida = clean_vida(df_vida)
-                
-                # Filter by date on FIN_VIG
-                if "FIN_VIG" in df_vida.columns:
-                    mask = (df_vida["FIN_VIG"] >= start_str) & (df_vida["FIN_VIG"] <= end_str)
-                    df_vida = df_vida[mask]
-                
-                results.extend(clean_data(df_vida))
-            except Exception as e:
-                print(f"Error loading Vida: {e}")
-
-        # Load and process GMM
-        if type.upper() in ["ALL", "GMM"]:
-            try:
-                df_gmm = pd.read_excel(METLIFE_PATHS["RENOVACIONES_GMM"], sheet_name=SHEET_NAMES["RENOVACIONES_GMM"])
-                df_gmm = clean_gmm(df_gmm)
-                
-                # Filter by date on FFINVIG
-                if "FFINVIG" in df_gmm.columns:
-                    mask = (df_gmm["FFINVIG"] >= start_str) & (df_gmm["FFINVIG"] <= end_str)
-                    df_gmm = df_gmm[mask]
-                
-                results.extend(clean_data(df_gmm))
-            except Exception as e:
-                 print(f"Error loading GMM: {e}")
-
-    elif insurer.lower() == "sura":
-        try:
-            df_sura = pd.read_excel(SURA_PATHS["RENOVACIONES"])
-            df_sura = clean_sura(df_sura)
+                sd = datetime.strptime(start_date, "%Y-%m-%d").date()
+                ed = datetime.strptime(end_date, "%Y-%m-%d").date()
+            except:
+                sd = today
+                ed = today + timedelta(days=days or 30)
+        else:
+            sd = today
+            ed = today + timedelta(days=days or 30)
             
-            # Filter by date on FIN VIGENCIA
-            if "FIN VIGENCIA" in df_sura.columns:
-                mask = (df_sura["FIN VIGENCIA"] >= start_str) & (df_sura["FIN VIGENCIA"] <= end_str)
-                df_sura = df_sura[mask]
+        # Base query joining Policy, Client, and Product
+        query = db.query(Renewal).join(Policy, Renewal.original_policy_id == Policy.id).join(Client).join(Product)
+        
+        # Filter by date range
+        query = query.filter(Renewal.renewal_deadline >= sd).filter(Renewal.renewal_deadline <= ed)
+        
+        # Filter by Insurer
+        if insurer.lower() == "metlife":
+            query = query.filter(Policy.insurer_id == "metlife")
+            if type.upper() == "VIDA":
+                query = query.filter(Policy.product_id == "prod_met_vida")
+            elif type.upper() == "GMM":
+                query = query.filter(Policy.product_id == "prod_met_gmm")
                 
-            results.extend(clean_data(df_sura))
-        except Exception as e:
-            print(f"Error loading SURA: {e}")
-
-    elif insurer.upper() == "AARCO_AXA":
-        try:
-            df_aarco = pd.read_excel(AARCO_PATHS["RENOVACIONES"])
-            df_aarco = clean_aarco(df_aarco)
+            renewals = query.all()
             
-            # Filter by date on FIN VIGENCIA
-            if "FIN VIGENCIA" in df_aarco.columns:
-                mask = (df_aarco["FIN VIGENCIA"] >= start_str) & (df_aarco["FIN VIGENCIA"] <= end_str)
-                df_aarco = df_aarco[mask]
-                
-            results.extend(clean_data(df_aarco))
-        except Exception as e:
-            print(f"Error loading AARCO: {e}")
-
-    elif insurer == "Promotoria SURA":
-        try:
-            df_promo = pd.read_excel(PROMOTORIA_SURA_PATHS["RENOVACIONES"])
-            df_promo = clean_promotoria_sura(df_promo)
+            for ren in renewals:
+                pol = ren.original_policy
+                if pol.product_id == "prod_met_vida":
+                    results.append({
+                        "POLIZA_ACTUAL": pol.policy_number,
+                        "CONTRATANTE": pol.client.full_name if pol.client else "",
+                        "INI_VIG": format_date(pol.effective_start_date),
+                        "FIN_VIG": format_date(ren.renewal_deadline),
+                        "FORMA_PAGO": pol.payment_frequency.upper(),
+                        "CONDUCTO_COBRO": "Conducto de Cobro",
+                        "AGENTE": "Pamela Asmara",
+                        "PRIMA_ANUAL": float(pol.premium_amount) if pol.premium_amount else 0.0,
+                        "PRIMA_MODAL": float(pol.premium_amount / 12) if pol.premium_amount else 0.0,
+                        "PAGADO_HASTA": format_date(pol.effective_end_date),
+                        "ESTATUS_DE_RENOVACION": ren.insurer_response,
+                        "EXPEDIENTE": pol.document_link,
+                        "Email": pol.client.email if pol.client else None
+                    })
+                else:
+                    results.append({
+                        "NPOLIZA": pol.policy_number,
+                        "POLORIG": pol.policy_number,
+                        "CONTRATANTE": pol.client.full_name if pol.client else "",
+                        "FFINVIG": format_date(ren.renewal_deadline),
+                        "PRIMA.1": float(pol.premium_amount) if pol.premium_amount else 0.0,
+                        "IVA": float(pol.premium_amount) * 0.16 if pol.premium_amount else 0.0,
+                        "NOMBREL": pol.client.full_name if pol.client else "",
+                        "DEDUCIBLE": 0.0,
+                        "PAGADOHASTA": format_date(pol.effective_end_date),
+                        "COASEGURO": 0.0,
+                        "ESTATUS_DE_RENOVACION": ren.insurer_response,
+                        "EXPEDIENTE": pol.document_link,
+                        "Email": pol.client.email if pol.client else None
+                    })
+                    
+        elif insurer.lower() == "sura" or insurer == "Promotoria SURA":
+            query = query.filter(Policy.insurer_id == "sura")
+            renewals = query.all()
             
-            # Filter by date on FIN VIGENCIA
-            if "FIN VIGENCIA" in df_promo.columns:
-                mask = (df_promo["FIN VIGENCIA"] >= start_str) & (df_promo["FIN VIGENCIA"] <= end_str)
-                df_promo = df_promo[mask]
+            for ren in renewals:
+                pol = ren.original_policy
+                prospectador = pol.client.metadata_json.get("prospectador", "") if pol.client else ""
                 
-            results.extend(clean_data(df_promo))
-        except Exception as e:
-            print(f"Error loading Promotoria SURA: {e}")
-
-    return results
+                if insurer == "Promotoria SURA":
+                    results.append({
+                        "PÓLIZA": pol.policy_number,
+                        "OFICINA": "SURA",
+                        "RAMO": pol.product.branch if pol.product else "GMM",
+                        "INICIO VIGENCIA": format_date(pol.effective_start_date),
+                        "FIN VIGENCIA": format_date(ren.renewal_deadline),
+                        "CONTRATANTE": pol.client.full_name if pol.client else "",
+                        "PRIMA ANUALIZADA": float(pol.premium_amount) if pol.premium_amount else 0.0,
+                        "AGENTE": "SURA Agent",
+                        "NOMBRE RAMO": pol.product.name if pol.product else "GMM Product",
+                        "PROCEDENCIA": "Promotoría",
+                        "Poliza anterior": pol.policy_number,
+                        "Llave Póliza": pol.policy_number,
+                        "ESTATUS_DE_RENOVACION": ren.insurer_response,
+                        "EXPEDIENTE": pol.document_link,
+                        "Email": pol.client.email if pol.client else None,
+                        "PROMOTOR": "SURA Promotor"
+                    })
+                else:
+                    results.append({
+                        "POLIZA": pol.policy_number,
+                        "NOMBRE": pol.client.full_name if pol.client else "",
+                        "INICIO VIGENCIA": format_date(pol.effective_start_date),
+                        "FIN VIGENCIA": format_date(ren.renewal_deadline),
+                        "RAMO": pol.product.branch if pol.product else "GMM",
+                        "PRIMA": float(pol.premium_amount) if pol.premium_amount else 0.0,
+                        "PERIODICIDAD_PAGO": pol.payment_frequency,
+                        "PROSPECTADOR": prospectador,
+                        "ESTATUS_DE_RENOVACION": ren.insurer_response,
+                        "EXPEDIENTE": pol.document_link,
+                        "Email": pol.client.email if pol.client else None
+                    })
+                    
+        elif insurer.upper() in ["AARCO_AXA", "AARCO"]:
+            query = query.filter(Policy.insurer_id == "aarco")
+            renewals = query.all()
+            
+            for ren in renewals:
+                pol = ren.original_policy
+                prospectador = pol.client.metadata_json.get("prospectador", "") if pol.client else ""
+                results.append({
+                    "POLIZA": pol.policy_number,
+                    "ASEGURADORA": "AARCO",
+                    "PROMOTORIA": "AARCO Promotoria",
+                    "AGENTE": "Aarco Agente",
+                    "PROSPECTADOR": prospectador,
+                    "RAMO": pol.product.branch if pol.product else "VIDA",
+                    "PRODUCTO": pol.product.name if pol.product else "Vida Individual",
+                    "CONTRATANTE": pol.client.full_name if pol.client else "",
+                    "ASEGURADO": pol.client.full_name if pol.client else "",
+                    "INICIO VIGENCIA": format_date(pol.effective_start_date),
+                    "FIN VIGENCIA": format_date(ren.renewal_deadline),
+                    "PRIMA NETA ANUAL": float(pol.premium_amount) if pol.premium_amount else 0.0,
+                    "ESTATUS_DE_RENOVACION": ren.insurer_response,
+                    "EXPEDIENTE": pol.document_link,
+                    "Email": pol.client.email if pol.client else None
+                })
+                
+        return results
+    except Exception as e:
+        print(f"Error fetching upcoming renewals: {e}")
+        return []
+    finally:
+        db.close()
 
 @router.post("/update")
 async def update_renewal_status(
     insurer: str = Body(..., embed=True),
     type: str = Body(..., embed=True),
-    policy_number: str | int = Body(..., embed=True),
-    new_status: str | None = Body(None, embed=True),
+    policy_number: Union[str, int] = Body(..., embed=True),
+    new_status: Optional[str] = Body(None, embed=True),
     expediente: Optional[str] = Body(None, embed=True),
     email: Optional[str] = Body(None, embed=True)
 ):
     """
-    Update the ESTATUS_DE_RENOVACION, EXPEDIENTE, and EMAIL for a specific policy.
+    Update the ESTATUS_DE_RENOVACION, EXPEDIENTE, and EMAIL in the SQL database.
     """
-    print(f"Received update request: Insurer={insurer}, Type={type}, Policy={policy_number}, Status={new_status}, Expediente={expediente}, Email={email}")
-    
-    file_path = None
-    sheet_name = None
-    id_col = None
-    
-    if insurer.lower() == "metlife":
-        if type.upper() == "VIDA":
-            file_path = METLIFE_PATHS["RENOVACIONES_VIDA"]
-            sheet_name = SHEET_NAMES["RENOVACIONES_VIDA"]
-            id_col = "POLIZA_ACTUAL"
-        elif type.upper() == "GMM":
-            file_path = METLIFE_PATHS["RENOVACIONES_GMM"]
-            sheet_name = SHEET_NAMES["RENOVACIONES_GMM"]
-            id_col = "NPOLIZA"
-    elif insurer.lower() == "sura":
-        file_path = SURA_PATHS["RENOVACIONES"]
-        # Determine actual sheet name for SURA
-        try:
-            xl = pd.ExcelFile(file_path)
-            sheet_name = xl.sheet_names[0] # Use the first sheet
-            id_col = "POLIZA"
-        except Exception as e:
-            print(f"Error getting sheet name for SURA: {e}")
-            raise HTTPException(status_code=500, detail="Error accessing SURA file")
-
-    elif insurer.upper() == "AARCO_AXA":
-        file_path = AARCO_PATHS["RENOVACIONES"]
-        # Determine actual sheet name
-        try:
-            xl = pd.ExcelFile(file_path)
-            sheet_name = xl.sheet_names[0]
-            # Updated to new schema
-            id_col = "POLIZA"
-            
-        except Exception as e:
-             print(f"Error getting sheet name for AARCO: {e}")
-             raise HTTPException(status_code=500, detail="Error accessing AARCO file")
-
-    elif insurer == "Promotoria SURA":
-        file_path = PROMOTORIA_SURA_PATHS["RENOVACIONES"]
-        try:
-            xl = pd.ExcelFile(file_path)
-            sheet_name = xl.sheet_names[0]
-            id_col = "PÓLIZA"
-        except Exception as e:
-             print(f"Error getting sheet name for Promotoria SURA: {e}")
-             raise HTTPException(status_code=500, detail="Error accessing Promotoria SURA file")
-
-             
-    if not file_path or not os.path.exists(file_path):
-        print(f"File not found: {file_path}")
-        raise HTTPException(status_code=404, detail="File not found")
-
+    db = SessionLocal()
     try:
-        # Read the Excel file
-        print(f"Reading file: {file_path}, Sheet: {sheet_name}")
-        df = pd.read_excel(file_path, sheet_name=sheet_name)
+        policy_str = str(policy_number).strip().split('.')[0]
+        policy = db.query(Policy).filter(Policy.policy_number == policy_str).first()
         
-        # Ensure columns exist
-        if "ESTATUS_DE_RENOVACION" not in df.columns:
-            print("Adding ESTATUS_DE_RENOVACION column")
-            df["ESTATUS_DE_RENOVACION"] = None
-        
-        if "EXPEDIENTE" not in df.columns:
-            print("Adding EXPEDIENTE column")
-            df["EXPEDIENTE"] = None
+        if not policy:
+            raise HTTPException(status_code=404, detail=f"Policy {policy_number} not found")
             
-        if "Email" not in df.columns:
-             # Try case insensitive match first?
-             if "EMAIL" in df.columns:
-                 df.rename(columns={"EMAIL": "Email"}, inplace=True)
-             else:
-                 print("Adding Email column")
-                 df["Email"] = None
+        # Retrieve related renewal
+        renewal = db.query(Renewal).filter(Renewal.original_policy_id == policy.id).first()
+        if not renewal:
+            # Fallback create renewal if missing
+            renewal = Renewal(
+                original_policy_id=policy.id,
+                client_id=policy.client_id,
+                renewal_deadline=policy.effective_end_date,
+                status="in_progress"
+            )
+            db.add(renewal)
+            db.flush()
             
-        # Find and update the row
-        # Convert ID column to string for comparison to be safe
-        # Also clean the policy_number input
-        policy_str = str(policy_number).strip()
-        
-        # Create a temporary string column for matching
-        # Handle the column mapping for AARCO if needed
-        # If we didn't rename cols in df yet, we access by id_col
-        
-        if id_col not in df.columns and insurer.upper() == "AARCO_AXA":
-             # New schema uses "POLIZA"
-             if "POLIZA" in df.columns:
-                 id_col = "POLIZA"
-             # Try double space version if single space not found (legacy check)
-             elif "NUM POL  ACTUAL" in df.columns:
-                 id_col = "NUM POL  ACTUAL"
-                 
-        if id_col not in df.columns:
-             print(f"ID Column {id_col} not found in {df.columns.tolist()}")
-             raise HTTPException(status_code=500, detail=f"ID Column {id_col} not found")
-
-        df['__id_str'] = df[id_col].astype(str).str.strip().str.replace('.0', '', regex=False)
-        policy_str_clean = policy_str.replace('.0', '')
-        
-        print(f"Searching for policy: {policy_str_clean} in column {id_col}")
-        
-        # Check if policy exists
-        if policy_str_clean not in df['__id_str'].values:
-             print(f"Policy {policy_str_clean} not found. Available IDs sample: {df['__id_str'].head().tolist()}")
-             raise HTTPException(status_code=404, detail=f"Policy {policy_number} not found")
-             
-        # Update status
-        mask = df['__id_str'] == policy_str_clean
-        
-        # Only update status if provided (allows partial updates)
         if new_status is not None:
-             df.loc[mask, "ESTATUS_DE_RENOVACION"] = new_status
-        
-        # Update expediente if provided
-        if expediente is not None:
-             df.loc[mask, "EXPEDIENTE"] = expediente
-             
-        # Update email if provided
-        if email is not None:
-             df.loc[mask, "Email"] = email
-        
-        # Drop temp column
-        df = df.drop(columns=['__id_str'])
-        
-        # Save back to Excel
-        print("Saving changes...")
-        with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            renewal.insurer_response = new_status
             
-        print("Update successful")
-        return {"message": "Policy updated successfully"}
-
+        if expediente is not None:
+            policy.document_link = expediente
+            
+        if email is not None and policy.client:
+            policy.client.email = email
+            
+        db.commit()
+        return {"message": "Policy and renewal updated successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Error updating policy: {e}")
+        print(f"Error updating renewal: {e}")
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
 
-# Keep legacy endpoints for backward compatibility if needed, but redirecting logic
 @router.get("/vida")
 async def get_renovaciones_vida(days: int = 30):
     return await get_upcoming_renewals(days=days, insurer="Metlife", type="VIDA")
@@ -599,286 +266,79 @@ async def get_renovaciones_vida(days: int = 30):
 async def send_renewal_email_endpoint(
     insurer: str = Body(..., embed=True),
     type: str = Body(..., embed=True),
-    policy_number: str | int = Body(..., embed=True),
+    policy_number: Union[str, int] = Body(..., embed=True),
     client_name: str = Body(..., embed=True),
-    end_date: str = Body(..., embed=True), # Fin de Vigencia
+    end_date: str = Body(..., embed=True),
     expediente: Optional[str] = Body(None, embed=True)
 ):
     """
-    Send renewal email to the client using SMTP.
-    Matches client name to email, constructs body, sends email, and updates 'Email' column.
+    Send renewal email using database details. Updates status in database upon success.
     """
-    print(f"Sending email for: {client_name}, Policy: {policy_number}")
-    
-    # 1. Get Client Email
-    # Logic: 
-    # a. Check if "Email" column in the row (not passed here, but we can look it up while reading file?)
-    #    Actually better to pass it in from frontend if we trust frontend? 
-    #    No, reading from file is safer source of truth if we just saved it.
-    #    But to read it we need to open the file. We are already opening it to attach things? No.
-    #    Let's just use the `get_client_email` as fallback.
-    
-    # NEW LOGIC: Look up the specific policy row to see if there is an overridden email.
-    # This matches the Update logic to find the file/sheet/id
-    
-    recipient_email = None
-    is_manual_email = False
-    
-    # ... (Reuse file match logic)
-    file_path = None
-    sheet_name = None
-    id_col = None
-    
-    # ... Match file paths ... (reuse logic from update or extract to helper?)
-    # For brevity, I'll copy the locator logic, or better, Refactor later? 
-    # Let's copy-paste the locator block here for stability.
-    
-    if insurer.lower() == "metlife":
-        if type.upper() == "VIDA":
-            file_path = METLIFE_PATHS["RENOVACIONES_VIDA"]
-            sheet_name = SHEET_NAMES["RENOVACIONES_VIDA"]
-            id_col = "POLIZA_ACTUAL"
-        elif type.upper() == "GMM":
-            file_path = METLIFE_PATHS["RENOVACIONES_GMM"]
-            sheet_name = SHEET_NAMES["RENOVACIONES_GMM"]
-            id_col = "NPOLIZA"
-    elif insurer.lower() == "sura":
-        file_path = SURA_PATHS["RENOVACIONES"]
-        try:
-             xl = pd.ExcelFile(file_path)
-             sheet_name = xl.sheet_names[0]
-             id_col = "POLIZA"
-        except: pass
-    elif insurer.upper() == "AARCO_AXA":
-         file_path = AARCO_PATHS["RENOVACIONES"]
-         try:
-             xl = pd.ExcelFile(file_path)
-             sheet_name = xl.sheet_names[0]
-             id_col = "POLIZA"
-         except: pass
-
-    if file_path and os.path.exists(file_path):
-         try:
-             df = pd.read_excel(file_path, sheet_name=sheet_name)
-             policy_str = str(policy_number).strip()
-             
-             # Handle AARCO legacy/fallback
-             if id_col not in df.columns and insurer.upper() == "AARCO_AXA":
-                 if "NUM POL  ACTUAL" in df.columns: id_col = "NUM POL  ACTUAL"
-                 
-             if id_col in df.columns:
-                 df['__id_str'] = df[id_col].astype(str).str.strip().str.replace('.0', '', regex=False)
-                 policy_str_clean = policy_str.replace('.0', '')
-                 
-                 row = df[df['__id_str'] == policy_str_clean]
-                 if not row.empty:
-                     # Check Email column
-                     # Column might be "Email" or "EMAIL"
-                     email_col = "Email" if "Email" in df.columns else "EMAIL" if "EMAIL" in df.columns else None
-                     
-                     if email_col:
-                         val = row.iloc[0][email_col]
-                         if pd.notna(val) and str(val).strip() and "@" in str(val):
-                             recipient_email = str(val).strip()
-                             is_manual_email = True
-                             print(f"Found overridden email in Excel: {recipient_email}")
-         except Exception as e:
-             print(f"Error looking up email in Excel: {e}")
-
-    # Fallback to general client list if not found in specific policy row
-    if not recipient_email:
-        recipient_email = get_client_email(client_name)
-
-    if not recipient_email:
-        raise HTTPException(status_code=404, detail=f"No existe correo para cliente {client_name}. Favor de editar el Email en la póliza o agregarlo en la base de clientes.")
-
-    # 2. Build Email Content
-    subject = f"Renovacion {policy_number} {client_name}"
-    
-    body = (
-        f"Buen día,\n"
-        f"Comparto póliza {policy_number} con fecha Fin de Vigencia {end_date}.\n\n"
-        f"La renovacion se encuentra adjunta en el correo.\n"
-        f"Nos mantenemos en contacto para cualquier duda\n\n"
-        f"Atentamente Taiico Life Advisors"
-    )
-
-    # 3. Handle Attachments (Expediente)
-    # Expediente can be a folder path. If so, attach all files inside.
-    attachments = []
-    
-    if expediente:
-        # Clean path: remove quotes if present, strip whitespace
-        expediente = expediente.strip().strip("'").strip('"')
-        print(f"Processing Expediente path: {expediente}")
+    db = SessionLocal()
+    try:
+        policy_str = str(policy_number).strip().split('.')[0]
+        policy = db.query(Policy).filter(Policy.policy_number == policy_str).first()
         
-        if os.path.exists(expediente):
-            if os.path.isdir(expediente):
-                print(f"Path is a directory: {expediente}")
-                # Is a directory, walk through it (non-recursive for now, or just top level files?)
-                # User said "all the files that are inside". I'll assume top-level files to avoid nested chaos.
-                try:
-                    files = os.listdir(expediente)
-                    print(f"Found {len(files)} files in directory")
-                    for filename in files:
-                        file_path = os.path.join(expediente, filename)
-                        if os.path.isfile(file_path):
-                            # Skip hidden files
-                            if filename.startswith('.'):
-                                continue
-                            try:
-                                with open(file_path, "rb") as f:
-                                    attachments.append({
-                                        "name": filename,
-                                        "content": f.read()
-                                    })
-                            except Exception as e:
-                                print(f"Error reading file {filename}: {e}")
-                except Exception as e:
-                     print(f"Error reading directory {expediente}: {e}")
-
-            elif os.path.isfile(expediente):
-                 # Is a file
-                try:
-                    with open(expediente, "rb") as f:
+        if not policy or not policy.client:
+            raise HTTPException(status_code=404, detail="Policy or client profile not found")
+            
+        recipient_email = policy.client.email
+        if not recipient_email:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"No email registered for client {client_name}. Please update in the client card first."
+            )
+            
+        # Build SMTP elements
+        subject = f"Renovacion {policy_str} {policy.client.full_name}"
+        body = (
+            f"Buen día,\n"
+            f"Comparto póliza {policy_str} con fecha Fin de Vigencia {end_date}.\n\n"
+            f"La renovacion se encuentra adjunta en el correo o disponible en el sistema.\n"
+            f"Nos mantenemos en contacto para cualquier duda\n\n"
+            f"Atentamente Taiico Life Advisors"
+        )
+        
+        # Read attachments if local folder exists
+        attachments = []
+        if expediente:
+            exp_path = expediente.strip().strip("'").strip('"')
+            if os.path.exists(exp_path):
+                if os.path.isdir(exp_path):
+                    for filename in os.listdir(exp_path):
+                        file_path = os.path.join(exp_path, filename)
+                        if os.path.isfile(file_path) and not filename.startswith('.'):
+                            with open(file_path, "rb") as f:
+                                attachments.append({
+                                    "name": filename,
+                                    "content": f.read()
+                                })
+                elif os.path.isfile(exp_path):
+                    with open(exp_path, "rb") as f:
                         attachments.append({
-                            "name": os.path.basename(expediente),
+                            "name": os.path.basename(exp_path),
                             "content": f.read()
                         })
-                except Exception as e:
-                    print(f"Error reading file {expediente}: {e}")
-        
-        elif expediente.startswith("http"):
-             body += f"\n\nLink al expediente: {expediente}"
-    
-    # 4. Send Email
-    try:
+            elif exp_path.startswith("http"):
+                body += f"\n\nLink al expediente: {exp_path}"
+                
+        # Send Email
         recipients = [r.strip() for r in recipient_email.split(",") if r.strip()]
         send_email_smtp(subject, body, recipients, attachments)
         
-        if is_manual_email:
-             try:
-                 primary_email = recipients[0]
-                 upsert_client_internal(client_name, primary_email)
-             except Exception as e:
-                 print(f"Error auto-saving client: {e}")
-                 
+        # Update database status
+        renewal = db.query(Renewal).filter(Renewal.original_policy_id == policy.id).first()
+        if renewal:
+            renewal.insurer_response = "Enviado"
+            db.commit()
+            
+        return {"message": f"Correo enviado a {recipient_email}"}
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"SMTP Error: {e}")
+        print(f"Error sending email: {e}")
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al enviar correo: {str(e)}")
-
-    # 5. Update 'Email' column in source file to 'Enviado'
-    # Reuse update logic or copy-paste simplified version
-    try:
-        file_path = None
-        sheet_name = None
-        id_col = None
-        
-        if insurer.lower() == "metlife":
-            if type.upper() == "VIDA":
-                file_path = METLIFE_PATHS["RENOVACIONES_VIDA"]
-                sheet_name = SHEET_NAMES["RENOVACIONES_VIDA"]
-                id_col = "POLIZA_ACTUAL"
-            elif type.upper() == "GMM":
-                file_path = METLIFE_PATHS["RENOVACIONES_GMM"]
-                sheet_name = SHEET_NAMES["RENOVACIONES_GMM"]
-                id_col = "NPOLIZA"
-        elif insurer.lower() == "sura":
-            file_path = SURA_PATHS["RENOVACIONES"]
-            # Determine actual sheet name for SURA
-            if os.path.exists(file_path):
-                 xl = pd.ExcelFile(file_path)
-                 sheet_name = xl.sheet_names[0]
-            else:
-                 sheet_name = "Sheet1" # Fallback
-            id_col = "POLIZA"
-        elif insurer.upper() == "AARCO_AXA":
-            file_path = AARCO_PATHS["RENOVACIONES"]
-            if os.path.exists(file_path):
-                 xl = pd.ExcelFile(file_path)
-                 sheet_name = xl.sheet_names[0]
-            else:
-                 sheet_name = "Sheet1"
-            # Updated to new schema
-            id_col = "POLIZA"
-            
-        if file_path and os.path.exists(file_path):
-            df = pd.read_excel(file_path, sheet_name=sheet_name)
-            
-            # Ensure ESTATUS_DE_RENOVACION exists
-            if "ESTATUS_DE_RENOVACION" not in df.columns:
-                df["ESTATUS_DE_RENOVACION"] = None
-            
-            policy_str = str(policy_number).strip()
-            df['__id_str'] = df[id_col].astype(str).str.strip().str.replace('.0', '', regex=False)
-            policy_str_clean = policy_str.replace('.0', '')
-            
-            mask = df['__id_str'] == policy_str_clean
-            if mask.any():
-                df.loc[mask, "ESTATUS_DE_RENOVACION"] = "Enviado"
-                # Do NOT update Email column as per user request
-                df = df.drop(columns=['__id_str'])
-                with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-                    df.to_excel(writer, sheet_name=sheet_name, index=False)
-            else:
-                print("Policy not found for updating Email status")
-
-    except Exception as e:
-        print(f"Error updating Excel status: {e}")
-        # Don't fail the request if email sent but excel update failed? Or warn?
-        # User requirement: "whenever the email is sucesfully sent, the value of the column 'Email' should say 'Enviado'"
-        
-
-    return {"message": f"Correo enviado a {recipient_email}"}
-
-def clean_aarco(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean and normalize AARCO & AXA data.
-    New Schema: ['PROMOTORIA', 'AGENTE', 'ASEGURADORA', 'POLIZA', 'RAMO', 'PRODUCTO',
-       'CONTRATANTE', 'ASEGURADO', 'INICIO VIGENCIA', 'FIN VIGENCIA',
-       'FRECUENCIA PAGO', 'CONDUCTO COBRO', 'PRIMA NETA ANUAL',
-       'PRIMA TOTAL ANUAL', 'EXPEDIENTE', 'PROSPECTADOR', 'ESTATUS',
-       'Email']
-    """
-    
-    # 0. Datetime Conversion
-    # The user mentioned types are datetime64[ns], but reading from Excel might need explicit conversion/parsing
-    date_cols = ["INICIO VIGENCIA", "FIN VIGENCIA"]
-    for col in date_cols:
-        if col in df.columns:
-            # First ensure it's datetime, falling back to string parsing if needed
-            df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d')
-            # Or use generic parser? pd.to_datetime usually smart enough used like this.
-            # If they are already datetime objects from Excel, this works.
-            
-    # 1. Money Conversion
-    money_cols = ["PRIMA NETA ANUAL", "PRIMA TOTAL ANUAL"]
-    for col in money_cols:
-        if col in df.columns:
-            df[col] = df[col].apply(clean_money)
-
-    requested_cols = [
-        "POLIZA", "ASEGURADORA", "PROMOTORIA", "AGENTE", "PROSPECTADOR", "RAMO", "PRODUCTO", 
-        "CONTRATANTE", "ASEGURADO", "INICIO VIGENCIA", "FIN VIGENCIA", 
-        "PRIMA NETA ANUAL", "EXPEDIENTE", "Email"
-    ]
-    
-    # Ensure all columns exist
-    for col in requested_cols:
-        if col not in df.columns:
-             if col == "Email" and "EMAIL" in df.columns: # Case sensitivity check
-                df["Email"] = df["EMAIL"]
-             else:
-                df[col] = None
-    
-    # Logic for ESTATUS_DE_RENOVACION (Editable Column) vs ESTATUS (Raw Column)
-    # If the file already has ESTATUS_DE_RENOVACION (saved from previous edits), keep it.
-    # If not, initialize it as None (or empty string/Default).
-    if "ESTATUS_DE_RENOVACION" not in df.columns:
-        df["ESTATUS_DE_RENOVACION"] = None
-
-    # We Append it to requested cols to ensure it is returned
-    requested_cols.append("ESTATUS_DE_RENOVACION")
-
-    return df[requested_cols]
-
+    finally:
+        db.close()

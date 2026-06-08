@@ -1,12 +1,15 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Define base paths using pathlib for relative path resolution
 # Current file is in: .../2025 - Antigravity CRM/taiico-crm/backend/config.py
 # We want to reach: .../2025 - Antigravity CRM/
 
 # Resolve the parent directory of the current file (backend)
 BACKEND_DIR = Path(__file__).resolve().parent
+load_dotenv(BACKEND_DIR / ".env")
 # Resolve the project root (taiico-crm)
 PROJECT_ROOT = BACKEND_DIR.parent
 # Resolve the shared drive root (2025 - Antigravity CRM)
@@ -45,4 +48,33 @@ SHEET_NAMES = {
     "CARTERA_GMM": "GMM",
     "RENOVACIONES_VIDA": "Vida",
     "RENOVACIONES_GMM": "GMM",
+}
+
+GOOGLE_DRIVE_SHARED_DRIVE_ID = os.getenv("GOOGLE_DRIVE_SHARED_DRIVE_ID")
+
+GOOGLE_DRIVE_SOURCE_FOLDERS = {
+    "cobranza.metlife": {
+        "folder_id": os.getenv("GOOGLE_DRIVE_SOURCE_COBRANZA_METLIFE_FOLDER_ID"),
+        "source_category": "cobranza",
+        "insurer_id": "metlife",
+        "product_branch": None,
+        "parser_name": "metlife_cobranza_workbook",
+        "filename_contains": "metlife",
+    },
+    "cobranza.sura": {
+        "folder_id": os.getenv("GOOGLE_DRIVE_SOURCE_COBRANZA_SURA_FOLDER_ID"),
+        "source_category": "cobranza",
+        "insurer_id": "sura",
+        "product_branch": None,
+        "parser_name": "sura_cobranza_workbook",
+        "filename_contains": "sura",
+    },
+    "cobranza.aarco": {
+        "folder_id": os.getenv("GOOGLE_DRIVE_SOURCE_COBRANZA_AARCO_FOLDER_ID"),
+        "source_category": "cobranza",
+        "insurer_id": "aarco",
+        "product_branch": None,
+        "parser_name": None,
+        "filename_contains": "aarco",
+    },
 }
