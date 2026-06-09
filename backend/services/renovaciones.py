@@ -8,6 +8,9 @@ import smtplib
 from email.message import EmailMessage
 from pathlib import Path
 from database import SessionLocal, Renewal, Policy, Client, Product, User
+from config import METLIFE_PATHS
+from parsers.metlife_gmm_renovaciones import PARSER_VERSION as METLIFE_GMM_RENEWAL_PARSER_VERSION
+from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
 
 router = APIRouter(prefix="/renovaciones", tags=["renovaciones"])
 
@@ -15,6 +18,17 @@ def format_date(d):
     if d is None:
         return None
     return d.strftime("%Y-%m-%d")
+
+def json_ready(value):
+    if isinstance(value, (datetime,)):
+        return value.isoformat()
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: json_ready(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [json_ready(item) for item in value]
+    return value
 
 def normalize_name(value: str) -> str:
     if not value:
@@ -54,6 +68,89 @@ def send_email_smtp(subject: str, body: str, recipients: List[str], attachments:
             server.starttls()
         server.login(user, password)
         server.send_message(message)
+
+@router.post("/metlife/gmm/source-dry-run")
+async def dry_run_metlife_gmm_renewal_source(
+    source_path: Optional[str] = Body(None, embed=True),
+    start_date: Optional[str] = Body(None, embed=True),
+    end_date: Optional[str] = Body(None, embed=True),
+    days: Optional[int] = Body(None, embed=True),
+    include_all: bool = Body(False, embed=True),
+    limit: int = Body(25, embed=True),
+):
+    workbook_path = Path(source_path) if source_path else Path(METLIFE_PATHS["RENOVACIONES_GMM"])
+    if not workbook_path.exists():
+        raise HTTPException(status_code=404, detail=f"MetLife GMM renewal source file not found: {workbook_path}")
+
+    today = datetime.now().date()
+    if start_date:
+        window_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    else:
+        window_start = today
+
+    if end_date:
+        window_end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    elif days is not None:
+        window_end = window_start + timedelta(days=days)
+    else:
+        window_end = window_start + timedelta(days=90)
+
+    parsed_rows, workbook_issues = parse_metlife_gmm_renewal_workbook(workbook_path, today=today)
+
+    candidates = []
+    row_issue_count = 0
+    status_counts = {}
+    risk_counts = {}
+    document_counts = {}
+    rows_missing_documents = 0
+
+    for row in parsed_rows:
+        row_issue_count += len(row.issues)
+        payload = row.normalized_payload
+        renewal_deadline = payload.get("renewal_deadline")
+        in_window = bool(renewal_deadline and window_start <= renewal_deadline <= window_end)
+        if not include_all and not in_window:
+            continue
+
+        status = payload.get("renewal_status_source") or "UNKNOWN"
+        risk = payload.get("risk_level") or "unknown"
+        document_status = payload.get("document_status") or "unknown"
+        status_counts[status] = status_counts.get(status, 0) + 1
+        risk_counts[risk] = risk_counts.get(risk, 0) + 1
+        document_counts[document_status] = document_counts.get(document_status, 0) + 1
+        if payload.get("needs_document_retrieval"):
+            rows_missing_documents += 1
+
+        candidates.append({
+            "sheet_name": row.sheet_name,
+            "row_number": row.row_number,
+            "row_hash": row.row_hash,
+            "normalized_payload": json_ready(payload),
+            "issues": row.issues,
+        })
+
+    candidates.sort(key=lambda item: (
+        item["normalized_payload"].get("renewal_deadline") or "9999-12-31",
+        item["normalized_payload"].get("policy_number") or "",
+    ))
+
+    return {
+        "dry_run": True,
+        "source_path": str(workbook_path),
+        "parser_name": "metlife_gmm_renewal_workbook",
+        "parser_version": METLIFE_GMM_RENEWAL_PARSER_VERSION,
+        "rows_read": len(parsed_rows),
+        "window_start": window_start.isoformat(),
+        "window_end": window_end.isoformat(),
+        "candidate_count": len(candidates),
+        "status_counts": status_counts,
+        "risk_counts": risk_counts,
+        "document_counts": document_counts,
+        "rows_missing_documents": rows_missing_documents,
+        "workbook_issues": workbook_issues,
+        "row_issues_count": row_issue_count,
+        "sample_candidates": candidates[: max(0, min(limit, 100))],
+    }
 
 @router.get("/upcoming")
 async def get_upcoming_renewals(
