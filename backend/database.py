@@ -207,6 +207,51 @@ class Renewal(Base):
     client = relationship("Client", back_populates="renewals")
     renewal_policy = relationship("Policy", foreign_keys=[renewal_policy_id])
 
+# 8b. Policy Document Retrieval Queue Model
+class PolicyDocumentRetrievalTask(Base):
+    __tablename__ = "policy_document_retrieval_tasks"
+    __table_args__ = (
+        UniqueConstraint(
+            "insurer_id",
+            "product_branch",
+            "policy_number",
+            "renewal_deadline",
+            name="uq_policy_document_retrieval_identity",
+        ),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    insurer_id = Column(String(50), nullable=False)
+    product_branch = Column(String(50), nullable=False)
+    policy_number = Column(String(100), nullable=False)
+    original_policy_number = Column(String(100), nullable=True)
+    client_name = Column(String(255), nullable=True)
+    rfc = Column(String(50), nullable=True)
+    renewal_deadline = Column(Date, nullable=False)
+    days_until_renewal = Column(Integer, nullable=True)
+    risk_level = Column(String(50), default="none", nullable=False)
+    priority = Column(String(50), default="medium", nullable=False)
+    status = Column(String(50), default="queued", nullable=False)
+    document_status = Column(String(50), default="missing", nullable=False)
+    expediente_link = Column(String(1000), nullable=True)
+    target_drive_folder_id = Column(String(255), nullable=True)
+    target_drive_folder_path = Column(String(1000), nullable=True)
+    source_name = Column(String(100), nullable=False)
+    source_path = Column(String(1000), nullable=True)
+    source_sheet_name = Column(String(100), nullable=True)
+    source_row_number = Column(Integer, nullable=True)
+    source_row_hash = Column(String(64), nullable=False)
+    source_payload = Column(JSON, nullable=False)
+    normalized_payload = Column(JSON, default={})
+    retrieval_adapter = Column(String(100), nullable=True)
+    attempt_count = Column(Integer, default=0, nullable=False)
+    last_attempt_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    queued_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
 # 9. Claim Model
 class Claim(Base):
     __tablename__ = "claims"
