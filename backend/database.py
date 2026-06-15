@@ -252,6 +252,48 @@ class PolicyDocumentRetrievalTask(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
+
+# 8c. Policy Document Retrieval Run Model
+class PolicyDocumentRetrievalRun(Base):
+    __tablename__ = "policy_document_retrieval_runs"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    adapter_name = Column(String(100), nullable=False)
+    insurer_id = Column(String(50), nullable=True)
+    product_branch = Column(String(50), nullable=True)
+    status = Column(String(50), default="started", nullable=False)
+    started_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    queued_at_start = Column(Integer, default=0, nullable=False)
+    selected_count = Column(Integer, default=0, nullable=False)
+    processed_count = Column(Integer, default=0, nullable=False)
+    succeeded_count = Column(Integer, default=0, nullable=False)
+    failed_count = Column(Integer, default=0, nullable=False)
+    escalated_count = Column(Integer, default=0, nullable=False)
+    summary_email_to = Column(String(255), nullable=True)
+    metadata_json = Column("metadata", JSON, default={})
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    steps = relationship("PolicyDocumentRetrievalStep", back_populates="run")
+
+
+# 8d. Policy Document Retrieval Step Model
+class PolicyDocumentRetrievalStep(Base):
+    __tablename__ = "policy_document_retrieval_steps"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id = Column(String(36), ForeignKey("policy_document_retrieval_runs.id"), nullable=False)
+    task_id = Column(String(36), ForeignKey("policy_document_retrieval_tasks.id"), nullable=False)
+    step_name = Column(String(100), nullable=False)
+    status = Column(String(50), nullable=False)
+    started_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    error_message = Column(Text, nullable=True)
+    metadata_json = Column("metadata", JSON, default={})
+
+    run = relationship("PolicyDocumentRetrievalRun", back_populates="steps")
+    task = relationship("PolicyDocumentRetrievalTask")
+
 # 9. Claim Model
 class Claim(Base):
     __tablename__ = "claims"

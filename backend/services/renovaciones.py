@@ -8,7 +8,17 @@ import smtplib
 from email.message import EmailMessage
 from pathlib import Path
 from decimal import Decimal
-from database import SessionLocal, Renewal, Policy, Client, Product, User, PolicyDocumentRetrievalTask
+from database import (
+    SessionLocal,
+    Renewal,
+    Policy,
+    Client,
+    Product,
+    User,
+    PolicyDocumentRetrievalTask,
+    PolicyDocumentRetrievalRun,
+    PolicyDocumentRetrievalStep,
+)
 from config import METLIFE_PATHS
 from parsers.metlife_gmm_renovaciones import PARSER_VERSION as METLIFE_GMM_RENEWAL_PARSER_VERSION
 from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
@@ -100,6 +110,109 @@ def serialize_retrieval_task(task: PolicyDocumentRetrievalTask) -> dict:
         "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         "normalized_payload": task.normalized_payload,
     }
+
+def serialize_retrieval_run(run: PolicyDocumentRetrievalRun) -> dict:
+    return {
+        "id": run.id,
+        "adapter_name": run.adapter_name,
+        "insurer_id": run.insurer_id,
+        "product_branch": run.product_branch,
+        "status": run.status,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        "queued_at_start": run.queued_at_start,
+        "selected_count": run.selected_count,
+        "processed_count": run.processed_count,
+        "succeeded_count": run.succeeded_count,
+        "failed_count": run.failed_count,
+        "escalated_count": run.escalated_count,
+        "summary_email_to": run.summary_email_to,
+        "metadata": run.metadata_json,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+    }
+
+def serialize_retrieval_step(step: PolicyDocumentRetrievalStep) -> dict:
+    return {
+        "id": step.id,
+        "run_id": step.run_id,
+        "task_id": step.task_id,
+        "step_name": step.step_name,
+        "status": step.status,
+        "started_at": step.started_at.isoformat() if step.started_at else None,
+        "completed_at": step.completed_at.isoformat() if step.completed_at else None,
+        "error_message": step.error_message,
+        "metadata": step.metadata_json,
+    }
+
+def build_escalation_email_payload(
+    task: PolicyDocumentRetrievalTask,
+    failed_step: str,
+    error_message: str,
+    system_admin_email: str,
+    run_id: Optional[str] = None,
+) -> dict:
+    subject = f"[Taiico OS] Renewal retrieval failed for policy {task.policy_number}"
+    body = "\n".join([
+        "A renewal document retrieval task failed and requires review.",
+        "",
+        f"Run ID: {run_id or 'dry-run'}",
+        f"Task ID: {task.id}",
+        f"Policy number: {task.policy_number}",
+        f"Client: {task.client_name or 'Unknown'}",
+        f"Insurer / branch: {task.insurer_id} / {task.product_branch}",
+        f"Renewal deadline: {format_date(task.renewal_deadline)}",
+        f"Risk level: {task.risk_level}",
+        f"Priority: {task.priority}",
+        f"Failed step: {failed_step}",
+        f"Error: {error_message}",
+        f"Attempt count: {task.attempt_count}",
+        "",
+        "Suggested action: review the portal manually, confirm the policy document location, and update the task.",
+    ])
+    return {
+        "to": [system_admin_email],
+        "subject": subject,
+        "body": body,
+    }
+
+METLIFE_GMM_RETRIEVAL_STEPS = [
+    "open_browser",
+    "authenticate_portal",
+    "search_policy",
+    "confirm_policy_match",
+    "download_policy_document",
+    "validate_download",
+    "upload_to_drive",
+    "update_crm",
+    "send_required_email",
+]
+
+def retrieval_step_plan(task: PolicyDocumentRetrievalTask) -> list[dict]:
+    return [
+        {
+            "step_name": step_name,
+            "status": "planned",
+            "task_id": task.id,
+            "policy_number": task.policy_number,
+        }
+        for step_name in METLIFE_GMM_RETRIEVAL_STEPS
+    ]
+
+def select_retrieval_tasks(db, insurer_id: str, product_branch: str, limit: int):
+    tasks = db.query(PolicyDocumentRetrievalTask).filter(
+        PolicyDocumentRetrievalTask.status == "queued",
+        PolicyDocumentRetrievalTask.insurer_id == insurer_id,
+        PolicyDocumentRetrievalTask.product_branch == product_branch,
+    ).all()
+    priority_rank = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
+    return sorted(
+        tasks,
+        key=lambda task: (
+            priority_rank.get(task.priority, 9),
+            task.renewal_deadline,
+            task.policy_number,
+        ),
+    )[:limit]
 
 def metlife_gmm_retrieval_queue_candidates(
     source_path: Optional[str],
@@ -538,6 +651,211 @@ async def list_policy_document_retrieval_queue(
         return {
             "count": len(tasks),
             "tasks": [serialize_retrieval_task(task) for task in tasks],
+        }
+    finally:
+        db.close()
+
+@router.post("/metlife/gmm/retrieval-adapter-contract")
+async def run_metlife_gmm_retrieval_adapter_contract(
+    dry_run: bool = Body(True, embed=True),
+    limit: int = Body(5, embed=True),
+    simulate_result: str = Body("adapter_not_implemented", embed=True),
+    fail_step: str = Body("open_browser", embed=True),
+    system_admin_email: str = Body("alberto.alfaro@taiico.com", embed=True),
+):
+    """
+    Defines the run/task/step contract consumed later by the real browser adapter.
+
+    dry_run=True returns the execution plan without changing queued work.
+    dry_run=False performs state transitions using a simulated result.
+    """
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
+    if simulate_result not in {"success", "adapter_not_implemented", "fail_at_step"}:
+        raise HTTPException(status_code=400, detail="simulate_result must be success, adapter_not_implemented, or fail_at_step")
+    if fail_step not in METLIFE_GMM_RETRIEVAL_STEPS:
+        raise HTTPException(status_code=400, detail=f"fail_step must be one of: {', '.join(METLIFE_GMM_RETRIEVAL_STEPS)}")
+
+    db = SessionLocal()
+    try:
+        queued_at_start = db.query(PolicyDocumentRetrievalTask).filter(
+            PolicyDocumentRetrievalTask.status == "queued",
+            PolicyDocumentRetrievalTask.insurer_id == "metlife",
+            PolicyDocumentRetrievalTask.product_branch == "GMM",
+        ).count()
+        tasks = select_retrieval_tasks(db, "metlife", "GMM", limit)
+
+        execution_plan = [
+            {
+                "task": serialize_retrieval_task(task),
+                "steps": retrieval_step_plan(task),
+                "failure_escalation_preview": build_escalation_email_payload(
+                    task=task,
+                    failed_step=fail_step,
+                    error_message="Adapter is not implemented yet." if simulate_result == "adapter_not_implemented" else "Simulated adapter failure.",
+                    system_admin_email=system_admin_email,
+                ),
+            }
+            for task in tasks
+        ]
+
+        if dry_run:
+            return {
+                "dry_run": True,
+                "adapter_name": "metlife_gmm_portal_adapter",
+                "queued_at_start": queued_at_start,
+                "selected_count": len(tasks),
+                "simulate_result": simulate_result,
+                "system_admin_email": system_admin_email,
+                "execution_plan": execution_plan,
+            }
+
+        run = PolicyDocumentRetrievalRun(
+            adapter_name="metlife_gmm_portal_adapter",
+            insurer_id="metlife",
+            product_branch="GMM",
+            status="started",
+            queued_at_start=queued_at_start,
+            selected_count=len(tasks),
+            summary_email_to=system_admin_email,
+            metadata_json={
+                "simulate_result": simulate_result,
+                "contract_version": "1.0.0",
+                "steps": METLIFE_GMM_RETRIEVAL_STEPS,
+            },
+        )
+        db.add(run)
+        db.flush()
+
+        generated_escalations = []
+        generated_steps = []
+        succeeded = 0
+        failed = 0
+        escalated = 0
+
+        for task in tasks:
+            task.status = "in_progress"
+            task.attempt_count = (task.attempt_count or 0) + 1
+            task.last_attempt_at = datetime.utcnow()
+            task.retrieval_adapter = "metlife_gmm_portal_adapter"
+            task.updated_at = datetime.utcnow()
+
+            failed_step_name = fail_step
+            if simulate_result == "adapter_not_implemented":
+                failed_step_name = "open_browser"
+
+            task_failed = False
+            for step_name in METLIFE_GMM_RETRIEVAL_STEPS:
+                step_status = "completed"
+                error_message = None
+                if simulate_result in {"adapter_not_implemented", "fail_at_step"} and step_name == failed_step_name:
+                    step_status = "failed"
+                    error_message = "Adapter is not implemented yet." if simulate_result == "adapter_not_implemented" else "Simulated adapter failure."
+                    task_failed = True
+
+                step = PolicyDocumentRetrievalStep(
+                    run_id=run.id,
+                    task_id=task.id,
+                    step_name=step_name,
+                    status=step_status,
+                    completed_at=datetime.utcnow(),
+                    error_message=error_message,
+                    metadata_json={
+                        "policy_number": task.policy_number,
+                        "client_name": task.client_name,
+                    },
+                )
+                db.add(step)
+                generated_steps.append(step)
+                if task_failed:
+                    break
+
+            if task_failed:
+                failed += 1
+                escalated += 1
+                task.status = "escalated"
+                task.last_error = f"{failed_step_name}: {error_message}"
+                task.updated_at = datetime.utcnow()
+                generated_escalations.append(build_escalation_email_payload(
+                    task=task,
+                    failed_step=failed_step_name,
+                    error_message=error_message or "Unknown adapter failure.",
+                    system_admin_email=system_admin_email,
+                    run_id=run.id,
+                ))
+            else:
+                succeeded += 1
+                task.status = "retrieved"
+                task.document_status = "linked"
+                task.completed_at = datetime.utcnow()
+                task.last_error = None
+                task.updated_at = datetime.utcnow()
+
+        run.processed_count = len(tasks)
+        run.succeeded_count = succeeded
+        run.failed_count = failed
+        run.escalated_count = escalated
+        run.completed_at = datetime.utcnow()
+        run.status = "completed_with_escalations" if escalated else "completed"
+
+        db.commit()
+        db.refresh(run)
+
+        persisted_steps = db.query(PolicyDocumentRetrievalStep).filter(
+            PolicyDocumentRetrievalStep.run_id == run.id,
+        ).order_by(
+            PolicyDocumentRetrievalStep.started_at.asc(),
+            PolicyDocumentRetrievalStep.step_name.asc(),
+        ).all()
+
+        return {
+            "dry_run": False,
+            "run": serialize_retrieval_run(run),
+            "steps": [serialize_retrieval_step(step) for step in persisted_steps],
+            "escalation_emails": generated_escalations,
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to run retrieval adapter contract: {e}")
+    finally:
+        db.close()
+
+@router.get("/retrieval-runs")
+async def list_policy_document_retrieval_runs(
+    limit: int = Query(25, ge=1, le=100),
+):
+    db = SessionLocal()
+    try:
+        runs = db.query(PolicyDocumentRetrievalRun).order_by(
+            PolicyDocumentRetrievalRun.started_at.desc(),
+        ).limit(limit).all()
+        return {
+            "count": len(runs),
+            "runs": [serialize_retrieval_run(run) for run in runs],
+        }
+    finally:
+        db.close()
+
+@router.get("/retrieval-runs/{run_id}")
+async def get_policy_document_retrieval_run(run_id: str):
+    db = SessionLocal()
+    try:
+        run = db.query(PolicyDocumentRetrievalRun).filter(
+            PolicyDocumentRetrievalRun.id == run_id,
+        ).first()
+        if not run:
+            raise HTTPException(status_code=404, detail="Retrieval run not found")
+
+        steps = db.query(PolicyDocumentRetrievalStep).filter(
+            PolicyDocumentRetrievalStep.run_id == run.id,
+        ).order_by(
+            PolicyDocumentRetrievalStep.started_at.asc(),
+            PolicyDocumentRetrievalStep.step_name.asc(),
+        ).all()
+
+        return {
+            "run": serialize_retrieval_run(run),
+            "steps": [serialize_retrieval_step(step) for step in steps],
         }
     finally:
         db.close()
