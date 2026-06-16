@@ -10,3 +10,4 @@ alembic
 google-api-python-client
 google-auth
 httpx
+playwright

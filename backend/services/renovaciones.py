@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Body
+from starlette.concurrency import run_in_threadpool
 from typing import List, Optional, Union
 from datetime import datetime, timedelta
 import os
@@ -24,6 +25,7 @@ from parsers.metlife_gmm_renovaciones import PARSER_VERSION as METLIFE_GMM_RENEW
 from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
 from parsers.metlife_vida_renovaciones import PARSER_VERSION as METLIFE_VIDA_RENEWAL_PARSER_VERSION
 from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workbook
+from adapters.metlife_gmm_portal import MetLifeGmmPortalAdapter, MetLifeGmmPortalTask, result_to_dict
 
 router = APIRouter(prefix="/renovaciones", tags=["renovaciones"])
 
@@ -213,6 +215,43 @@ def select_retrieval_tasks(db, insurer_id: str, product_branch: str, limit: int)
             task.policy_number,
         ),
     )[:limit]
+
+def get_retrieval_task_for_adapter(
+    db,
+    task_id: Optional[str] = None,
+    policy_number: Optional[str] = None,
+) -> PolicyDocumentRetrievalTask:
+    query = db.query(PolicyDocumentRetrievalTask).filter(
+        PolicyDocumentRetrievalTask.insurer_id == "metlife",
+        PolicyDocumentRetrievalTask.product_branch == "GMM",
+    )
+    if task_id:
+        query = query.filter(PolicyDocumentRetrievalTask.id == task_id)
+    elif policy_number:
+        query = query.filter(PolicyDocumentRetrievalTask.policy_number == str(policy_number))
+    else:
+        task = select_retrieval_tasks(db, "metlife", "GMM", 1)
+        if not task:
+            raise HTTPException(status_code=404, detail="No queued MetLife GMM retrieval task found")
+        return task[0]
+
+    task = query.first()
+    if not task:
+        raise HTTPException(status_code=404, detail="MetLife GMM retrieval task not found")
+    return task
+
+def persist_adapter_steps(db, run_id: str, task_id: str, steps: list[dict]) -> None:
+    for step in steps:
+        db.add(PolicyDocumentRetrievalStep(
+            run_id=run_id,
+            task_id=task_id,
+            step_name=step.get("step_name"),
+            status=step.get("status"),
+            started_at=datetime.fromisoformat(step["started_at"]) if step.get("started_at") else datetime.utcnow(),
+            completed_at=datetime.fromisoformat(step["completed_at"]) if step.get("completed_at") else None,
+            error_message=step.get("error_message"),
+            metadata_json=step.get("metadata") or {},
+        ))
 
 def metlife_gmm_retrieval_queue_candidates(
     source_path: Optional[str],
@@ -817,6 +856,108 @@ async def run_metlife_gmm_retrieval_adapter_contract(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to run retrieval adapter contract: {e}")
+    finally:
+        db.close()
+
+@router.post("/metlife/gmm/retrieval-adapter/run-task")
+async def run_metlife_gmm_retrieval_adapter_task(
+    task_id: Optional[str] = Body(None, embed=True),
+    policy_number: Optional[str] = Body(None, embed=True),
+    stop_after: str = Body("confirm_policy_match", embed=True),
+    headless: bool = Body(False, embed=True),
+    upload_to_drive: bool = Body(False, embed=True),
+    mutate_queue: bool = Body(False, embed=True),
+):
+    db = SessionLocal()
+    try:
+        task = get_retrieval_task_for_adapter(db, task_id=task_id, policy_number=policy_number)
+        adapter_task = MetLifeGmmPortalTask(
+            id=task.id,
+            policy_number=task.policy_number,
+            rfc=task.rfc,
+            client_name=task.client_name,
+            renewal_deadline=task.renewal_deadline,
+        )
+
+        run = PolicyDocumentRetrievalRun(
+            adapter_name="metlife_gmm_portal_adapter",
+            insurer_id="metlife",
+            product_branch="GMM",
+            status="started",
+            queued_at_start=db.query(PolicyDocumentRetrievalTask).filter(
+                PolicyDocumentRetrievalTask.status == "queued",
+                PolicyDocumentRetrievalTask.insurer_id == "metlife",
+                PolicyDocumentRetrievalTask.product_branch == "GMM",
+            ).count(),
+            selected_count=1,
+            summary_email_to="alberto.alfaro@taiico.com",
+            metadata_json={
+                "task_id": task.id,
+                "policy_number": task.policy_number,
+                "rfc": task.rfc,
+                "stop_after": stop_after,
+                "headless": headless,
+                "upload_to_drive": upload_to_drive,
+                "mutate_queue": mutate_queue,
+            },
+        )
+        db.add(run)
+        db.flush()
+
+        if mutate_queue:
+            task.status = "in_progress"
+            task.attempt_count = (task.attempt_count or 0) + 1
+            task.last_attempt_at = datetime.utcnow()
+            task.retrieval_adapter = "metlife_gmm_portal_adapter"
+            task.updated_at = datetime.utcnow()
+            db.commit()
+
+        adapter = MetLifeGmmPortalAdapter(headless=headless)
+        result = await run_in_threadpool(
+            adapter.run,
+            adapter_task,
+            stop_after=stop_after,
+            upload_to_drive=upload_to_drive,
+            target_drive_folder_id=os.getenv("GOOGLE_DRIVE_RENEWALS_METLIFE_GMM_FOLDER_ID"),
+        )
+        result_payload = result_to_dict(result)
+        persist_adapter_steps(db, run.id, task.id, result_payload["steps"])
+
+        run.processed_count = 1
+        run.succeeded_count = 1 if result.status in {"matched", "completed"} or result.status.startswith("stopped_after_") else 0
+        run.failed_count = 1 if result.status == "failed" else 0
+        run.escalated_count = 1 if result.status == "failed" else 0
+        run.status = "completed" if run.failed_count == 0 else "completed_with_escalations"
+        run.completed_at = datetime.utcnow()
+
+        if mutate_queue:
+            if result.status == "completed":
+                task.status = "retrieved"
+                task.document_status = "linked"
+                task.completed_at = datetime.utcnow()
+                task.last_error = None
+                task.expediente_link = result.drive_folder_link or task.expediente_link
+            elif result.status == "failed":
+                task.status = "escalated"
+                task.last_error = result.error_message
+            else:
+                task.status = "queued"
+            task.updated_at = datetime.utcnow()
+
+        db.commit()
+        db.refresh(run)
+
+        return {
+            "run": serialize_retrieval_run(run),
+            "task": serialize_retrieval_task(task),
+            "adapter_result": result_payload,
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to run MetLife GMM portal adapter: {e}")
     finally:
         db.close()
 
