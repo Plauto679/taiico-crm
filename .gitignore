@@ -53,3 +53,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# node modules backups
+node_modules_viejo/
