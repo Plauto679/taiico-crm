@@ -37,6 +37,14 @@ try
 		REPO_ROOT=$(cd \"$APP_DIR/../..\" && pwd)
 		
 		if [ ! -f \"$REPO_ROOT/scripts/start-crm.sh\" ]; then
+			# Method 1.5: Check if running from Google Drive root directory (parent of repo)
+			REPO_ROOT_TRY=$(cd \"$APP_DIR/../taiico-crm\" && pwd 2>/dev/null || true)
+			if [ -f \"$REPO_ROOT_TRY/scripts/start-crm.sh\" ]; then
+				REPO_ROOT=\"$REPO_ROOT_TRY\"
+			fi
+		fi
+		
+		if [ ! -f \"$REPO_ROOT/scripts/start-crm.sh\" ]; then
 			# Method 2: Search in user Google Drive CloudStorage folders (if running from /Applications)
 			FOUND_REPO=\"\"
 			CLOUD_STORAGE_DIR=\"$HOME/Library/CloudStorage\"
@@ -104,6 +112,13 @@ else
     echo "Warning: Logo file not found at $LOGO_PNG. Using default system icon instead."
 fi
 
+# 5. Copy the app to the Google Drive root folder (workspace root)
+echo "Copying TAIICO CRM.app to Google Drive root folder..."
+rm -rf "$REPO_ROOT/../TAIICO CRM.app"
+cp -R "dist/TAIICO CRM.app" "$REPO_ROOT/../TAIICO CRM.app"
+touch "$REPO_ROOT/../TAIICO CRM.app"
+
 echo "=========================================================================="
 echo "TAIICO CRM App Built Successfully at: $REPO_ROOT/dist/TAIICO CRM.app"
+echo "and copied to Google Drive root folder at: $REPO_ROOT/../TAIICO CRM.app"
 echo "=========================================================================="
