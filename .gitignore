@@ -56,3 +56,6 @@ next-env.d.ts
 
 # node modules backups
 node_modules_viejo/
+
+# build outputs
+/dist/
