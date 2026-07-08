@@ -1,33 +1,54 @@
 # TAIICO CRM
 
-Sistema de gestión modular para TAIICO Life Advisors, construido con Next.js y TypeScript.
+Sistema de gestión modular para TAIICO Life Advisors.
+
+## Stack Detectado
+
+- Frontend: Next.js 16, React 19 y TypeScript.
+- Backend: FastAPI con Python 3.
+- Base local: SQLite por defecto en `backend/.env.example`.
+- Puertos locales: frontend `http://localhost:3000`, backend `http://localhost:7777`.
+- Dependencias frontend: `npm install`.
+- Dependencias backend: `python3 -m venv backend/.venv` y `pip install -r backend/requirements.txt`.
+- Variables locales: `backend/.env.example`. El launcher crea `backend/.env` desde ese ejemplo si no existe.
+- Datos: el CRM depende de archivos Excel en Google Drive, ubicados en carpetas hermanas del repo como `Bases de cobranza y comisiones`, `Relaciones de cartera`, `Fechas de emision de Polizas y renovaciones`, `Correos de los clientes` y `Users`.
 
 ## Requisitos Previos
 
-- Node.js (v18 o superior)
-- Acceso a la carpeta de Google Drive donde residen los archivos de Excel.
+- macOS.
+- Node.js 18 o superior con `npm`.
+- Python 3.
+- Google Drive para escritorio montado y sincronizado con las carpetas de datos del CRM.
 
-## Instalación
+## Instalación Manual
 
-1. Navega a la carpeta del proyecto:
-   ```bash
-   cd "taiico-crm"
-   ```
+Desde la raíz del proyecto:
 
-2. Instala las dependencias:
-   ```bash
-   npm install
-   ```
+```bash
+npm install
+python3 -m venv backend/.venv
+source backend/.venv/bin/activate
+pip install -r backend/requirements.txt
+cp backend/.env.example backend/.env
+```
 
-## Ejecución
+## Ejecución Manual
 
-Para iniciar la aplicación en modo desarrollo:
+En una terminal:
+
+```bash
+source backend/.venv/bin/activate
+cd backend
+python -m uvicorn main:app --host 0.0.0.0 --port 7777 --reload
+```
+
+En otra terminal:
 
 ```bash
 npm run dev
 ```
 
-Abre [http://localhost:3000](http://localhost:3000) en tu navegador.
+Abre [http://localhost:3000](http://localhost:3000) en el navegador.
 
 ## Estructura del Proyecto
 
@@ -63,37 +84,76 @@ Abre [http://localhost:3000](http://localhost:3000) en tu navegador.
 
 ---
 
-## Lanzador de macOS (macOS Launcher)
+## Lanzador de macOS
 
-Hemos implementado un lanzador nativo de macOS para que los usuarios puedan iniciar el backend de FastAPI, el frontend de Next.js y abrir el navegador de manera automática con un solo click.
+El repo incluye un launcher nativo para macOS. La app resultante se llama `TAIICO CRM.app` y se puede abrir con doble click desde Finder.
 
-### Estructura de Scripts
-- `scripts/start-crm.sh`: El script que se encarga de verificar el montaje de Google Drive, auto-inicializar el entorno virtual de Python, instalar dependencias faltantes tanto del frontend como del backend, arrancar ambos servidores en segundo plano y abrir el navegador en `http://localhost:3000`.
-- `scripts/build-macos-app.sh`: Script para empaquetar el lanzador en una aplicación de macOS (`TAIICO CRM.app`) con el logo oficial como icono de la aplicación.
+### Scripts
 
-### Cómo construir la app (.app)
-Para regenerar la aplicación localmente, ejecute el siguiente comando en la raíz del proyecto:
+- `scripts/start-crm.sh`: verifica dependencias, valida que Google Drive esté disponible, instala dependencias faltantes, levanta backend y frontend, espera a que respondan los puertos y abre `http://localhost:3000`.
+- `scripts/start-crm.command`: wrapper ejecutable por doble click si se quiere correr el launcher sin empaquetar la app.
+- `scripts/build-macos-app.sh`: genera `dist/TAIICO CRM.app`.
+
+### Construir la App
+
+Desde la raíz del proyecto:
+
 ```bash
 ./scripts/build-macos-app.sh
 ```
-Esto creará el paquete ejecutable en `dist/TAIICO CRM.app`.
+
+Esto genera:
+
+```bash
+dist/TAIICO CRM.app
+../TAIICO CRM.app
+```
+
+Cuando el repo está dentro de `2025 - Antigravity CRM/taiico-crm`, la segunda copia queda visible directamente en la carpeta `2025 - Antigravity CRM`.
 
 ### Cómo instalarla en `/Applications`
-1. Genere el paquete ejecutando el script de construcción anterior.
-2. Copie o arrastre el archivo `TAIICO CRM.app` desde la carpeta `dist/` a su directorio de aplicaciones de macOS (`/Applications`).
-3. La aplicación buscará de manera automática el repositorio en su carpeta de Google Drive (`~/Library/CloudStorage/GoogleDrive-...`) e iniciará el sistema normalmente.
+
+Construye la app y cópiala a `/Applications`:
+
+```bash
+./scripts/build-macos-app.sh
+cp -R "dist/TAIICO CRM.app" /Applications/
+```
+
+La app recuerda la ruta del repo desde donde fue construida. Si mueves el repo después, vuelve a ejecutar `./scripts/build-macos-app.sh` y copia de nuevo la app.
 
 ### Cómo ver logs
-El lanzador registra todas sus operaciones y las salidas de los servidores en el directorio de logs estándar de macOS. Puede revisarlos usando la Consola de macOS o abriendo los archivos de log directamente:
-- **Log del Lanzador principal**: `~/Library/Logs/TAIICO CRM/launcher.log`
-- **Log del Servidor Backend**: `~/Library/Logs/TAIICO CRM/backend.log`
-- **Log del Servidor Frontend**: `~/Library/Logs/TAIICO CRM/frontend.log`
+
+Los logs se escriben en:
+
+- Launcher: `~/Library/Logs/TAIICO CRM/launcher.log`
+- Backend: `~/Library/Logs/TAIICO CRM/backend.log`
+- Frontend: `~/Library/Logs/TAIICO CRM/frontend.log`
 
 Para monitorear los logs en vivo desde la terminal, ejecute:
+
 ```bash
-tail -f ~/Library/Logs/TAIICO/launcher.log
+tail -f "$HOME/Library/Logs/TAIICO CRM/launcher.log"
 ```
 
 ### Cómo cambiar el puerto o comando de arranque
-- **Cambio de puertos**: Si desea cambiar los puertos por defecto (7777 para backend o 3000 para frontend), edite el archivo [start-crm.sh](file:///Users/albertoalfaromendoza/Library/CloudStorage/GoogleDrive-alberto.alfaro@taiico.com/Shared%20drives/Administrativos/2025%20-%20Antigravity%20CRM/taiico-crm/scripts/start-crm.sh) y configure los puertos deseados, asegurándose de actualizar también las URLs correspondientes en la configuración del frontend y backend.
-- **Cambio de comandos**: Para modificar la forma en que inician los servidores (por ejemplo, cambiar el comando de desarrollo de Next.js `npm run dev` a uno de producción como `npm run start`), edite las secciones correspondientes en [start-crm.sh](file:///Users/albertoalfaromendoza/Library/CloudStorage/GoogleDrive-alberto.alfaro@taiico.com/Shared%20drives/Administrativos/2025%20-%20Antigravity%20CRM/taiico-crm/scripts/start-crm.sh).
+
+Por defecto:
+
+- Backend: `7777`
+- Frontend: `3000`
+
+Puedes cambiar los puertos al ejecutar el launcher:
+
+```bash
+TAIICO_CRM_BACKEND_PORT=7777 TAIICO_CRM_FRONTEND_PORT=3000 ./scripts/start-crm.sh
+```
+
+Para cambiar el comando de arranque, edita `scripts/start-crm.sh` en las funciones `start_backend` y `start_frontend`.
+
+### Comportamiento Esperado
+
+- Si el CRM ya está corriendo, el launcher solo abre el navegador.
+- Si faltan dependencias, las instala automáticamente.
+- Si Google Drive no está montado o faltan carpetas de datos, muestra un error claro en la app y deja detalles en `launcher.log`.
+- No se guardan secretos en el repo. `backend/.env` está ignorado por git.

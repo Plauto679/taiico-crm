@@ -1,124 +1,97 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# TAIICO CRM macOS App Builder
-# ==============================================================================
-# This script compiles the AppleScript launcher wrapper into a macOS Application
-# bundle (TAIICO CRM.app), places it in the dist/ folder, and generates/applies
-# the custom icon using the company logo if present.
-# ==============================================================================
-
 set -euo pipefail
 
-# Add common path locations
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
-# Resolve repo root
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-echo "=========================================================================="
-echo "Building TAIICO CRM macOS App Bundle"
-echo "=========================================================================="
+APP_NAME="TAIICO CRM"
+APP_BUNDLE="dist/$APP_NAME.app"
+APP_EXECUTABLE="taiico-crm-launcher"
+LOG_HINT="~/Library/Logs/$APP_NAME/launcher.log"
+PARENT_APP="$REPO_ROOT/../$APP_NAME.app"
 
-# 1. Prepare output folder
+echo "Building $APP_NAME macOS app..."
 mkdir -p dist
-rm -rf "dist/TAIICO CRM.app"
+rm -rf "$APP_BUNDLE"
+rm -rf "dist/icon.iconset" "dist/applet.icns" "dist/launcher.applescript"
+mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 
-# 2. Write AppleScript launcher to a temp file
-APPLESCRIPT_SOURCE="dist/launcher.applescript"
-cat << 'EOF' > "$APPLESCRIPT_SOURCE"
-set appPath to POSIX path of (path to me)
-
-try
-	do shell script "bash -c '
-		APP_DIR=\"" & appPath & "\"
-		
-		# Method 1: Check relative to app bundle location (if running inside dist/ folder of the repo)
-		REPO_ROOT=$(cd \"$APP_DIR/../..\" && pwd)
-		
-		if [ ! -f \"$REPO_ROOT/scripts/start-crm.sh\" ]; then
-			# Method 1.5: Check if running from Google Drive root directory (parent of repo)
-			REPO_ROOT_TRY=$(cd \"$APP_DIR/../taiico-crm\" && pwd 2>/dev/null || true)
-			if [ -f \"$REPO_ROOT_TRY/scripts/start-crm.sh\" ]; then
-				REPO_ROOT=\"$REPO_ROOT_TRY\"
-			fi
-		fi
-		
-		if [ ! -f \"$REPO_ROOT/scripts/start-crm.sh\" ]; then
-			# Method 2: Search in user Google Drive CloudStorage folders (if running from /Applications)
-			FOUND_REPO=\"\"
-			CLOUD_STORAGE_DIR=\"$HOME/Library/CloudStorage\"
-			for dir in \"$CLOUD_STORAGE_DIR\"/GoogleDrive-*/\"Shared drives/Administrativos/2025 - Antigravity CRM/taiico-crm\"; do
-				if [ -d \"$dir\" ]; then
-					FOUND_REPO=\"$dir\"
-					break
-				fi
-			done
-			
-			if [ -n \"$FOUND_REPO\" ]; then
-				REPO_ROOT=\"$FOUND_REPO\"
-			else
-				echo \"Error: Could not locate the TAIICO CRM repository directory.\" >&2
-				echo \"Please verify the repository is placed in: Google Drive/Shared drives/Administrativos/2025 - Antigravity CRM/taiico-crm\" >&2
-				exit 1
-			fi
-		fi
-		
-		# Execute the startup script in background
-		bash \"$REPO_ROOT/scripts/start-crm.sh\"
-	'"
-on error errMsg number errNum
-	display dialog "Error starting TAIICO CRM:\n\n" & errMsg & "\n\nFor more details, please check the log file:\n~/Library/Logs/TAIICO CRM/launcher.log" buttons {"OK"} default button "OK" with icon stop
-end try
+cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>$APP_NAME</string>
+    <key>CFBundleDisplayName</key>
+    <string>$APP_NAME</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.taiico.crm.launcher</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>$APP_EXECUTABLE</string>
+    <key>CFBundleIconFile</key>
+    <string>applet</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.15</string>
+</dict>
+</plist>
 EOF
 
-# 3. Compile the AppleScript source into a macOS application bundle (.app)
-echo "Compiling AppleScript launcher..."
-osacompile -o "dist/TAIICO CRM.app" "$APPLESCRIPT_SOURCE"
-rm "$APPLESCRIPT_SOURCE"
-echo "Application compiled: dist/TAIICO CRM.app"
+cat > "$APP_BUNDLE/Contents/MacOS/$APP_EXECUTABLE" <<EOF
+#!/usr/bin/env bash
+set -u
 
-# 4. Generate custom application icon from logo if available
+REPO_ROOT="$REPO_ROOT"
+LOG_HINT="$LOG_HINT"
+
+/bin/bash "\$REPO_ROOT/scripts/start-crm.sh"
+status=\$?
+if [ "\$status" -ne 0 ]; then
+    /usr/bin/osascript -l JavaScript -e "const app = Application.currentApplication(); app.includeStandardAdditions = true; app.displayDialog('No se pudo iniciar $APP_NAME.\\\\n\\\\nRevisa los logs en:\\\\n' + '\$LOG_HINT', {withTitle: '$APP_NAME', buttons: ['OK'], defaultButton: 'OK'});" >/dev/null 2>&1 || true
+    exit "\$status"
+fi
+EOF
+
+chmod +x "$APP_BUNDLE/Contents/MacOS/$APP_EXECUTABLE"
+printf 'APPL????' > "$APP_BUNDLE/Contents/PkgInfo"
+
 LOGO_PNG="$REPO_ROOT/../Logo Taiico.png"
-if [ -f "$LOGO_PNG" ]; then
-    echo "Found logo at $LOGO_PNG. Generating custom iconset..."
-    ICONSET_DIR="dist/icon.iconset"
-    mkdir -p "$ICONSET_DIR"
-    
-    # Generate standard macOS icon sizes
-    sips -z 16 16     "$LOGO_PNG" --out "$ICONSET_DIR/icon_16x16.png" &>/dev/null
-    sips -z 32 32     "$LOGO_PNG" --out "$ICONSET_DIR/icon_16x16@2x.png" &>/dev/null
-    sips -z 32 32     "$LOGO_PNG" --out "$ICONSET_DIR/icon_32x32.png" &>/dev/null
-    sips -z 64 64     "$LOGO_PNG" --out "$ICONSET_DIR/icon_32x32@2x.png" &>/dev/null
-    sips -z 128 128   "$LOGO_PNG" --out "$ICONSET_DIR/icon_128x128.png" &>/dev/null
-    sips -z 256 256   "$LOGO_PNG" --out "$ICONSET_DIR/icon_128x128@2x.png" &>/dev/null
-    sips -z 256 256   "$LOGO_PNG" --out "$ICONSET_DIR/icon_256x256.png" &>/dev/null
-    sips -z 512 512   "$LOGO_PNG" --out "$ICONSET_DIR/icon_256x256@2x.png" &>/dev/null
-    sips -z 512 512   "$LOGO_PNG" --out "$ICONSET_DIR/icon_512x512.png" &>/dev/null
-    sips -z 1024 1024 "$LOGO_PNG" --out "$ICONSET_DIR/icon_512x512@2x.png" &>/dev/null
-    
-    # Convert iconset folder to .icns format
-    iconutil -c icns "$ICONSET_DIR" -o "dist/applet.icns"
-    rm -rf "$ICONSET_DIR"
-    
-    # Copy generated icon into the app bundle resources
-    cp "dist/applet.icns" "dist/TAIICO CRM.app/Contents/Resources/applet.icns"
-    rm "dist/applet.icns"
-    
-    # Refresh Finder icon cache for the newly compiled bundle
-    touch "dist/TAIICO CRM.app"
-    echo "Custom application icon generated and applied successfully."
-else
-    echo "Warning: Logo file not found at $LOGO_PNG. Using default system icon instead."
+if [ ! -f "$LOGO_PNG" ]; then
+    LOGO_PNG="$REPO_ROOT/public/logo.png"
 fi
 
-# 5. Copy the app to the Google Drive root folder (workspace root)
-echo "Copying TAIICO CRM.app to Google Drive root folder..."
-rm -rf "$REPO_ROOT/../TAIICO CRM.app"
-cp -R "dist/TAIICO CRM.app" "$REPO_ROOT/../TAIICO CRM.app"
-touch "$REPO_ROOT/../TAIICO CRM.app"
+if [ -f "$LOGO_PNG" ]; then
+    ICONSET_DIR="dist/icon.iconset"
+    mkdir -p "$ICONSET_DIR"
+    sips -z 16 16 "$LOGO_PNG" --out "$ICONSET_DIR/icon_16x16.png" >/dev/null
+    sips -z 32 32 "$LOGO_PNG" --out "$ICONSET_DIR/icon_16x16@2x.png" >/dev/null
+    sips -z 32 32 "$LOGO_PNG" --out "$ICONSET_DIR/icon_32x32.png" >/dev/null
+    sips -z 64 64 "$LOGO_PNG" --out "$ICONSET_DIR/icon_32x32@2x.png" >/dev/null
+    sips -z 128 128 "$LOGO_PNG" --out "$ICONSET_DIR/icon_128x128.png" >/dev/null
+    sips -z 256 256 "$LOGO_PNG" --out "$ICONSET_DIR/icon_128x128@2x.png" >/dev/null
+    sips -z 256 256 "$LOGO_PNG" --out "$ICONSET_DIR/icon_256x256.png" >/dev/null
+    sips -z 512 512 "$LOGO_PNG" --out "$ICONSET_DIR/icon_256x256@2x.png" >/dev/null
+    sips -z 512 512 "$LOGO_PNG" --out "$ICONSET_DIR/icon_512x512.png" >/dev/null
+    sips -z 1024 1024 "$LOGO_PNG" --out "$ICONSET_DIR/icon_512x512@2x.png" >/dev/null
+    if ! iconutil -c icns "$ICONSET_DIR" -o "$APP_BUNDLE/Contents/Resources/applet.icns"; then
+        echo "Warning: could not generate app icon from $LOGO_PNG. Keeping the default app icon."
+    fi
+    rm -rf "$ICONSET_DIR"
+fi
 
-echo "=========================================================================="
-echo "TAIICO CRM App Built Successfully at: $REPO_ROOT/dist/TAIICO CRM.app"
-echo "and copied to Google Drive root folder at: $REPO_ROOT/../TAIICO CRM.app"
-echo "=========================================================================="
+touch "$APP_BUNDLE"
+rm -rf "$PARENT_APP"
+cp -R "$APP_BUNDLE" "$PARENT_APP"
+touch "$PARENT_APP"
+
+echo "Built $APP_BUNDLE"
+echo "Copied launcher to $PARENT_APP"
+echo "You can copy either app bundle to /Applications or open it from Finder."

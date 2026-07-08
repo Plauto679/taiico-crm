@@ -1,179 +1,201 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# TAIICO CRM Startup Launcher Script
-# ==============================================================================
-# This script handles verification of dependencies, checking that Google Drive
-# is mounted, auto-setup of environment files, python venv and node packages, and
-# starts both the FastAPI backend and Next.js frontend in the background.
-# ==============================================================================
-
 set -euo pipefail
 
-# Add common macOS path locations to PATH (essential for double-click environments)
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
-# Load NVM (Node Version Manager) if present in the user's home directory
 if [ -d "$HOME/.nvm" ]; then
     export NVM_DIR="$HOME/.nvm"
     # shellcheck disable=SC1090
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 elif [ -s "/opt/homebrew/opt/nvm/nvm.sh" ]; then
     # shellcheck disable=SC1091
     . "/opt/homebrew/opt/nvm/nvm.sh"
 fi
 
-# Resolve paths
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-BASE_DIR="$(dirname "$REPO_ROOT")"
-
-# Logger Configuration
-LOG_DIR="$HOME/Library/Logs/TAIICO CRM"
-mkdir -p "$LOG_DIR"
+APP_NAME="TAIICO CRM"
+LOG_DIR="$HOME/Library/Logs/$APP_NAME"
 LOG_FILE="$LOG_DIR/launcher.log"
+BACKEND_LOG="$LOG_DIR/backend.log"
+FRONTEND_LOG="$LOG_DIR/frontend.log"
+BACKEND_PORT="${TAIICO_CRM_BACKEND_PORT:-7777}"
+FRONTEND_PORT="${TAIICO_CRM_FRONTEND_PORT:-3000}"
+BACKEND_URL="http://localhost:$BACKEND_PORT"
+FRONTEND_URL="http://localhost:$FRONTEND_PORT"
+BASE_DIR="$(dirname "$REPO_ROOT")"
+VENV_DIR="$REPO_ROOT/backend/.venv"
 
-# Redirect stdout and stderr to launcher.log
+mkdir -p "$LOG_DIR"
 exec >> "$LOG_FILE" 2>&1
 
-echo "=========================================================================="
-echo "TAIICO CRM Startup Initiated: $(date)"
-echo "=========================================================================="
+log() {
+    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
+}
 
-# 1. Verify Google Drive Mount
-# Verify key directories from the Google Drive shared path exist
-GD_CHECK_DIR1="$BASE_DIR/Bases de cobranza y comisiones"
-GD_CHECK_DIR2="$BASE_DIR/Users"
+fail() {
+    local message="$1"
+    local code="${2:-1}"
+    log "ERROR: $message"
+    exit "$code"
+}
 
-if [ ! -d "$GD_CHECK_DIR1" ] || [ ! -d "$GD_CHECK_DIR2" ]; then
-    echo "Error: Google Drive is not mounted or the repository is not in the correct Shared Drive path." >&2
-    echo "Expected Base Directory: $BASE_DIR" >&2
-    exit 2
+port_open() {
+    nc -z localhost "$1" >/dev/null 2>&1
+}
+
+wait_for_port() {
+    local port="$1"
+    local label="$2"
+    local timeout="${3:-45}"
+    local elapsed=0
+
+    log "Waiting for $label on port $port..."
+    while [ "$elapsed" -lt "$timeout" ]; do
+        if port_open "$port"; then
+            log "$label is responding on port $port."
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    return 1
+}
+
+check_command() {
+    command -v "$1" >/dev/null 2>&1 || fail "$2" "$3"
+}
+
+check_drive_paths() {
+    local missing=()
+    local required_dirs=(
+        "$BASE_DIR/Bases de cobranza y comisiones"
+        "$BASE_DIR/Relaciones de cartera"
+        "$BASE_DIR/Fechas de emision de Polizas y renovaciones"
+        "$BASE_DIR/Correos de los clientes"
+        "$BASE_DIR/Users"
+    )
+
+    for dir in "${required_dirs[@]}"; do
+        if [ ! -d "$dir" ]; then
+            missing+=("$dir")
+        fi
+    done
+
+    if [ "${#missing[@]}" -gt 0 ]; then
+        log "Google Drive validation failed. Missing expected CRM data folders:"
+        printf ' - %s\n' "${missing[@]}" >&2
+        fail "Google Drive is not mounted, not fully synced, or the repo is not next to the CRM data folders. Expected base folder: $BASE_DIR" 2
+    fi
+}
+
+install_backend_dependencies() {
+    if [ -d "$VENV_DIR" ] && ! "$VENV_DIR/bin/python" --version >/dev/null 2>&1; then
+        log "Existing Python virtualenv is not usable. Recreating $VENV_DIR..."
+        rm -rf "$VENV_DIR"
+    fi
+
+    if [ ! -d "$VENV_DIR" ]; then
+        log "Creating Python virtualenv at $VENV_DIR..."
+        python3 -m venv "$VENV_DIR"
+    fi
+
+    local hash_file="$VENV_DIR/.requirements.hash"
+    local current_hash
+    current_hash="$(shasum "$REPO_ROOT/backend/requirements.txt" | awk '{print $1}')"
+
+    if [ ! -f "$hash_file" ] || [ "$(cat "$hash_file")" != "$current_hash" ]; then
+        log "Installing Python dependencies..."
+        "$VENV_DIR/bin/python" -m pip install --upgrade pip
+        "$VENV_DIR/bin/python" -m pip install -r "$REPO_ROOT/backend/requirements.txt"
+        printf '%s\n' "$current_hash" > "$hash_file"
+    else
+        log "Python dependencies are already installed."
+    fi
+}
+
+install_frontend_dependencies() {
+    local hash_file="$REPO_ROOT/node_modules/.package-lock.hash"
+    local current_hash
+
+    if [ -f "$REPO_ROOT/package-lock.json" ]; then
+        current_hash="$(shasum "$REPO_ROOT/package-lock.json" | awk '{print $1}')"
+    else
+        current_hash="$(shasum "$REPO_ROOT/package.json" | awk '{print $1}')"
+    fi
+
+    if [ ! -d "$REPO_ROOT/node_modules" ] || [ ! -f "$hash_file" ] || [ "$(cat "$hash_file")" != "$current_hash" ]; then
+        log "Installing Node dependencies..."
+        if [ -f "$REPO_ROOT/package-lock.json" ]; then
+            npm install
+        else
+            npm install
+        fi
+        mkdir -p "$REPO_ROOT/node_modules"
+        printf '%s\n' "$current_hash" > "$hash_file"
+    else
+        log "Node dependencies are already installed."
+    fi
+
+    chmod -R u+x "$REPO_ROOT/node_modules/.bin" 2>/dev/null || true
+}
+
+start_backend() {
+    if port_open "$BACKEND_PORT"; then
+        log "Backend already running on $BACKEND_URL."
+        return 0
+    fi
+
+    log "Starting FastAPI backend on $BACKEND_URL..."
+    cd "$REPO_ROOT/backend"
+    nohup "$VENV_DIR/bin/python" -m uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload > "$BACKEND_LOG" 2>&1 &
+}
+
+start_frontend() {
+    if port_open "$FRONTEND_PORT"; then
+        log "Frontend already running on $FRONTEND_URL."
+        return 0
+    fi
+
+    log "Starting Next.js frontend on $FRONTEND_URL..."
+    cd "$REPO_ROOT"
+    PORT="$FRONTEND_PORT" nohup npm run dev > "$FRONTEND_LOG" 2>&1 &
+}
+
+log "=========================================================================="
+log "$APP_NAME launcher started"
+log "Repo root: $REPO_ROOT"
+log "Expected CRM data folder: $BASE_DIR"
+log "Logs: $LOG_DIR"
+
+check_command node "Node.js is not installed or is not available in PATH. Install Node.js 18 or newer." 4
+check_command npm "npm is not installed or is not available in PATH. Install Node.js 18 or newer." 4
+check_command python3 "Python 3 is not installed or is not available in PATH." 4
+check_command nc "The macOS nc command is not available, so the launcher cannot check local ports." 4
+
+check_drive_paths
+
+if [ ! -f "$REPO_ROOT/backend/.env" ]; then
+    log "backend/.env not found. Creating local fallback from backend/.env.example."
+    cp "$REPO_ROOT/backend/.env.example" "$REPO_ROOT/backend/.env"
 fi
 
-# 2. Check for pre-existing running instances
-BACKEND_RUNNING=false
-FRONTEND_RUNNING=false
-
-if nc -z localhost 7777; then
-    BACKEND_RUNNING=true
-fi
-
-if nc -z localhost 3000; then
-    FRONTEND_RUNNING=true
-fi
-
-if [ "$BACKEND_RUNNING" = true ] && [ "$FRONTEND_RUNNING" = true ]; then
-    echo "TAIICO CRM is already running on ports 7777 and 3000. Opening browser..."
-    open http://localhost:3000
+if port_open "$BACKEND_PORT" && port_open "$FRONTEND_PORT"; then
+    log "$APP_NAME is already running. Opening $FRONTEND_URL..."
+    open "$FRONTEND_URL"
     exit 0
 fi
 
-# 3. Check for essential binary dependencies
-if ! command -v node &>/dev/null; then
-    echo "Error: Node.js is not installed or not available in the PATH." >&2
-    exit 4
-fi
+install_backend_dependencies
+install_frontend_dependencies
+start_backend
+start_frontend
 
-if ! command -v npm &>/dev/null; then
-    echo "Error: npm is not installed or not available in the PATH." >&2
-    exit 4
-fi
+wait_for_port "$BACKEND_PORT" "FastAPI backend" 45 || fail "Timed out waiting for backend on $BACKEND_URL. Check $BACKEND_LOG" 3
+wait_for_port "$FRONTEND_PORT" "Next.js frontend" 45 || fail "Timed out waiting for frontend on $FRONTEND_URL. Check $FRONTEND_LOG" 3
 
-if ! command -v python3 &>/dev/null; then
-    echo "Error: Python 3 is not installed or not available in the PATH." >&2
-    exit 4
-fi
-
-# 4. Handle backend env settings (.env fallback creation)
-if [ ! -f "backend/.env" ]; then
-    echo "Creating backend/.env fallback file from .env.example..."
-    cp "backend/.env.example" "backend/.env"
-fi
-
-# 5. Initialize & verify Python Virtual Environment
-VENV_DIR="$REPO_ROOT/backend/venv"
-
-# Detect if the virtual environment is broken (e.g., broken absolute symlinks from sync)
-if [ -d "$VENV_DIR" ] && ! "$VENV_DIR/bin/python" --version &>/dev/null; then
-    echo "Warning: Python virtual environment is broken or has invalid links. Recreating..."
-    rm -rf "$VENV_DIR"
-fi
-
-if [ ! -d "$VENV_DIR" ]; then
-    echo "Python virtual environment not found in backend/venv. Creating..."
-    python3 -m venv "$VENV_DIR"
-fi
-
-# Activate virtual environment
-# shellcheck disable=SC1091
-source "$VENV_DIR/bin/activate"
-
-# Check if Python requirements need updating
-HASH_FILE="$VENV_DIR/.requirements.hash"
-CURRENT_HASH=$(shasum "$REPO_ROOT/backend/requirements.txt" | awk '{print $1}')
-if [ ! -f "$HASH_FILE" ] || [ "$(cat "$HASH_FILE")" != "$CURRENT_HASH" ]; then
-    echo "Installing/updating Python dependencies inside virtual environment..."
-    "$VENV_DIR/bin/python" -m pip install --upgrade pip
-    "$VENV_DIR/bin/python" -m pip install -r "$REPO_ROOT/backend/requirements.txt"
-    echo "$CURRENT_HASH" > "$HASH_FILE"
-else
-    echo "Python dependencies are already up to date."
-fi
-
-# 6. Verify/Install Node.js dependencies
-HASH_FILE_NODE="$REPO_ROOT/node_modules/.package.hash"
-CURRENT_HASH_NODE=$(shasum "$REPO_ROOT/package.json" | awk '{print $1}')
-if [ ! -d "node_modules" ] || [ ! -f "$HASH_FILE_NODE" ] || [ "$(cat "$HASH_FILE_NODE")" != "$CURRENT_HASH_NODE" ]; then
-    echo "Installing/updating Node.js dependencies..."
-    npm install
-    echo "$CURRENT_HASH_NODE" > "$HASH_FILE_NODE"
-else
-    echo "Node.js dependencies are already up to date."
-fi
-
-# Ensure node binaries are executable (solves the Next.js permission denied issue)
-echo "Setting executable permissions on node binaries..."
-chmod -R u+x "$REPO_ROOT/node_modules/.bin" 2>/dev/null || true
-chmod +x "$REPO_ROOT/node_modules/.bin/next" 2>/dev/null || true
-
-# 7. Start FastAPI Backend if not running
-if [ "$BACKEND_RUNNING" = false ]; then
-    echo "Starting FastAPI backend on port 7777..."
-    cd "$REPO_ROOT/backend"
-    # uvicorn runs FastAPI; uvicorn.run inside main.py is how the project starts backend
-    nohup "$VENV_DIR/bin/python" main.py > "$LOG_DIR/backend.log" 2>&1 &
-    echo "FastAPI backend started in background."
-fi
-
-# 8. Start Next.js Frontend if not running
-if [ "$FRONTEND_RUNNING" = false ]; then
-    echo "Starting Next.js frontend on port 3000..."
-    cd "$REPO_ROOT"
-    nohup npm run dev > "$LOG_DIR/frontend.log" 2>&1 &
-    echo "Next.js frontend started in background."
-fi
-
-# 9. Wait for ports to respond
-echo "Waiting for ports 7777 and 3000 to become active..."
-TIMEOUT=30
-COUNTER=0
-while [ $COUNTER -lt $TIMEOUT ]; do
-    if nc -z localhost 7777 && nc -z localhost 3000; then
-        echo "All TAIICO CRM services are active!"
-        break
-    fi
-    sleep 1
-    COUNTER=$((COUNTER + 1))
-done
-
-if [ $COUNTER -eq $TIMEOUT ]; then
-    echo "Error: Timeout exceeded waiting for ports 7777 and 3000 to become active." >&2
-    exit 3
-fi
-
-# 10. Launch browser to the CRM client UI
-echo "Opening TAIICO CRM in browser (http://localhost:3000)..."
-open http://localhost:3000
-echo "Launch sequence complete!"
-echo ""
+log "Opening browser at $FRONTEND_URL..."
+open "$FRONTEND_URL"
+log "$APP_NAME launcher completed successfully."
