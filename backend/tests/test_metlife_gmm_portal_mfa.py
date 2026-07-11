@@ -40,6 +40,18 @@ class MetLifeGmmMfaContinuationTests(unittest.TestCase):
         page.get_by_role.assert_not_called()
         page.wait_for_selector.assert_called_once_with("text=Clientes Beta", timeout=120_000)
 
+    def test_open_clientes_beta_uses_first_matching_button(self):
+        adapter = self.make_adapter()
+        page = MagicMock()
+        first_button = page.get_by_role.return_value.first
+
+        adapter.open_clientes_beta(page)
+
+        page.get_by_role.assert_called_once_with(
+            "button", name="Clientes Beta", exact=True
+        )
+        first_button.click.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

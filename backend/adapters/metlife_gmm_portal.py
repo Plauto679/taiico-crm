@@ -3,8 +3,10 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import time
+import urllib.request
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -16,6 +18,10 @@ METLIFE_PORTAL_URL = "https://agentes.metlife.mx/"
 TARGET_DRIVE_FOLDER_ID_ENV = "GOOGLE_DRIVE_RENEWALS_METLIFE_GMM_FOLDER_ID"
 USERNAME_ENV = "METLIFE_AGENT_PORTAL_USERNAME"
 PASSWORD_ENV = "METLIFE_AGENT_PORTAL_PASSWORD"
+CHROME_PROFILE_ENV = "METLIFE_CHROME_PROFILE_DIR"
+CHROME_CDP_PORT_ENV = "METLIFE_CHROME_CDP_PORT"
+DEFAULT_CHROME_CDP_PORT = 9223
+DEFAULT_CHROME_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
 AdapterStopAfter = Literal[
     "login",
@@ -66,6 +72,57 @@ class MetLifePortalAdapterError(RuntimeError):
 
 class MetLifePortalMfaRequired(MetLifePortalAdapterError):
     pass
+
+
+def stable_chrome_profile_dir() -> Path:
+    configured = os.getenv(CHROME_PROFILE_ENV)
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / "Library/Application Support/Taiico/MetLife GMM Chrome"
+
+
+def chrome_cdp_port() -> int:
+    return int(os.getenv(CHROME_CDP_PORT_ENV, str(DEFAULT_CHROME_CDP_PORT)))
+
+
+def chrome_cdp_url() -> str:
+    return f"http://127.0.0.1:{chrome_cdp_port()}"
+
+
+def chrome_server_ready() -> bool:
+    try:
+        with urllib.request.urlopen(f"{chrome_cdp_url()}/json/version", timeout=1) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
+def ensure_persistent_chrome(profile_dir: Path) -> None:
+    if chrome_server_ready():
+        return
+    if not DEFAULT_CHROME_PATH.exists():
+        raise MetLifePortalAdapterError(f"Google Chrome was not found at {DEFAULT_CHROME_PATH}")
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.Popen(
+        [
+            str(DEFAULT_CHROME_PATH),
+            f"--remote-debugging-port={chrome_cdp_port()}",
+            "--remote-debugging-address=127.0.0.1",
+            f"--user-data-dir={profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            METLIFE_PORTAL_URL,
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    for _ in range(30):
+        if chrome_server_ready():
+            return
+        time.sleep(0.5)
+    raise MetLifePortalAdapterError("Persistent Chrome did not expose its local debugging endpoint")
 
 
 def now_iso() -> str:
@@ -162,9 +219,7 @@ class MetLifeGmmPortalAdapter:
         self.headless = headless
         self.download_root = Path(download_root or tempfile.mkdtemp(prefix="taiico-metlife-downloads-"))
         self.username, self.password = ensure_credentials(username, password)
-        self.session_profile_dir = Path(
-            session_profile_dir or tempfile.mkdtemp(prefix="taiico-metlife-session-")
-        )
+        self.session_profile_dir = Path(session_profile_dir or stable_chrome_profile_dir())
         self.steps: list[AdapterStepResult] = []
 
     def record_step(self, step_name: str, status: str = "started", **metadata):
@@ -195,7 +250,6 @@ class MetLifeGmmPortalAdapter:
         target_drive_folder_id: str | None = None,
         resume_mfa: bool = False,
         mfa_code: str | None = None,
-        resume_url: str | None = None,
     ) -> MetLifeGmmPortalResult:
         try:
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -210,18 +264,13 @@ class MetLifeGmmPortalAdapter:
 
         try:
             with sync_playwright() as p:
-                context = p.chromium.launch_persistent_context(
-                    str(self.session_profile_dir),
-                    channel="chrome",
-                    headless=self.headless,
-                    accept_downloads=True,
-                )
-                page = context.pages[0] if context.pages else context.new_page()
+                ensure_persistent_chrome(self.session_profile_dir)
+                browser = p.chromium.connect_over_cdp(chrome_cdp_url())
+                context = browser.contexts[0]
+                page = context.pages[-1] if context.pages else context.new_page()
 
                 if resume_mfa:
                     step = self.record_step("continue_mfa", code_supplied=bool(mfa_code))
-                    if resume_url and page.url != resume_url:
-                        page.goto(resume_url, wait_until="domcontentloaded", timeout=60_000)
                     self.continue_mfa(page, mfa_code)
                     self.complete_step(step, current_url=page.url)
                 else:
@@ -269,8 +318,6 @@ class MetLifeGmmPortalAdapter:
                     uploaded = upload_folder_files_to_drive(service, extracted_folder_path, drive_folder["id"])
                     self.complete_step(step, drive_folder=drive_folder, uploaded_files=uploaded)
                     self.maybe_stop(stop_after, "upload_to_drive")
-
-                context.close()
 
             return MetLifeGmmPortalResult(
                 status="completed" if downloaded_zip_path else "matched",
@@ -325,7 +372,20 @@ class MetLifeGmmPortalAdapter:
             )
 
     def login(self, page):
-        page.wait_for_selector("#username", timeout=60_000)
+        for _ in range(60):
+            body_text = page.locator("body").inner_text(timeout=10_000)
+            if "Clientes Beta" in body_text:
+                return
+            if page.locator("#username").is_visible():
+                break
+            if "términos" in body_text.lower() or "terms and conditions" in body_text.lower():
+                raise MetLifePortalMfaRequired(
+                    "OPERATOR_ACTION_REQUIRED: accept the visible MetLife terms in the persistent Chrome window."
+                )
+            time.sleep(1)
+        else:
+            raise MetLifePortalAdapterError(f"Unknown MetLife login state at {page.url}")
+
         page.locator("#username").fill(self.username)
         page.locator("#password").fill(self.password)
         page.locator("#signOnButtonSpan").click()
@@ -359,21 +419,22 @@ class MetLifeGmmPortalAdapter:
         page.wait_for_selector("text=Clientes Beta", timeout=120_000)
 
     def open_clientes_beta(self, page):
-        page.get_by_text("Clientes Beta", exact=True).click()
+        page.get_by_role("button", name="Clientes Beta", exact=True).first.click()
         page.wait_for_load_state("networkidle", timeout=60_000)
         page.wait_for_url(re.compile(r".*/graph-clients.*|.*/clients.*"), timeout=60_000)
 
     def search_by_rfc(self, page, rfc: str):
-        buscar = page.get_by_text(re.compile("Buscar por", re.I)).locator("..")
+        buscar = page.get_by_text("Buscar por", exact=True).first.locator("..")
         buscar.click()
         page.get_by_text("RFC Contratante", exact=True).click()
 
-        search_input = page.locator("input").filter(has_not_text="").last
+        search_input = page.locator("#searchName")
+        search_input.wait_for(state="visible", timeout=15_000)
         try:
             search_input.fill(rfc)
         except Exception:
             page.keyboard.insert_text(rfc)
-        page.keyboard.press("Enter")
+        page.get_by_test_id("searchIconId").click()
         page.wait_for_load_state("networkidle", timeout=60_000)
         page.wait_for_selector(f"text={rfc}", timeout=60_000)
 
@@ -398,7 +459,9 @@ class MetLifeGmmPortalAdapter:
         page.wait_for_load_state("networkidle", timeout=60_000)
         page.get_by_text("Documentos de la póliza", exact=True).click()
         page.wait_for_load_state("networkidle", timeout=60_000)
-        page.wait_for_selector("text=Nombre del documento", timeout=60_000)
+        page.get_by_text(re.compile(r"^Nombre del documento$", re.I)).last.wait_for(
+            state="visible", timeout=60_000
+        )
 
     def download_documents(self, page, task: MetLifeGmmPortalTask) -> Path:
         checkboxes = page.locator("input[type='checkbox']")

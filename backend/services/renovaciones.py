@@ -6,7 +6,6 @@ from typing import List, Optional, Union
 from datetime import datetime, timedelta
 import os
 import smtplib
-import tempfile
 from email.message import EmailMessage
 from pathlib import Path
 from decimal import Decimal
@@ -26,7 +25,7 @@ from parsers.metlife_gmm_renovaciones import PARSER_VERSION as METLIFE_GMM_RENEW
 from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
 from parsers.metlife_vida_renovaciones import PARSER_VERSION as METLIFE_VIDA_RENEWAL_PARSER_VERSION
 from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workbook
-from adapters.metlife_gmm_portal import MetLifeGmmPortalAdapter, MetLifeGmmPortalTask, result_to_dict
+from adapters.metlife_gmm_portal import MetLifeGmmPortalAdapter, MetLifeGmmPortalTask, result_to_dict, stable_chrome_profile_dir
 
 router = APIRouter(prefix="/renovaciones", tags=["renovaciones"])
 
@@ -909,11 +908,14 @@ async def run_metlife_gmm_retrieval_adapter_task(
         )
         db.add(run)
         db.flush()
-        session_profile_dir = Path(tempfile.gettempdir()) / "taiico-metlife-mfa" / run.id
+        session_profile_dir = stable_chrome_profile_dir()
         run.metadata_json = {
             **(run.metadata_json or {}),
             "session_profile_dir": str(session_profile_dir),
         }
+        run_id = run.id
+        task_db_id = task.id
+        db.commit()
 
         if mutate_queue:
             task.status = "in_progress"
@@ -935,12 +937,9 @@ async def run_metlife_gmm_retrieval_adapter_task(
             target_drive_folder_id=os.getenv("GOOGLE_DRIVE_RENEWALS_METLIFE_GMM_FOLDER_ID"),
         )
         result_payload = result_to_dict(result)
+        run = db.query(PolicyDocumentRetrievalRun).filter(PolicyDocumentRetrievalRun.id == run_id).one()
+        task = db.query(PolicyDocumentRetrievalTask).filter(PolicyDocumentRetrievalTask.id == task_db_id).one()
         persist_adapter_steps(db, run.id, task.id, result_payload["steps"])
-        if result.status == "mfa_required" and result_payload["steps"]:
-            run.metadata_json = {
-                **(run.metadata_json or {}),
-                "mfa_url": result_payload["steps"][-1].get("metadata", {}).get("current_url"),
-            }
 
         run.processed_count = 0 if result.status == "mfa_required" else 1
         run.succeeded_count = 1 if result.status in {"matched", "completed"} or result.status.startswith("stopped_after_") else 0
@@ -1014,6 +1013,8 @@ async def continue_metlife_gmm_retrieval_adapter_mfa(
             client_name=task.client_name,
             renewal_deadline=task.renewal_deadline,
         )
+        task_db_id = task.id
+        db.commit()
         adapter = MetLifeGmmPortalAdapter(
             headless=bool(metadata.get("headless", False)),
             session_profile_dir=session_profile_dir,
@@ -1025,9 +1026,10 @@ async def continue_metlife_gmm_retrieval_adapter_mfa(
             upload_to_drive=False,
             resume_mfa=True,
             mfa_code=mfa_code,
-            resume_url=metadata.get("mfa_url"),
         )
         result_payload = result_to_dict(result)
+        run = db.query(PolicyDocumentRetrievalRun).filter(PolicyDocumentRetrievalRun.id == run_id).one()
+        task = db.query(PolicyDocumentRetrievalTask).filter(PolicyDocumentRetrievalTask.id == task_db_id).one()
         persist_adapter_steps(db, run.id, task.id, result_payload["steps"])
 
         run.processed_count = 0 if result.status == "mfa_required" else 1
