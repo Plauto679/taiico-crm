@@ -6,6 +6,7 @@ from typing import List, Optional, Union
 from datetime import datetime, timedelta
 import os
 import smtplib
+import tempfile
 from email.message import EmailMessage
 from pathlib import Path
 from decimal import Decimal
@@ -870,6 +871,11 @@ async def run_metlife_gmm_retrieval_adapter_task(
 ):
     db = SessionLocal()
     try:
+        if upload_to_drive or mutate_queue:
+            raise HTTPException(
+                status_code=400,
+                detail="The MetLife GMM MFA workflow is dry-run only; upload_to_drive and mutate_queue must be false.",
+            )
         task = get_retrieval_task_for_adapter(db, task_id=task_id, policy_number=policy_number)
         adapter_task = MetLifeGmmPortalTask(
             id=task.id,
@@ -903,6 +909,11 @@ async def run_metlife_gmm_retrieval_adapter_task(
         )
         db.add(run)
         db.flush()
+        session_profile_dir = Path(tempfile.gettempdir()) / "taiico-metlife-mfa" / run.id
+        run.metadata_json = {
+            **(run.metadata_json or {}),
+            "session_profile_dir": str(session_profile_dir),
+        }
 
         if mutate_queue:
             task.status = "in_progress"
@@ -912,7 +923,10 @@ async def run_metlife_gmm_retrieval_adapter_task(
             task.updated_at = datetime.utcnow()
             db.commit()
 
-        adapter = MetLifeGmmPortalAdapter(headless=headless)
+        adapter = MetLifeGmmPortalAdapter(
+            headless=headless,
+            session_profile_dir=session_profile_dir,
+        )
         result = await run_in_threadpool(
             adapter.run,
             adapter_task,
@@ -922,13 +936,22 @@ async def run_metlife_gmm_retrieval_adapter_task(
         )
         result_payload = result_to_dict(result)
         persist_adapter_steps(db, run.id, task.id, result_payload["steps"])
+        if result.status == "mfa_required" and result_payload["steps"]:
+            run.metadata_json = {
+                **(run.metadata_json or {}),
+                "mfa_url": result_payload["steps"][-1].get("metadata", {}).get("current_url"),
+            }
 
-        run.processed_count = 1
+        run.processed_count = 0 if result.status == "mfa_required" else 1
         run.succeeded_count = 1 if result.status in {"matched", "completed"} or result.status.startswith("stopped_after_") else 0
         run.failed_count = 1 if result.status == "failed" else 0
         run.escalated_count = 1 if result.status == "failed" else 0
-        run.status = "completed" if run.failed_count == 0 else "completed_with_escalations"
-        run.completed_at = datetime.utcnow()
+        if result.status == "mfa_required":
+            run.status = "waiting_for_mfa"
+            run.completed_at = None
+        else:
+            run.status = "completed" if run.failed_count == 0 else "completed_with_escalations"
+            run.completed_at = datetime.utcnow()
 
         if mutate_queue:
             if result.status == "completed":
@@ -958,6 +981,84 @@ async def run_metlife_gmm_retrieval_adapter_task(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to run MetLife GMM portal adapter: {e}")
+    finally:
+        db.close()
+
+@router.post("/metlife/gmm/retrieval-adapter/runs/{run_id}/continue-mfa")
+async def continue_metlife_gmm_retrieval_adapter_mfa(
+    run_id: str,
+    mfa_code: Optional[str] = Body(None, embed=True),
+    stop_after: str = Body("confirm_policy_match", embed=True),
+):
+    """Resume a dry-run retrieval in the persisted browser session; never stores the MFA code."""
+    db = SessionLocal()
+    try:
+        run = db.query(PolicyDocumentRetrievalRun).filter(
+            PolicyDocumentRetrievalRun.id == run_id,
+        ).first()
+        if not run or run.adapter_name != "metlife_gmm_portal_adapter":
+            raise HTTPException(status_code=404, detail="MetLife GMM retrieval run not found")
+        if run.status != "waiting_for_mfa":
+            raise HTTPException(status_code=409, detail=f"Run is not waiting for MFA (status={run.status})")
+
+        metadata = run.metadata_json or {}
+        task = get_retrieval_task_for_adapter(db, task_id=metadata.get("task_id"))
+        session_profile_dir = metadata.get("session_profile_dir")
+        if not session_profile_dir or not Path(session_profile_dir).exists():
+            raise HTTPException(status_code=410, detail="The preserved MFA browser session is no longer available")
+
+        adapter_task = MetLifeGmmPortalTask(
+            id=task.id,
+            policy_number=task.policy_number,
+            rfc=task.rfc,
+            client_name=task.client_name,
+            renewal_deadline=task.renewal_deadline,
+        )
+        adapter = MetLifeGmmPortalAdapter(
+            headless=bool(metadata.get("headless", False)),
+            session_profile_dir=session_profile_dir,
+        )
+        result = await run_in_threadpool(
+            adapter.run,
+            adapter_task,
+            stop_after=stop_after,
+            upload_to_drive=False,
+            resume_mfa=True,
+            mfa_code=mfa_code,
+            resume_url=metadata.get("mfa_url"),
+        )
+        result_payload = result_to_dict(result)
+        persist_adapter_steps(db, run.id, task.id, result_payload["steps"])
+
+        run.processed_count = 0 if result.status == "mfa_required" else 1
+        run.succeeded_count = 1 if result.status in {"matched", "completed"} or result.status.startswith("stopped_after_") else 0
+        run.failed_count = 1 if result.status == "failed" else 0
+        run.escalated_count = run.failed_count
+        if result.status == "mfa_required":
+            run.status = "waiting_for_mfa"
+            run.completed_at = None
+        else:
+            run.status = "completed" if run.failed_count == 0 else "completed_with_escalations"
+            run.completed_at = datetime.utcnow()
+        run.metadata_json = {
+            **metadata,
+            "continued_at": datetime.utcnow().isoformat(),
+            "continuation_stop_after": stop_after,
+            "mfa_code_supplied": bool(mfa_code),
+        }
+        db.commit()
+        db.refresh(run)
+        return {
+            "run": serialize_retrieval_run(run),
+            "task": serialize_retrieval_task(task),
+            "adapter_result": result_payload,
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to continue MetLife GMM MFA: {e}")
     finally:
         db.close()
 

@@ -157,10 +157,14 @@ class MetLifeGmmPortalAdapter:
         download_root: str | Path | None = None,
         username: str | None = None,
         password: str | None = None,
+        session_profile_dir: str | Path | None = None,
     ):
         self.headless = headless
         self.download_root = Path(download_root or tempfile.mkdtemp(prefix="taiico-metlife-downloads-"))
         self.username, self.password = ensure_credentials(username, password)
+        self.session_profile_dir = Path(
+            session_profile_dir or tempfile.mkdtemp(prefix="taiico-metlife-session-")
+        )
         self.steps: list[AdapterStepResult] = []
 
     def record_step(self, step_name: str, status: str = "started", **metadata):
@@ -189,6 +193,9 @@ class MetLifeGmmPortalAdapter:
         stop_after: AdapterStopAfter = "confirm_policy_match",
         upload_to_drive: bool = False,
         target_drive_folder_id: str | None = None,
+        resume_mfa: bool = False,
+        mfa_code: str | None = None,
+        resume_url: str | None = None,
     ) -> MetLifeGmmPortalResult:
         try:
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -203,19 +210,30 @@ class MetLifeGmmPortalAdapter:
 
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(channel="chrome", headless=self.headless)
-                context = browser.new_context(accept_downloads=True)
-                page = context.new_page()
+                context = p.chromium.launch_persistent_context(
+                    str(self.session_profile_dir),
+                    channel="chrome",
+                    headless=self.headless,
+                    accept_downloads=True,
+                )
+                page = context.pages[0] if context.pages else context.new_page()
 
-                step = self.record_step("open_browser", url=METLIFE_PORTAL_URL)
-                page.goto(METLIFE_PORTAL_URL, wait_until="domcontentloaded", timeout=60_000)
-                self.complete_step(step, current_url=page.url)
-                self.maybe_stop(stop_after, "open_browser")
+                if resume_mfa:
+                    step = self.record_step("continue_mfa", code_supplied=bool(mfa_code))
+                    if resume_url and page.url != resume_url:
+                        page.goto(resume_url, wait_until="domcontentloaded", timeout=60_000)
+                    self.continue_mfa(page, mfa_code)
+                    self.complete_step(step, current_url=page.url)
+                else:
+                    step = self.record_step("open_browser", url=METLIFE_PORTAL_URL)
+                    page.goto(METLIFE_PORTAL_URL, wait_until="domcontentloaded", timeout=60_000)
+                    self.complete_step(step, current_url=page.url)
+                    self.maybe_stop(stop_after, "open_browser")
 
-                step = self.record_step("authenticate_portal")
-                self.login(page)
-                self.complete_step(step, current_url=page.url)
-                self.maybe_stop(stop_after, "login")
+                    step = self.record_step("authenticate_portal")
+                    self.login(page)
+                    self.complete_step(step, current_url=page.url)
+                    self.maybe_stop(stop_after, "login")
 
                 step = self.record_step("clientes_beta")
                 self.open_clientes_beta(page)
@@ -253,7 +271,6 @@ class MetLifeGmmPortalAdapter:
                     self.maybe_stop(stop_after, "upload_to_drive")
 
                 context.close()
-                browser.close()
 
             return MetLifeGmmPortalResult(
                 status="completed" if downloaded_zip_path else "matched",
@@ -275,6 +292,23 @@ class MetLifeGmmPortalAdapter:
                 steps=self.steps,
                 downloaded_zip_path=str(downloaded_zip_path) if downloaded_zip_path else None,
                 extracted_folder_path=str(extracted_folder_path) if extracted_folder_path else None,
+            )
+        except MetLifePortalMfaRequired as exc:
+            if self.steps and self.steps[-1].status == "started":
+                self.complete_step(
+                    self.steps[-1],
+                    status="waiting_for_operator",
+                    session_preserved=True,
+                    current_url=page.url,
+                )
+                self.steps[-1].error_message = str(exc)
+            return MetLifeGmmPortalResult(
+                status="mfa_required",
+                task_id=task.id,
+                policy_number=task.policy_number,
+                rfc=task.rfc,
+                steps=self.steps,
+                error_message=str(exc),
             )
         except Exception as exc:
             if self.steps and self.steps[-1].status == "started":
@@ -306,6 +340,23 @@ class MetLifeGmmPortalAdapter:
                 )
             time.sleep(5)
         page.wait_for_selector("text=Clientes Beta", timeout=5_000)
+
+    def continue_mfa(self, page, mfa_code: str | None = None):
+        """Continue the persisted portal session after the operator receives MFA."""
+        if mfa_code:
+            code_input = page.locator(
+                "input[autocomplete='one-time-code'], input[name*='code' i], "
+                "input[id*='code' i], input[type='tel']"
+            ).first
+            code_input.wait_for(state="visible", timeout=15_000)
+            code_input.fill(mfa_code.strip())
+            submit = page.get_by_role(
+                "button", name=re.compile("verificar|validar|continuar|confirmar|enviar", re.I)
+            ).first
+            submit.click()
+
+        # With no code, the operator may have completed MFA in the headed browser.
+        page.wait_for_selector("text=Clientes Beta", timeout=120_000)
 
     def open_clientes_beta(self, page):
         page.get_by_text("Clientes Beta", exact=True).click()
