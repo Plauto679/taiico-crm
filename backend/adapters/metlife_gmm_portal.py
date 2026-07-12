@@ -464,6 +464,7 @@ class MetLifeGmmPortalAdapter:
         )
 
     def download_documents(self, page, task: MetLifeGmmPortalTask) -> Path:
+        page.wait_for_selector("input[type='checkbox']", state="visible", timeout=60_000)
         checkboxes = page.locator("input[type='checkbox']")
         count = checkboxes.count()
         if count == 0:
@@ -475,8 +476,8 @@ class MetLifeGmmPortalAdapter:
         else:
             for index in range(count):
                 checkbox = checkboxes.nth(index)
-                if checkbox.is_visible():
-                    checkbox.check()
+                if checkbox.is_visible() and not checkbox.is_checked():
+                    checkbox.evaluate("element => element.click()")
 
         if count == 0:
             raise MetLifePortalAdapterError("No downloadable policy document checkboxes were found.")

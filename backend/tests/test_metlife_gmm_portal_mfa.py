@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -6,7 +7,7 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from adapters.metlife_gmm_portal import MetLifeGmmPortalAdapter
+from adapters.metlife_gmm_portal import MetLifeGmmPortalAdapter, MetLifeGmmPortalTask
 
 
 class MetLifeGmmMfaContinuationTests(unittest.TestCase):
@@ -51,6 +52,40 @@ class MetLifeGmmMfaContinuationTests(unittest.TestCase):
             "button", name="Clientes Beta", exact=True
         )
         first_button.click.assert_called_once_with()
+
+    def test_download_waits_for_rows_and_uses_dom_click_for_unchecked_boxes(self):
+        with tempfile.TemporaryDirectory() as download_root:
+            adapter = MetLifeGmmPortalAdapter(
+                username="operator",
+                password="secret",
+                session_profile_dir="/tmp/taiico-metlife-mfa-test",
+                download_root=download_root,
+            )
+            page = MagicMock()
+            checkboxes = MagicMock()
+            checked = MagicMock()
+            unchecked = MagicMock()
+            checked.is_visible.return_value = True
+            checked.is_checked.return_value = True
+            unchecked.is_visible.return_value = True
+            unchecked.is_checked.return_value = False
+            checkboxes.count.return_value = 2
+            checkboxes.nth.side_effect = [checked, unchecked]
+            page.locator.return_value = checkboxes
+            download = page.expect_download.return_value.__enter__.return_value.value
+            download.suggested_filename = "documents.zip"
+
+            adapter.download_documents(
+                page,
+                MetLifeGmmPortalTask(id="task", policy_number="123", rfc="RFC123"),
+            )
+
+            page.wait_for_selector.assert_called_once_with(
+                "input[type='checkbox']", state="visible", timeout=60_000
+            )
+            checked.evaluate.assert_not_called()
+            unchecked.evaluate.assert_called_once_with("element => element.click()")
+            download.save_as.assert_called_once()
 
 
 if __name__ == "__main__":
