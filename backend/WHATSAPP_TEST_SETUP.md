@@ -29,8 +29,8 @@ Copy the WhatsApp values shown by Meta into `backend/.env`. Never commit tokens.
 
 ```dotenv
 WHATSAPP_TEST_MODE=true
-WHATSAPP_TEST_RECIPIENT=<E.164 digits only>
-WHATSAPP_TEST_ALLOWLIST=<same E.164 test number>
+WHATSAPP_TEST_RECIPIENTS=<comma-separated E.164 test numbers, digits only>
+WHATSAPP_TEST_ALLOWLIST=<the same comma-separated test numbers>
 WHATSAPP_ACCESS_TOKEN=<temporary or system-user token>
 WHATSAPP_PHONE_NUMBER_ID=<Meta phone-number ID>
 WHATSAPP_BUSINESS_ACCOUNT_ID=<Meta WABA ID>
@@ -53,3 +53,8 @@ is `POST /whatsapp/renewal/send-test`. Both accept:
 
 Every send attempt is recorded in `agent_actions`. The access token and full Meta
 response are never stored there.
+
+When using Meta's test phone number, every recipient must also be added and verified
+in Meta's test-recipient list. A production WhatsApp Business phone number does not
+use that test-recipient list, but customer opt-in and approved templates are still
+required.
