@@ -1,7 +1,8 @@
-// Keep browser requests on the same origin. Next.js forwards /api to the
-// FastAPI process on the host, so remote clients never resolve localhost to
-// their own computer.
-const API_BASE_URL = '/api';
+// Browser requests stay on the same origin and are proxied by Next.js. Server
+// Components call FastAPI directly because Node.js cannot parse relative URLs.
+const API_BASE_URL = typeof window === 'undefined'
+    ? (process.env.INTERNAL_API_BASE_URL || 'http://127.0.0.1:7777')
+    : '/api';
 
 export async function fetchFromApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`;

@@ -54,6 +54,7 @@ GOOGLE_DRIVE_SHARED_DRIVE_ID = os.getenv("GOOGLE_DRIVE_SHARED_DRIVE_ID")
 
 GOOGLE_DRIVE_SOURCE_FOLDERS = {
     "cobranza.metlife": {
+        "file_id": os.getenv("GOOGLE_DRIVE_SOURCE_COBRANZA_METLIFE_FILE_ID"),
         "folder_id": os.getenv("GOOGLE_DRIVE_SOURCE_COBRANZA_METLIFE_FOLDER_ID"),
         "source_category": "cobranza",
         "insurer_id": "metlife",
@@ -62,6 +63,7 @@ GOOGLE_DRIVE_SOURCE_FOLDERS = {
         "filename_contains": "metlife",
     },
     "cobranza.sura": {
+        "file_id": os.getenv("GOOGLE_DRIVE_SOURCE_COBRANZA_SURA_FILE_ID"),
         "folder_id": os.getenv("GOOGLE_DRIVE_SOURCE_COBRANZA_SURA_FOLDER_ID"),
         "source_category": "cobranza",
         "insurer_id": "sura",
@@ -70,6 +72,7 @@ GOOGLE_DRIVE_SOURCE_FOLDERS = {
         "filename_contains": "sura",
     },
     "cobranza.aarco": {
+        "file_id": os.getenv("GOOGLE_DRIVE_SOURCE_COBRANZA_AARCO_FILE_ID"),
         "folder_id": os.getenv("GOOGLE_DRIVE_SOURCE_COBRANZA_AARCO_FOLDER_ID"),
         "source_category": "cobranza",
         "insurer_id": "aarco",

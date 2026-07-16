@@ -11,7 +11,7 @@ from config import GOOGLE_DRIVE_SHARED_DRIVE_ID, GOOGLE_DRIVE_SOURCE_FOLDERS
 from database import SessionLocal, SourceDocument
 from drive.client import build_drive_service, download_drive_file
 from drive.registry import upsert_drive_source_document
-from drive.scanner import is_supported_source_file, list_folder_files, matches_source_config
+from drive.scanner import get_drive_file, is_supported_source_file, list_folder_files, matches_source_config
 from parsers.metlife_cobranza import PARSER_VERSION as METLIFE_PARSER_VERSION
 from parsers.metlife_cobranza import parse_metlife_cobranza_workbook
 from parsers.sura_cobranza import PARSER_VERSION as SURA_PARSER_VERSION
@@ -84,11 +84,15 @@ def parse_drive_source(parser_name: str, path: str, sheets: list[str] | None):
 @router.post("/scan")
 async def scan_drive_sources(request: DriveScanRequest = Body(default=DriveScanRequest())):
     source_configs = resolve_source_configs(request.source_key)
-    missing = [key for key, config in source_configs.items() if not config.get("folder_id")]
+    missing = [
+        key
+        for key, config in source_configs.items()
+        if not config.get("file_id") and not config.get("folder_id")
+    ]
     if missing:
         raise HTTPException(
             status_code=400,
-            detail=f"Missing Google Drive folder ID configuration for: {', '.join(missing)}",
+            detail=f"Missing Google Drive file or folder ID configuration for: {', '.join(missing)}",
         )
 
     try:
@@ -107,7 +111,10 @@ async def scan_drive_sources(request: DriveScanRequest = Body(default=DriveScanR
 
         for key, config in source_configs.items():
             try:
-                files = list_folder_files(service, config["folder_id"], GOOGLE_DRIVE_SHARED_DRIVE_ID)
+                if config.get("file_id"):
+                    files = [get_drive_file(service, config["file_id"])]
+                else:
+                    files = list_folder_files(service, config["folder_id"], GOOGLE_DRIVE_SHARED_DRIVE_ID)
             except Exception as exc:
                 raise HTTPException(status_code=502, detail=format_drive_error(exc)) from exc
 

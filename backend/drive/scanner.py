@@ -8,15 +8,23 @@ SUPPORTED_MIME_TYPES = {
     "application/vnd.ms-excel",
 }
 
+FILE_METADATA_FIELDS = (
+    "id, name, mimeType, parents, webViewLink, createdTime, modifiedTime, "
+    "md5Checksum, size, version, driveId"
+)
+
+
+def get_drive_file(service, file_id: str) -> dict[str, Any]:
+    return service.files().get(
+        fileId=file_id,
+        fields=FILE_METADATA_FIELDS,
+        supportsAllDrives=True,
+    ).execute()
+
 
 def list_folder_files(service, folder_id: str, shared_drive_id: str | None = None) -> list[dict[str, Any]]:
     query = f"'{folder_id}' in parents and trashed = false"
-    fields = (
-        "nextPageToken, files("
-        "id, name, mimeType, parents, webViewLink, createdTime, modifiedTime, "
-        "md5Checksum, size, version, driveId"
-        ")"
-    )
+    fields = f"nextPageToken, files({FILE_METADATA_FIELDS})"
 
     files: list[dict[str, Any]] = []
     page_token = None
