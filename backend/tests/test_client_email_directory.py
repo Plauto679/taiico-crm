@@ -9,7 +9,11 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.client_email_directory import normalize_client_name, parse_email_directory
+from services.client_email_directory import (
+    normalize_client_name,
+    parse_client_directory,
+    parse_email_directory,
+)
 from services.renovaciones import build_metlife_gmm_renewal_email_body, renewal_email_recipients
 
 
@@ -35,6 +39,25 @@ class ClientEmailDirectoryTests(unittest.TestCase):
         self.assertIn(normalize_client_name("Cliente Duplicado"), ambiguous)
         self.assertNotIn(normalize_client_name("Cliente Duplicado"), directory)
         self.assertEqual(directory[normalize_client_name("Cliente Unico")], "unique@example.com")
+
+    def test_optional_rfc_column_is_parsed_and_normalized(self):
+        emails, rfcs, ambiguous = parse_client_directory(workbook_bytes([
+            {
+                "Clientes": "Cliente RFC",
+                "Mail": "rfc@example.com",
+                "RFC": " abcd 010101 xy1 ",
+            },
+        ]))
+        key = normalize_client_name("Cliente RFC")
+        self.assertEqual(emails[key], "rfc@example.com")
+        self.assertEqual(rfcs[key], "ABCD010101XY1")
+        self.assertNotIn(key, ambiguous)
+
+    def test_missing_rfc_column_remains_supported(self):
+        _, rfcs, _ = parse_client_directory(workbook_bytes([
+            {"Clientes": "Sin RFC", "Mail": "sin.rfc@example.com"},
+        ]))
+        self.assertEqual(rfcs, {})
 
     def test_metlife_gmm_internal_template_displays_intended_client_email(self):
         body = build_metlife_gmm_renewal_email_body(

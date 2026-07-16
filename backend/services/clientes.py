@@ -5,8 +5,15 @@ from database import SessionLocal, Client, User
 
 router = APIRouter(prefix="/clientes", tags=["clientes"])
 
+
+def normalize_optional_rfc(value: Optional[str]) -> Optional[str]:
+    normalized = "".join(str(value or "").strip().upper().split())
+    return normalized or None
+
+
 class ClientModel(BaseModel):
     nombre: str
+    rfc: Optional[str] = None
     correo: Optional[str] = None
     telefono: Optional[str] = None
 
@@ -18,6 +25,7 @@ async def get_clients():
         return [
             ClientModel(
                 nombre=c.full_name,
+                rfc=c.rfc,
                 correo=c.email,
                 telefono=c.phone
             ) for c in clients
@@ -32,6 +40,7 @@ async def get_clients():
 async def add_client(client: ClientModel):
     db = SessionLocal()
     try:
+        client.rfc = normalize_optional_rfc(client.rfc)
         # Check if user exists to prevent foreign key errors
         user = db.query(User).filter(User.id == "usr_pamela").first()
         if not user:
@@ -42,6 +51,7 @@ async def add_client(client: ClientModel):
 
         new_client = Client(
             full_name=client.nombre,
+            rfc=client.rfc,
             email=client.correo,
             phone=client.telefono,
             responsible_user_id="usr_pamela",
@@ -70,6 +80,8 @@ async def update_client(req: UpdateClientRequest):
             raise HTTPException(status_code=404, detail="Client not found")
             
         db_client.full_name = req.client.nombre
+        req.client.rfc = normalize_optional_rfc(req.client.rfc)
+        db_client.rfc = req.client.rfc
         db_client.email = req.client.correo
         db_client.phone = req.client.telefono
         db.commit()

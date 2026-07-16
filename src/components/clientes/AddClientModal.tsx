@@ -12,6 +12,7 @@ interface AddClientModalProps {
 
 export function AddClientModal({ isOpen, onClose, onSave }: AddClientModalProps) {
     const [nombre, setNombre] = useState('');
+    const [rfc, setRfc] = useState('');
     const [correo, setCorreo] = useState('');
     const [telefono, setTelefono] = useState('');
     const [isSaving, setIsSaving] = useState(false);
@@ -26,12 +27,14 @@ export function AddClientModal({ isOpen, onClose, onSave }: AddClientModalProps)
         try {
             await onSave({
                 nombre: nombre.trim(),
+                rfc: rfc.trim().toUpperCase() || undefined,
                 correo: correo.trim() || undefined,
                 telefono: telefono.trim() || undefined,
             });
             onClose();
             // Reset form
             setNombre('');
+            setRfc('');
             setCorreo('');
             setTelefono('');
         } catch (error) {
@@ -63,6 +66,19 @@ export function AddClientModal({ isOpen, onClose, onSave }: AddClientModalProps)
                             required
                             value={nombre}
                             onChange={(e) => setNombre(e.target.value)}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
+                        />
+                    </div>
+
+                    <div>
+                        <label htmlFor="rfc" className="block text-sm font-medium text-gray-700">
+                            RFC (Opcional)
+                        </label>
+                        <input
+                            type="text"
+                            id="rfc"
+                            value={rfc}
+                            onChange={(e) => setRfc(e.target.value.toUpperCase())}
                             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
                         />
                     </div>

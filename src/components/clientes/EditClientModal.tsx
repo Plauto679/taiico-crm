@@ -14,6 +14,7 @@ interface EditClientModalProps {
 
 export function EditClientModal({ isOpen, onClose, client, onSave, onDelete }: EditClientModalProps) {
     const [nombre, setNombre] = useState('');
+    const [rfc, setRfc] = useState('');
     const [correo, setCorreo] = useState('');
     const [telefono, setTelefono] = useState('');
     const [isSaving, setIsSaving] = useState(false);
@@ -22,6 +23,7 @@ export function EditClientModal({ isOpen, onClose, client, onSave, onDelete }: E
     useEffect(() => {
         if (client) {
             setNombre(client.nombre);
+            setRfc(client.rfc || '');
             setCorreo(client.correo || '');
             setTelefono(client.telefono || '');
         }
@@ -37,6 +39,7 @@ export function EditClientModal({ isOpen, onClose, client, onSave, onDelete }: E
         try {
             await onSave(client.nombre, {
                 nombre: nombre.trim(),
+                rfc: rfc.trim().toUpperCase() || undefined,
                 correo: correo.trim() || undefined,
                 telefono: telefono.trim() || undefined,
             });
@@ -85,6 +88,19 @@ export function EditClientModal({ isOpen, onClose, client, onSave, onDelete }: E
                             required
                             value={nombre}
                             onChange={(e) => setNombre(e.target.value)}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
+                        />
+                    </div>
+
+                    <div>
+                        <label htmlFor="edit-rfc" className="block text-sm font-medium text-gray-700">
+                            RFC (Opcional)
+                        </label>
+                        <input
+                            type="text"
+                            id="edit-rfc"
+                            value={rfc}
+                            onChange={(e) => setRfc(e.target.value.toUpperCase())}
                             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
                         />
                     </div>

@@ -22,6 +22,7 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
 
     const filteredClients = clients.filter(client =>
         client.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (client.rfc && client.rfc.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (client.correo && client.correo.toLowerCase().includes(searchTerm.toLowerCase()))
     );
 
@@ -42,6 +43,7 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
 
     const columns = [
         { header: 'Nombre', accessorKey: 'nombre' as keyof Cliente },
+        { header: 'RFC', accessorKey: 'rfc' as keyof Cliente },
         { header: 'Correo', accessorKey: 'correo' as keyof Cliente },
         { header: 'Teléfono', accessorKey: 'telefono' as keyof Cliente },
     ];

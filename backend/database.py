@@ -88,6 +88,7 @@ class Client(Base):
     
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     full_name = Column(String(255), nullable=False)
+    rfc = Column(String(50), nullable=True, index=True)
     email = Column(String(255), unique=False, nullable=True) # Changed from unique=True to allow corporate and family shared emails
     phone = Column(String(50), nullable=True)
     responsible_user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
