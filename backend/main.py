@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-from services import cobranza, renovaciones, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, whatsapp
+from services import cobranza, renovaciones, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, client_email_directory, whatsapp
 from pydantic import BaseModel
 
 app = FastAPI(title="TAIICO CRM API")
@@ -36,6 +36,7 @@ app.include_router(clientes.router)
 app.include_router(ingestion.router)
 app.include_router(drive_sources.router)
 app.include_router(renewal_ingestion.router)
+app.include_router(client_email_directory.router)
 app.include_router(whatsapp.router)
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ from database import (
     SourceDocument,
 )
 from drive.client import build_drive_service, download_drive_file
+from services.client_email_directory import lookup_client_email
 from parsers.metlife_gmm_renovaciones import (
     PARSER_VERSION as GMM_PARSER_VERSION,
     parse_metlife_gmm_renewal_workbook,
@@ -86,13 +87,22 @@ def find_policy(db, policy_number: str | None):
 def find_or_create_client(db, payload: dict) -> Client:
     client_name = str(payload.get("client_name") or "METLIFE CLIENTE POR CONFIRMAR").strip()
     normalized = normalize_name(client_name)
+    canonical_email = None
+    try:
+        canonical_email = lookup_client_email(client_name)
+    except Exception:
+        # Email enrichment must not make renewal ingestion unavailable.
+        pass
+
     for client in db.query(Client).filter(Client.full_name == client_name).all():
         if normalize_name(client.full_name) == normalized:
+            if not client.email and canonical_email:
+                client.email = canonical_email
             return client
 
     client = Client(
         full_name=client_name,
-        email=payload.get("email_link_or_value") or None,
+        email=canonical_email or payload.get("email_link_or_value") or None,
         responsible_user_id="usr_pamela",
         status="active",
         metadata_json={
@@ -209,6 +219,11 @@ def ingest_rows(db, source_document, parsed_rows, workbook_issues, parser_name, 
 
         renewal = None
         if policy and deadline:
+            if policy.client and not policy.client.email:
+                try:
+                    policy.client.email = lookup_client_email(policy.client.full_name)
+                except Exception:
+                    pass
             renewal = db.query(Renewal).filter(
                 Renewal.original_policy_id == policy.id,
                 Renewal.renewal_deadline == deadline,

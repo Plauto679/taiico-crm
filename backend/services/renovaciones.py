@@ -401,6 +401,42 @@ def send_email_smtp(subject: str, body: str, recipients: List[str], attachments:
         server.login(user, password)
         server.send_message(message)
 
+
+def build_metlife_gmm_renewal_email_body(
+    client_name: str,
+    client_email: str,
+    policy_number: str,
+    end_date: str,
+) -> str:
+    try:
+        period_start = datetime.strptime(end_date, "%Y-%m-%d").year
+    except ValueError:
+        period_start = datetime.now().year
+    period_end = period_start + 1
+    return (
+        f"Hola {client_name}, ({client_email})\n\n"
+        "Te compartimos la documentación correspondiente a la renovación de tu póliza "
+        f"de Gastos Médicos Mayores MetLife para el periodo {period_start} - {period_end}.\n\n"
+        "Adjuntamos:\n"
+        "- CFDIs y avisos de la renovación.\n"
+        "- Documentos de la póliza.\n\n"
+        f"Póliza de referencia: {policy_number}\n\n"
+        "Este correo se envía únicamente al equipo interno durante la fase operativa actual.\n\n"
+        "Saludos,\nTAIICO"
+    )
+
+
+def renewal_email_recipients(intended_client_email: str) -> list[str]:
+    internal_only = os.getenv("RENEWAL_EMAIL_INTERNAL_ONLY", "true").lower() in {"1", "true", "yes"}
+    if not internal_only:
+        return [email.strip() for email in intended_client_email.split(",") if email.strip()]
+
+    configured = os.getenv("RENEWAL_EMAIL_INTERNAL_RECIPIENTS", "")
+    recipients = [email.strip() for email in configured.split(",") if email.strip()]
+    if not recipients:
+        raise RuntimeError("RENEWAL_EMAIL_INTERNAL_RECIPIENTS is required while internal-only mode is enabled")
+    return recipients
+
 @router.post("/metlife/gmm/source-dry-run")
 async def dry_run_metlife_gmm_renewal_source(
     source_path: Optional[str] = Body(None, embed=True),
@@ -1340,13 +1376,22 @@ async def send_renewal_email_endpoint(
             
         # Build SMTP elements
         subject = f"Renovacion {policy_str} {policy.client.full_name}"
-        body = (
-            f"Buen día,\n"
-            f"Comparto póliza {policy_str} con fecha Fin de Vigencia {end_date}.\n\n"
-            f"La renovacion se encuentra adjunta en el correo o disponible en el sistema.\n"
-            f"Nos mantenemos en contacto para cualquier duda\n\n"
-            f"Atentamente Taiico Life Advisors"
-        )
+        if insurer.lower() == "metlife" and type.upper() == "GMM":
+            subject = f"Renovación Metlife GMM - {policy.client.full_name}"
+            body = build_metlife_gmm_renewal_email_body(
+                policy.client.full_name,
+                recipient_email,
+                policy_str,
+                end_date,
+            )
+        else:
+            body = (
+                f"Buen día,\n"
+                f"Comparto póliza {policy_str} con fecha Fin de Vigencia {end_date}.\n\n"
+                f"La renovacion se encuentra adjunta en el correo o disponible en el sistema.\n"
+                f"Nos mantenemos en contacto para cualquier duda\n\n"
+                f"Atentamente Taiico Life Advisors"
+            )
         
         # Read attachments if local folder exists
         attachments = []
@@ -1372,7 +1417,7 @@ async def send_renewal_email_endpoint(
                 body += f"\n\nLink al expediente: {exp_path}"
                 
         # Send Email
-        recipients = [r.strip() for r in recipient_email.split(",") if r.strip()]
+        recipients = renewal_email_recipients(recipient_email)
         send_email_smtp(subject, body, recipients, attachments)
         
         # Update database status
@@ -1381,7 +1426,12 @@ async def send_renewal_email_endpoint(
             renewal.insurer_response = "Enviado"
             db.commit()
             
-        return {"message": f"Correo enviado a {recipient_email}"}
+        return {
+            "message": "Correo de renovación enviado",
+            "actual_recipients": recipients,
+            "intended_client_email": recipient_email,
+            "internal_only": os.getenv("RENEWAL_EMAIL_INTERNAL_ONLY", "true").lower() in {"1", "true", "yes"},
+        }
         
     except HTTPException:
         raise
