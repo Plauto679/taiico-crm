@@ -1,4 +1,7 @@
-const API_BASE_URL = 'http://localhost:7777';
+// Keep browser requests on the same origin. Next.js forwards /api to the
+// FastAPI process on the host, so remote clients never resolve localhost to
+// their own computer.
+const API_BASE_URL = '/api';
 
 export async function fetchFromApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`;
