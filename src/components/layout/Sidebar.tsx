@@ -1,10 +1,11 @@
 import Link from 'next/link';
-import { Home, DollarSign, Calendar, Users, BarChart3, Briefcase } from 'lucide-react';
+import { Home, DollarSign, Calendar, ClipboardList, Users, BarChart3, Briefcase } from 'lucide-react';
 
 const NAV_ITEMS = [
     { name: 'Inicio', href: '/', icon: Home },
     { name: 'Cobranza', href: '/cobranza', icon: DollarSign },
     { name: 'Renovaciones', href: '/renovaciones', icon: Calendar },
+    { name: 'Pendientes', href: '/pendientes', icon: ClipboardList },
     { name: 'Cartera', href: '/cartera', icon: Briefcase },
     { name: 'Clientes', href: '/clientes', icon: Users },
     { name: 'Dashboards', href: '/dashboards', icon: BarChart3 },
