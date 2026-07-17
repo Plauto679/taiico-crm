@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Query, Body, Depends
 from starlette.concurrency import run_in_threadpool
 from typing import List, Optional, Union
 from datetime import datetime, timedelta
@@ -26,6 +26,8 @@ from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
 from parsers.metlife_vida_renovaciones import PARSER_VERSION as METLIFE_VIDA_RENEWAL_PARSER_VERSION
 from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workbook
 from adapters.metlife_gmm_portal import MetLifeGmmPortalAdapter, MetLifeGmmPortalTask, result_to_dict, stable_chrome_profile_dir
+from services.mail_configuration import smtp_settings_for
+from services.session_auth import current_username
 
 router = APIRouter(prefix="/renovaciones", tags=["renovaciones"])
 
@@ -367,13 +369,22 @@ def upsert_retrieval_task(db, payload: dict) -> tuple[PolicyDocumentRetrievalTas
     db.add(task)
     return task, True
 
-def send_email_smtp(subject: str, body: str, recipients: List[str], attachments: List[dict] = []):
-    host = os.environ.get("SMTP_HOST")
-    port = int(os.environ.get("SMTP_PORT", "587"))
-    user = os.environ.get("SMTP_USER")
-    password = os.environ.get("SMTP_PASSWORD")
-    sender = os.environ.get("SMTP_SENDER", user)
-    use_starttls = os.environ.get("SMTP_USE_STARTTLS", "true").lower() in {"1", "true", "yes"}
+def send_email_smtp(
+    subject: str,
+    body: str,
+    recipients: List[str],
+    attachments: List[dict] = [],
+    settings: dict | None = None,
+):
+    settings = settings or {}
+    host = settings.get("host") or os.environ.get("SMTP_HOST")
+    port = int(settings.get("port") or os.environ.get("SMTP_PORT", "587"))
+    user = settings.get("user") or os.environ.get("SMTP_USER")
+    password = settings.get("password") or os.environ.get("SMTP_PASSWORD")
+    sender = settings.get("sender") or os.environ.get("SMTP_SENDER", user)
+    use_starttls = settings.get("use_starttls")
+    if use_starttls is None:
+        use_starttls = os.environ.get("SMTP_USE_STARTTLS", "true").lower() in {"1", "true", "yes"}
 
     if not all([host, user, password, sender]):
         raise RuntimeError("Missing SMTP configuration")
@@ -1354,7 +1365,8 @@ async def send_renewal_email_endpoint(
     policy_number: Union[str, int] = Body(..., embed=True),
     client_name: str = Body(..., embed=True),
     end_date: str = Body(..., embed=True),
-    expediente: Optional[str] = Body(None, embed=True)
+    expediente: Optional[str] = Body(None, embed=True),
+    username: str = Depends(current_username),
 ):
     """
     Send renewal email using database details. Updates status in database upon success.
@@ -1418,7 +1430,8 @@ async def send_renewal_email_endpoint(
                 
         # Send Email
         recipients = renewal_email_recipients(recipient_email)
-        send_email_smtp(subject, body, recipients, attachments)
+        user_smtp_settings = smtp_settings_for(username)
+        send_email_smtp(subject, body, recipients, attachments, settings=user_smtp_settings)
         
         # Update database status
         renewal = db.query(Renewal).filter(Renewal.original_policy_id == policy.id).first()
@@ -1431,6 +1444,7 @@ async def send_renewal_email_endpoint(
             "actual_recipients": recipients,
             "intended_client_email": recipient_email,
             "internal_only": os.getenv("RENEWAL_EMAIL_INTERNAL_ONLY", "true").lower() in {"1", "true", "yes"},
+            "sender_source": "user_configuration" if user_smtp_settings else "server_fallback",
         }
         
     except HTTPException:

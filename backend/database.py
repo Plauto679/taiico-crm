@@ -56,6 +56,21 @@ class User(Base):
     approvals_reviewed = relationship("HumanApproval", back_populates="reviewed_by_user")
     strategy_proposals = relationship("StrategyProposal", back_populates="approved_by_user")
 
+
+class UserMailConfiguration(Base):
+    __tablename__ = "user_mail_configurations"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    username = Column(String(255), unique=True, nullable=False, index=True)
+    email_address = Column(String(255), nullable=False)
+    smtp_host = Column(String(255), default="smtp.gmail.com", nullable=False)
+    smtp_port = Column(Integer, default=587, nullable=False)
+    use_starttls = Column(Boolean, default=True, nullable=False)
+    encrypted_password = Column(Text, nullable=False)
+    last_verified_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
 # 2. Insurer Model
 class Insurer(Base):
     __tablename__ = "insurers"

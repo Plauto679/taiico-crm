@@ -4,8 +4,6 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchFromApi } from '@/lib/api';
 
-import Cookies from 'js-cookie';
-
 export default function LoginPage() {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -27,10 +25,8 @@ export default function LoginPage() {
                 body: JSON.stringify({ username, password }),
             });
 
-            // Login successful
-            Cookies.set('auth_token', 'true', { expires: 1 }); // Expires in 1 day
             router.push('/');
-        } catch (err) {
+        } catch {
             setError('Credenciales inválidas. Por favor intente de nuevo.');
         } finally {
             setIsLoading(false);

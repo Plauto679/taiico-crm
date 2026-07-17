@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Home, DollarSign, Calendar, ClipboardList, Users, BarChart3, Briefcase } from 'lucide-react';
+import { Home, DollarSign, Calendar, ClipboardList, Users, BarChart3, Briefcase, Mail } from 'lucide-react';
 
 const NAV_ITEMS = [
     { name: 'Inicio', href: '/', icon: Home },
@@ -9,6 +9,7 @@ const NAV_ITEMS = [
     { name: 'Cartera', href: '/cartera', icon: Briefcase },
     { name: 'Clientes', href: '/clientes', icon: Users },
     { name: 'Dashboards', href: '/dashboards', icon: BarChart3 },
+    { name: 'Configuración de Mail', href: '/configuracion-mail', icon: Mail },
 ];
 
 export function Sidebar() {

@@ -7,7 +7,7 @@ export function middleware(request: NextRequest) {
     // Define public paths that don't require authentication
     const isPublicPath = path === '/login' || path.startsWith('/_next') || path.startsWith('/static') || path === '/logo.png';
 
-    const token = request.cookies.get('auth_token')?.value;
+    const token = request.cookies.get('taiico_session')?.value;
 
     if (isPublicPath) {
         // If user is already logged in and tries to access login page, redirect to dashboard
