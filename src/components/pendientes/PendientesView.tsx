@@ -1,9 +1,11 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { Plus } from 'lucide-react';
 import { DataTable } from '@/components/ui/DataTable';
 import { PendingRow, PendingSourceData } from '@/lib/types/pendientes';
 import { PendingHistoryModal } from './PendingHistoryModal';
+import { RegisterPendingModal } from './RegisterPendingModal';
 
 interface PendientesViewProps {
     emisionServicios: PendingSourceData;
@@ -13,7 +15,10 @@ interface PendientesViewProps {
 export function PendientesView({ emisionServicios, siniestros }: PendientesViewProps) {
     const [activeTab, setActiveTab] = useState<'emision-servicios' | 'siniestros'>('emision-servicios');
     const [selectedRow, setSelectedRow] = useState<PendingRow | null>(null);
-    const activeData = activeTab === 'emision-servicios' ? emisionServicios : siniestros;
+    const [emisionData, setEmisionData] = useState(emisionServicios);
+    const [siniestrosData, setSiniestrosData] = useState(siniestros);
+    const [showRegisterModal, setShowRegisterModal] = useState(false);
+    const activeData = activeTab === 'emision-servicios' ? emisionData : siniestrosData;
 
     const columns = useMemo(() => [
         ...activeData.core_headers.map((header) => ({
@@ -26,10 +31,19 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
         },
     ], [activeData]);
 
+    const handleCreated = (row: PendingRow) => {
+        if (activeTab === 'emision-servicios') {
+            setEmisionData((current) => ({ ...current, rows: [...current.rows, row] }));
+        } else {
+            setSiniestrosData((current) => ({ ...current, rows: [...current.rows, row] }));
+        }
+        setShowRegisterModal(false);
+    };
+
     return (
         <>
-            <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-300">
+            <div className="flex h-full min-h-0 max-w-full flex-col gap-4">
+                <div className="flex flex-none flex-wrap items-center justify-between gap-4 border-b border-gray-300">
                     <div className="flex gap-2">
                         <button
                             type="button"
@@ -46,18 +60,30 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
                             Siniestros
                         </button>
                     </div>
-                    <p className="text-sm text-blue-100">{activeData.rows.length} registros</p>
+                    <div className="flex items-center gap-3">
+                        <p className="text-sm text-blue-100">{activeData.rows.length} registros</p>
+                        <button type="button" onClick={() => setShowRegisterModal(true)} className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-50">
+                            <Plus className="h-4 w-4" /> Registrar Pendiente
+                        </button>
+                    </div>
                 </div>
 
-                <div className="rounded-lg bg-white shadow">
-                    <DataTable data={activeData.rows} columns={columns} onRowClick={setSelectedRow} />
+                <div className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg bg-white shadow">
+                    <DataTable data={activeData.rows} columns={columns} onRowClick={setSelectedRow} className="h-full max-w-full overflow-auto border-0 shadow-none" />
                 </div>
-                <p className="text-sm text-blue-100">
+                <p className="flex-none text-sm text-blue-100">
                     Haz clic en un registro para consultar el historial completo de actualizaciones.
                 </p>
             </div>
 
-            <PendingHistoryModal row={selectedRow} onClose={() => setSelectedRow(null)} />
+            {selectedRow && <PendingHistoryModal key={`${activeTab}:${selectedRow.id}`} row={selectedRow} source={activeTab} onClose={() => setSelectedRow(null)} />}
+            {showRegisterModal && (
+                <RegisterPendingModal
+                    source={activeTab}
+                    onClose={() => setShowRegisterModal(false)}
+                    onCreated={handleCreated}
+                />
+            )}
         </>
     );
 }

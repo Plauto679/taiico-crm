@@ -1,9 +1,10 @@
 import Link from 'next/link';
-import { DollarSign, Calendar, ClipboardList, Users, BarChart3, Briefcase, Mail } from 'lucide-react';
+import { DollarSign, Calendar, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch } from 'lucide-react';
 
 export default function Home() {
   return (
-    <div className="flex h-full flex-col items-center justify-center space-y-12 p-8">
+    <div className="h-full overflow-y-auto">
+      <div className="flex min-h-full flex-col items-center space-y-12 p-8">
       <div className="text-center space-y-6">
         <img
           src="/logo.png"
@@ -76,6 +77,18 @@ export default function Home() {
           </div>
         </Link>
 
+        <Link href="/recluta" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-indigo-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
+          <div className="flex flex-col items-center text-center space-y-4">
+            <div className="rounded-full bg-indigo-100 p-4 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-colors duration-300">
+              <UserRoundSearch className="h-8 w-8" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">Recluta</h2>
+              <p className="text-gray-500 mt-2">Seguimiento de prospectos a agentes</p>
+            </div>
+          </div>
+        </Link>
+
         <Link href="/dashboards" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-orange-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
           <div className="flex flex-col items-center text-center space-y-4">
             <div className="rounded-full bg-orange-100 p-4 text-orange-600 group-hover:bg-orange-600 group-hover:text-white transition-colors duration-300">
@@ -99,6 +112,7 @@ export default function Home() {
             </div>
           </div>
         </Link>
+      </div>
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Body, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
-from services import cobranza, renovaciones, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, client_email_directory, whatsapp, pendientes, mail_configuration
+from services import cobranza, renovaciones, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, client_email_directory, whatsapp, pendientes, mail_configuration, recluta
 from services.session_auth import COOKIE_NAME, SESSION_SECONDS, create_session_token, current_username
 from pydantic import BaseModel
 
@@ -62,6 +62,7 @@ app.include_router(client_email_directory.router)
 app.include_router(whatsapp.router)
 app.include_router(pendientes.router)
 app.include_router(mail_configuration.router)
+app.include_router(recluta.router)
 
 if __name__ == "__main__":
     import uvicorn

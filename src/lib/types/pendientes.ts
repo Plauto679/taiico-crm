@@ -9,6 +9,9 @@ export interface PendingRow {
     summary: Record<string, string>;
     latest_update: PendingHistoryEntry;
     history: PendingHistoryEntry[];
+    folder_name?: string;
+    folder_id?: string | null;
+    folder_url?: string | null;
 }
 
 export interface PendingSourceData {
@@ -18,4 +21,42 @@ export interface PendingSourceData {
     core_headers: string[];
     latest_update_header: string;
     rows: PendingRow[];
+}
+
+export interface EmisionServiciosPendingInput {
+    asegurado: string;
+    rfc: string;
+    poliza: string;
+    casificacion: 'Vida' | 'GMM';
+    tipo_tramite: 'Servicios' | 'Emisión';
+    solicitud_de: string;
+}
+
+export interface SiniestrosPendingInput {
+    asegurado: string;
+    rfc: string;
+    tipo_tramite: 'Cirugía Progamada' | 'Reembolso' | 'Programación de Medicamentos' | 'Programación de estudios/terapias';
+    tramite: 'Complemento' | 'Reconsideración' | 'Garantías';
+}
+
+export interface PendingCreateResponse {
+    created: boolean;
+    row: PendingRow;
+    folder_warning?: string | null;
+}
+
+export interface PendingDocument {
+    id: string;
+    name: string;
+    mimeType?: string;
+    webViewLink?: string;
+    modifiedTime?: string;
+    size?: string;
+}
+
+export interface PendingDocumentsResponse {
+    row: PendingRow;
+    folder_missing: boolean;
+    required_documents: string[];
+    documents: PendingDocument[];
 }
