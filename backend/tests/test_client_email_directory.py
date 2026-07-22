@@ -14,7 +14,11 @@ from services.client_email_directory import (
     parse_client_directory,
     parse_email_directory,
 )
-from services.renovaciones import build_metlife_gmm_renewal_email_body, renewal_email_recipients
+from services.renovaciones import (
+    build_metlife_gmm_renewal_email_body,
+    renewal_email_cc_recipients,
+    renewal_email_recipients,
+)
 
 
 def workbook_bytes(rows):
@@ -59,16 +63,26 @@ class ClientEmailDirectoryTests(unittest.TestCase):
         ]))
         self.assertEqual(rfcs, {})
 
-    def test_metlife_gmm_internal_template_displays_intended_client_email(self):
+    def test_metlife_gmm_production_template_uses_client_greeting_without_disclaimer(self):
         body = build_metlife_gmm_renewal_email_body(
             "Dante Morales Najera",
             "dante.morales@example.com",
             "1357138",
             "2026-07-13",
         )
-        self.assertIn("Hola Dante Morales Najera, (dante.morales@example.com)", body)
+        self.assertIn("Hola Dante Morales Najera,", body)
+        self.assertNotIn("dante.morales@example.com", body)
         self.assertIn("periodo 2026 - 2027", body)
-        self.assertIn("únicamente al equipo interno", body)
+        self.assertNotIn("únicamente al equipo interno", body)
+
+    def test_production_mode_sends_to_intended_client(self):
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {"RENEWAL_EMAIL_INTERNAL_ONLY": "false"}, clear=False):
+            self.assertEqual(
+                renewal_email_recipients("client@example.com"),
+                ["client@example.com"],
+            )
 
     def test_internal_only_mode_never_uses_client_as_actual_recipient(self):
         from unittest.mock import patch
@@ -80,6 +94,28 @@ class ClientEmailDirectoryTests(unittest.TestCase):
             self.assertEqual(
                 renewal_email_recipients("client@example.com"),
                 ["operations@example.com"],
+            )
+
+    def test_production_cc_recipients_are_added_and_deduplicated(self):
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {
+            "RENEWAL_EMAIL_CC_RECIPIENTS": (
+                "alberto.alfaro@taiico.com,veronica.alfaro@taiico.com,"
+                "pamela.alfaro@taiico.com,ALBERTO.ALFARO@TAIICO.COM"
+            ),
+        }, clear=False):
+            self.assertEqual(
+                renewal_email_cc_recipients(["client@example.com"]),
+                [
+                    "alberto.alfaro@taiico.com",
+                    "veronica.alfaro@taiico.com",
+                    "pamela.alfaro@taiico.com",
+                ],
+            )
+            self.assertNotIn(
+                "alberto.alfaro@taiico.com",
+                renewal_email_cc_recipients(["alberto.alfaro@taiico.com"]),
             )
 
 

@@ -8,10 +8,12 @@ import threading
 import time
 import zipfile
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import Literal
 from xml.etree import ElementTree
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, quoteattr
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -19,7 +21,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from google.auth import default
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from services.session_auth import current_username
 from services.pending_document_requirements import requirements_for
@@ -105,6 +107,10 @@ class SiniestrosCreateRequest(BaseModel):
     tramite: Literal["Complemento", "Reconsideración", "Garantías"]
 
 
+class PendingFollowUpRequest(BaseModel):
+    comment: str = Field(min_length=1, max_length=5000)
+
+
 @dataclass(frozen=True)
 class PendingSource:
     key: str
@@ -176,14 +182,12 @@ def parse_pending_workbook(workbook: bytes, source: PendingSource) -> dict:
             for header, value in zip(history_headers, history_values)
             if value
         ]
+        latest_update = history[-1] if history else {"date": "", "update": ""}
         rows.append({
             "id": f"{source.key}:{index}",
             "source_row": index,
             "summary": dict(zip(core_headers, core_values)),
-            "latest_update": {
-                "date": latest_header,
-                "update": history_values[-1] if history_values else "",
-            },
+            "latest_update": latest_update,
             "history": history,
         })
 
@@ -322,6 +326,233 @@ def append_pending_record(workbook: bytes, source: PendingSource, values: dict[s
     return _append_xlsx_row(workbook, source.sheet_name, next_row, indexed_values), next_row
 
 
+def add_pending_follow_up(
+    workbook: bytes,
+    source: PendingSource,
+    source_row: int,
+    comment: str,
+    follow_up_date: date | None = None,
+) -> tuple[bytes, str]:
+    comment = clean_cell(comment)
+    if not comment:
+        raise ValueError("El comentario de seguimiento es obligatorio")
+
+    table = pd.read_excel(
+        io.BytesIO(workbook),
+        sheet_name=source.sheet_name,
+        dtype=str,
+        keep_default_na=False,
+    )
+    if source_row < 2 or source_row > len(table.index) + 1:
+        raise ValueError(f"La fila {source_row} no existe en el archivo canónico")
+
+    target_date = follow_up_date or datetime.now(ZoneInfo("America/Mexico_City")).date()
+    headers = [clean_cell(column) for column in table.columns]
+    target_column = next(
+        (
+            index + 1 for index, header in enumerate(headers)
+            if index >= source.core_column_count and _history_header_matches_date(header, target_date)
+        ),
+        None,
+    )
+    header_value = _format_follow_up_header(source, target_date)
+    updates: dict[tuple[int, int], str] = {}
+    if target_column is None:
+        target_column = len(headers) + 1
+        updates[(1, target_column)] = header_value
+        existing_comment = ""
+    else:
+        header_value = headers[target_column - 1]
+        existing_comment = clean_cell(table.iloc[source_row - 2, target_column - 1])
+
+    updates[(source_row, target_column)] = (
+        f"{existing_comment} | {comment}" if existing_comment else comment
+    )
+    return _update_xlsx_cells(workbook, source.sheet_name, updates), header_value
+
+
+def _history_header_matches_date(value: str, target: date) -> bool:
+    text = clean_cell(value).casefold()
+    if not text:
+        return False
+    iso_match = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})", text)
+    if iso_match:
+        try:
+            return date(*map(int, iso_match.groups())) == target
+        except ValueError:
+            return False
+
+    numeric_match = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$", text)
+    if numeric_match:
+        day, month, year = map(int, numeric_match.groups())
+        year = year + 2000 if year < 100 else year
+        try:
+            return date(year, month, day) == target
+        except ValueError:
+            return False
+
+    month_numbers = {
+        "ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6,
+        "jul": 7, "ago": 8, "sep": 9, "oct": 10, "nov": 11, "dic": 12,
+    }
+    named_match = re.match(r"^(\d{1,2})\s*-\s*([a-záéíóú]{3})\s*(?:-\s*(\d{2,4}))?$", text)
+    if not named_match or named_match.group(2) not in month_numbers:
+        return False
+    day = int(named_match.group(1))
+    month = month_numbers[named_match.group(2)]
+    year_text = named_match.group(3)
+    year = target.year if not year_text else int(year_text)
+    year = year + 2000 if year < 100 else year
+    try:
+        return date(year, month, day) == target
+    except ValueError:
+        return False
+
+
+def _format_follow_up_header(source: PendingSource, value: date) -> str:
+    if source.key == "siniestros":
+        return value.strftime("%d/%m/%Y")
+    month = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")[value.month - 1]
+    return f"{value.day:02d}-{month}-{value.year % 100:02d}"
+
+
+def _update_xlsx_cells(
+    workbook: bytes,
+    sheet_name: str,
+    updates: dict[tuple[int, int], str],
+) -> bytes:
+    with zipfile.ZipFile(io.BytesIO(workbook), "r") as archive:
+        sheet_path = _worksheet_path(archive, sheet_name)
+        sheet_xml = archive.read(sheet_path).decode("utf-8")
+        updated_xml = _upsert_sheet_cells(sheet_xml, updates)
+        replacements = {sheet_path: updated_xml.encode("utf-8")}
+        new_header = next(
+            ((column, value) for (row, column), value in updates.items() if row == 1),
+            None,
+        )
+        if new_header:
+            column_number, header_value = new_header
+            for table_path in _related_table_paths(archive, sheet_path):
+                table_xml = archive.read(table_path).decode("utf-8")
+                updated_table = _extend_table_definition(
+                    table_xml,
+                    column_number,
+                    header_value,
+                )
+                if updated_table != table_xml:
+                    replacements[table_path] = updated_table.encode("utf-8")
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as destination:
+            for item in archive.infolist():
+                content = replacements.get(item.filename, archive.read(item.filename))
+                destination.writestr(item, content)
+    return output.getvalue()
+
+
+def _related_table_paths(archive: zipfile.ZipFile, sheet_path: str) -> list[str]:
+    relationships_path = posixpath.join(
+        posixpath.dirname(sheet_path),
+        "_rels",
+        f"{posixpath.basename(sheet_path)}.rels",
+    )
+    if relationships_path not in archive.namelist():
+        return []
+    relationships = ElementTree.fromstring(archive.read(relationships_path))
+    namespace = "http://schemas.openxmlformats.org/package/2006/relationships"
+    paths = []
+    for relationship in relationships.findall(f"{{{namespace}}}Relationship"):
+        if not relationship.attrib.get("Type", "").endswith("/table"):
+            continue
+        target = relationship.attrib.get("Target", "")
+        path = (
+            target.lstrip("/")
+            if target.startswith("/")
+            else posixpath.normpath(posixpath.join(posixpath.dirname(sheet_path), target))
+        )
+        if path in archive.namelist():
+            paths.append(path)
+    return paths
+
+
+def _extend_table_definition(table_xml: str, column_number: int, header_value: str) -> str:
+    table_ref = re.search(r'(<table\b[^>]*\bref=")([A-Z]+\d+):([A-Z]+)(\d+)(")', table_xml)
+    if not table_ref:
+        return table_xml
+    current_end_column = _column_number(table_ref.group(3))
+    if column_number <= current_end_column:
+        return table_xml
+    if column_number != current_end_column + 1:
+        raise ValueError("La nueva columna de seguimiento no es contigua a la tabla")
+
+    new_end = _column_letter(column_number)
+    replacement = (
+        f'{table_ref.group(1)}{table_ref.group(2)}:{new_end}{table_ref.group(4)}{table_ref.group(5)}'
+    )
+    table_xml = table_xml[:table_ref.start()] + replacement + table_xml[table_ref.end():]
+    table_xml = re.sub(
+        rf'(<autoFilter\b[^>]*\bref="[A-Z]+\d+:)[A-Z]+(\d+")',
+        rf'\g<1>{new_end}\2',
+        table_xml,
+        count=1,
+    )
+
+    columns = re.search(r'(<tableColumns\b[^>]*\bcount=")(\d+)("[^>]*>)(.*?)(</tableColumns>)', table_xml, re.DOTALL)
+    if not columns:
+        raise ValueError("La tabla no contiene una definición de columnas válida")
+    next_id = max(
+        [int(value) for value in re.findall(r'<tableColumn\b[^>]*\bid="(\d+)"', columns.group(4))],
+        default=0,
+    ) + 1
+    new_column = f'<tableColumn id="{next_id}" name={quoteattr(header_value)}/>'
+    new_columns = (
+        f'{columns.group(1)}{int(columns.group(2)) + 1}{columns.group(3)}'
+        f'{columns.group(4)}{new_column}{columns.group(5)}'
+    )
+    return table_xml[:columns.start()] + new_columns + table_xml[columns.end():]
+
+
+def _upsert_sheet_cells(sheet_xml: str, updates: dict[tuple[int, int], str]) -> str:
+    for (row_number, column_number), value in sorted(updates.items()):
+        row_pattern = re.compile(
+            rf'<row\b[^>]*\br="{row_number}"[^>]*(?:/>|>.*?</row>)',
+            re.DOTALL,
+        )
+        row_match = row_pattern.search(sheet_xml)
+        if not row_match:
+            raise ValueError(f"La fila {row_number} no existe en la pestaña")
+        updated_row = _upsert_cell_in_row(row_match.group(0), row_number, column_number, value)
+        sheet_xml = sheet_xml[:row_match.start()] + updated_row + sheet_xml[row_match.end():]
+        sheet_xml = _extend_dimension_to_cell(sheet_xml, column_number, row_number)
+    return sheet_xml
+
+
+def _upsert_cell_in_row(row_xml: str, row_number: int, column_number: int, value: str) -> str:
+    cell_reference = f"{_column_letter(column_number)}{row_number}"
+    cell_pattern = re.compile(
+        rf'<c\b[^>]*\br="{cell_reference}"[^>]*(?:/>|>.*?</c>)',
+        re.DOTALL,
+    )
+    existing = cell_pattern.search(row_xml)
+    styles = _cell_styles(row_xml, row_number)
+    style_value = styles.get(column_number)
+    if style_value is None and styles:
+        previous_columns = [column for column in styles if column < column_number]
+        style_value = styles[max(previous_columns)] if previous_columns else styles[min(styles)]
+    style = f' s="{style_value}"' if style_value is not None else ""
+    cell = f'<c r="{cell_reference}"{style} t="inlineStr"><is><t xml:space="preserve">{escape(value)}</t></is></c>'
+    if existing:
+        return row_xml[:existing.start()] + cell + row_xml[existing.end():]
+    if row_xml.endswith("/>"):
+        return row_xml[:-2] + f">{cell}</row>"
+
+    insertion_point = row_xml.rfind("</row>")
+    for match in re.finditer(r'<c\b[^>]*\br="([A-Z]+)\d+"[^>]*(?:/>|>.*?</c>)', row_xml, re.DOTALL):
+        if _column_number(match.group(1)) > column_number:
+            insertion_point = match.start()
+            break
+    return row_xml[:insertion_point] + cell + row_xml[insertion_point:]
+
+
 def _append_xlsx_row(
     workbook: bytes,
     sheet_name: str,
@@ -424,6 +655,19 @@ def _extend_dimension(sheet_xml: str, row_number: int) -> str:
     if not match or int(match.group(3)) >= row_number:
         return sheet_xml
     replacement = f'<dimension ref="{match.group(1)}:{match.group(2)}{row_number}"'
+    return sheet_xml[:match.start()] + replacement + sheet_xml[match.end():]
+
+
+def _extend_dimension_to_cell(sheet_xml: str, column_number: int, row_number: int) -> str:
+    match = re.search(r'<dimension ref="([A-Z]+)(\d+):([A-Z]+)(\d+)"', sheet_xml)
+    if not match:
+        return sheet_xml
+    end_column = max(_column_number(match.group(3)), column_number)
+    end_row = max(int(match.group(4)), row_number)
+    replacement = (
+        f'<dimension ref="{match.group(1)}{match.group(2)}:'
+        f'{_column_letter(end_column)}{end_row}"'
+    )
     return sheet_xml[:match.start()] + replacement + sheet_xml[match.end():]
 
 
@@ -569,6 +813,47 @@ def _get_pending_row(source_key: str, source_row: int, service=None) -> tuple[Pe
     if not row:
         raise HTTPException(status_code=404, detail="Pendiente no encontrado en el archivo canónico")
     return source, row
+
+
+@router.post("/{source_key}/{source_row}/follow-up")
+def create_pending_follow_up(
+    source_key: str,
+    source_row: int,
+    request: PendingFollowUpRequest,
+    _username: str = Depends(current_username),
+):
+    source = SOURCES.get(source_key)
+    if not source:
+        raise HTTPException(status_code=404, detail="Fuente de pendientes no encontrada")
+    try:
+        with _write_lock:
+            service = build_pending_drive_service()
+            file_id = _source_file_id(source)
+            updated_workbook, date_header = add_pending_follow_up(
+                _download_workbook(file_id, service),
+                source,
+                source_row,
+                request.comment,
+            )
+            _upload_workbook(file_id, updated_workbook, service)
+            _clear_source_cache(source.key)
+            refreshed = load_pending_source(source, service)
+            updated_row = next(
+                (row for row in refreshed["rows"] if row["source_row"] == source_row),
+                None,
+            )
+        if not updated_row:
+            raise RuntimeError("El seguimiento se guardó, pero no pudo releerse desde Drive")
+        return {"updated": True, "date_header": date_header, "row": updated_row}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"No fue posible guardar el seguimiento en {source.title}: {exc}",
+        ) from exc
 
 
 @router.get("/{source_key}/{source_row}/documents")

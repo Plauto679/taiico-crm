@@ -4,6 +4,7 @@ import {
     PendingCreateResponse,
     PendingDocument,
     PendingDocumentsResponse,
+    PendingFollowUpResponse,
     PendingSourceData,
     SiniestrosPendingInput,
 } from '@/lib/types/pendientes';
@@ -40,6 +41,18 @@ export function uploadPendingDocument(
     return fetchFromApi(`/pendientes/${source}/${sourceRow}/documents`, {
         method: 'POST',
         body,
+    });
+}
+
+export function createPendingFollowUp(
+    source: 'emision-servicios' | 'siniestros',
+    sourceRow: number,
+    comment: string,
+): Promise<PendingFollowUpResponse> {
+    return fetchFromApi(`/pendientes/${source}/${sourceRow}/follow-up`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment }),
     });
 }
 

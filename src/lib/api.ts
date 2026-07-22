@@ -14,13 +14,13 @@ export async function fetchFromApi<T>(endpoint: string, options?: RequestInit): 
 
     if (!response.ok) {
         // Try to get error message from body
-        let errorMessage = response.statusText;
+        let errorMessage = response.statusText || `HTTP ${response.status}`;
         try {
             const errorBody = await response.json();
             if (errorBody.detail) {
                 errorMessage = typeof errorBody.detail === 'string' ? errorBody.detail : JSON.stringify(errorBody.detail);
             }
-        } catch (e) {
+        } catch {
             // Ignore if body is not json
         }
         throw new Error(`API Error: ${errorMessage}`);

@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { DataTable } from '@/components/ui/DataTable';
 import { PendingRow, PendingSourceData } from '@/lib/types/pendientes';
-import { PendingHistoryModal } from './PendingHistoryModal';
+import { formatHistoryDate, PendingHistoryModal } from './PendingHistoryModal';
 import { RegisterPendingModal } from './RegisterPendingModal';
 
 interface PendientesViewProps {
@@ -26,8 +26,10 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
             accessorKey: (row: PendingRow) => row.summary[header] || '—',
         })),
         {
-            header: `Última actualización (${activeData.latest_update_header})`,
-            accessorKey: (row: PendingRow) => row.latest_update.update || '—',
+            header: 'Última actualización',
+            accessorKey: (row: PendingRow) => row.latest_update.update
+                ? `(${formatHistoryDate(row.latest_update.date)}) ${row.latest_update.update}`
+                : '—',
         },
     ], [activeData]);
 
@@ -38,6 +40,16 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
             setSiniestrosData((current) => ({ ...current, rows: [...current.rows, row] }));
         }
         setShowRegisterModal(false);
+    };
+
+    const handleUpdated = (row: PendingRow) => {
+        const replaceRow = (current: PendingSourceData) => ({
+            ...current,
+            rows: current.rows.map((item) => item.id === row.id ? row : item),
+        });
+        if (activeTab === 'emision-servicios') setEmisionData(replaceRow);
+        else setSiniestrosData(replaceRow);
+        setSelectedRow(row);
     };
 
     return (
@@ -76,7 +88,7 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
                 </p>
             </div>
 
-            {selectedRow && <PendingHistoryModal key={`${activeTab}:${selectedRow.id}`} row={selectedRow} source={activeTab} onClose={() => setSelectedRow(null)} />}
+            {selectedRow && <PendingHistoryModal key={`${activeTab}:${selectedRow.id}`} row={selectedRow} source={activeTab} onUpdated={handleUpdated} onClose={() => setSelectedRow(null)} />}
             {showRegisterModal && (
                 <RegisterPendingModal
                     source={activeTab}

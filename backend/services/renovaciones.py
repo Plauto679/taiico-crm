@@ -4,11 +4,16 @@ from fastapi import APIRouter, HTTPException, Query, Body, Depends
 from starlette.concurrency import run_in_threadpool
 from typing import List, Optional, Union
 from datetime import datetime, timedelta
+import io
+import mimetypes
 import os
+import re
 import smtplib
 from email.message import EmailMessage
 from pathlib import Path
 from decimal import Decimal
+from urllib.parse import parse_qs, urlparse
+from googleapiclient.http import MediaIoBaseDownload
 from database import (
     SessionLocal,
     Renewal,
@@ -28,8 +33,35 @@ from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workboo
 from adapters.metlife_gmm_portal import MetLifeGmmPortalAdapter, MetLifeGmmPortalTask, result_to_dict, stable_chrome_profile_dir
 from services.mail_configuration import smtp_settings_for
 from services.session_auth import current_username
+from drive.client import build_drive_service
 
 router = APIRouter(prefix="/renovaciones", tags=["renovaciones"])
+
+DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
+DRIVE_SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
+DEFAULT_MAX_RENEWAL_ATTACHMENT_BYTES = 18 * 1024 * 1024
+DEFAULT_MAX_RENEWAL_ATTACHMENT_COUNT = 100
+DEFAULT_RENEWAL_EMAIL_CC_RECIPIENTS = (
+    "alberto.alfaro@taiico.com",
+    "veronica.alfaro@taiico.com",
+    "pamela.alfaro@taiico.com",
+)
+GOOGLE_NATIVE_EXPORTS = {
+    "application/vnd.google-apps.document": ("application/pdf", ".pdf"),
+    "application/vnd.google-apps.spreadsheet": (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xlsx",
+    ),
+    "application/vnd.google-apps.presentation": (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".pptx",
+    ),
+    "application/vnd.google-apps.drawing": ("application/pdf", ".pdf"),
+}
+
+
+class DriveAttachmentError(ValueError):
+    pass
 
 def format_date(d):
     if d is None:
@@ -369,11 +401,166 @@ def upsert_retrieval_task(db, payload: dict) -> tuple[PolicyDocumentRetrievalTas
     db.add(task)
     return task, True
 
+def drive_file_id_from_url(value: str) -> Optional[str]:
+    """Return a Drive file/folder ID only for recognized Google Drive URLs."""
+    text = str(value or "").strip().strip("'").strip('"')
+    if not text:
+        return None
+    parsed = urlparse(text)
+    hostname = (parsed.hostname or "").casefold()
+    if hostname not in {"drive.google.com", "docs.google.com"}:
+        return None
+
+    query_id = parse_qs(parsed.query).get("id", [None])[0]
+    if query_id and re.fullmatch(r"[A-Za-z0-9_-]+", query_id):
+        return query_id
+
+    match = re.search(r"/(?:drive/(?:u/\d+/)?folders|folders|file/d|document/d|spreadsheets/d|presentation/d)/([A-Za-z0-9_-]+)", parsed.path)
+    return match.group(1) if match else None
+
+
+def _download_drive_request(request) -> bytes:
+    output = io.BytesIO()
+    downloader = MediaIoBaseDownload(output, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    return output.getvalue()
+
+
+def _drive_attachment_content(service, item: dict) -> tuple[bytes, str, str]:
+    file_id = item["id"]
+    name = str(item.get("name") or file_id)
+    mime_type = str(item.get("mimeType") or "application/octet-stream")
+    if mime_type == DRIVE_SHORTCUT_MIME_TYPE:
+        shortcut = item.get("shortcutDetails") or {}
+        target_id = shortcut.get("targetId")
+        if not target_id:
+            raise DriveAttachmentError(f"El acceso directo {name} no tiene un destino válido")
+        item = service.files().get(
+            fileId=target_id,
+            fields="id,name,mimeType,size,shortcutDetails(targetId,targetMimeType)",
+            supportsAllDrives=True,
+        ).execute()
+        file_id = item["id"]
+        mime_type = str(item.get("mimeType") or "application/octet-stream")
+
+    export = GOOGLE_NATIVE_EXPORTS.get(mime_type)
+    if mime_type.startswith("application/vnd.google-apps.") and not export:
+        raise DriveAttachmentError(
+            f"El archivo {name} usa un formato nativo de Google que no se puede adjuntar"
+        )
+    if export:
+        exported_mime, extension = export
+        if not name.casefold().endswith(extension):
+            name = f"{name}{extension}"
+        request = service.files().export_media(fileId=file_id, mimeType=exported_mime)
+        return _download_drive_request(request), name, exported_mime
+
+    request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+    return _download_drive_request(request), name, mime_type
+
+
+def drive_folder_attachments(
+    folder_url: str,
+    service=None,
+    max_bytes: Optional[int] = None,
+    max_count: Optional[int] = None,
+) -> List[dict]:
+    folder_id = drive_file_id_from_url(folder_url)
+    if not folder_id:
+        raise DriveAttachmentError("El enlace del expediente no es una URL válida de Google Drive")
+
+    max_bytes = max_bytes or int(os.getenv(
+        "RENEWAL_EMAIL_MAX_ATTACHMENT_BYTES",
+        str(DEFAULT_MAX_RENEWAL_ATTACHMENT_BYTES),
+    ))
+    max_count = max_count or int(os.getenv(
+        "RENEWAL_EMAIL_MAX_ATTACHMENT_COUNT",
+        str(DEFAULT_MAX_RENEWAL_ATTACHMENT_COUNT),
+    ))
+    service = service or build_drive_service()
+    metadata = service.files().get(
+        fileId=folder_id,
+        fields="id,name,mimeType",
+        supportsAllDrives=True,
+    ).execute()
+    if metadata.get("mimeType") != DRIVE_FOLDER_MIME_TYPE:
+        raise DriveAttachmentError("El enlace del expediente debe apuntar a una carpeta de Drive")
+
+    items: List[dict] = []
+    page_token = None
+    while True:
+        response = service.files().list(
+            q=f"'{folder_id}' in parents and trashed = false",
+            fields="nextPageToken,files(id,name,mimeType,size,shortcutDetails(targetId,targetMimeType))",
+            pageToken=page_token,
+            pageSize=1000,
+            orderBy="name",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        ).execute()
+        items.extend(response.get("files", []))
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+
+    nested_folders = [item.get("name", "") for item in items if item.get("mimeType") == DRIVE_FOLDER_MIME_TYPE]
+    files = [item for item in items if item.get("mimeType") != DRIVE_FOLDER_MIME_TYPE]
+    if nested_folders:
+        raise DriveAttachmentError(
+            "El expediente contiene subcarpetas. Coloca los archivos directamente en la carpeta antes de enviar."
+        )
+    if not files:
+        raise DriveAttachmentError("La carpeta del expediente no contiene archivos para adjuntar")
+    if len(files) > max_count:
+        raise DriveAttachmentError(
+            f"El expediente contiene {len(files)} archivos; el máximo permitido es {max_count}"
+        )
+
+    known_bytes = sum(int(item.get("size") or 0) for item in files)
+    if known_bytes > max_bytes:
+        raise DriveAttachmentError(
+            "Los archivos del expediente exceden el límite seguro de adjuntos del correo"
+        )
+
+    attachments = []
+    total_bytes = 0
+    for item in files:
+        content, name, mime_type = _drive_attachment_content(service, item)
+        total_bytes += len(content)
+        if total_bytes > max_bytes:
+            raise DriveAttachmentError(
+                "Los archivos del expediente exceden el límite seguro de adjuntos del correo"
+            )
+        attachments.append({"name": name, "content": content, "mime_type": mime_type})
+    return attachments
+
+
+def renewal_email_cc_recipients(primary_recipients: List[str]) -> List[str]:
+    configured = os.getenv("RENEWAL_EMAIL_CC_RECIPIENTS", "").strip()
+    candidates = (
+        [email.strip() for email in configured.split(",") if email.strip()]
+        if configured
+        else list(DEFAULT_RENEWAL_EMAIL_CC_RECIPIENTS)
+    )
+    primary = {email.strip().casefold() for email in primary_recipients if email.strip()}
+    result = []
+    seen = set(primary)
+    for email in candidates:
+        normalized = email.casefold()
+        if normalized not in seen:
+            result.append(email)
+            seen.add(normalized)
+    return result
+
+
 def send_email_smtp(
     subject: str,
     body: str,
     recipients: List[str],
-    attachments: List[dict] = [],
+    attachments: Optional[List[dict]] = None,
+    cc_recipients: Optional[List[str]] = None,
     settings: dict | None = None,
 ):
     settings = settings or {}
@@ -393,16 +580,21 @@ def send_email_smtp(
     message["Subject"] = subject
     message["From"] = sender
     message["To"] = ", ".join(recipients)
+    effective_cc = renewal_email_cc_recipients(recipients) if cc_recipients is None else cc_recipients
+    if effective_cc:
+        message["Cc"] = ", ".join(effective_cc)
     message.set_content(body)
 
-    for att in attachments:
+    for att in attachments or []:
         name = att.get("name")
         content = att.get("content")
-        if name and content:
+        if name and content is not None:
+            mime_type = att.get("mime_type") or mimetypes.guess_type(name)[0] or "application/octet-stream"
+            maintype, subtype = mime_type.split("/", 1)
             message.add_attachment(
                 content,
-                maintype="application",
-                subtype="octet-stream",
+                maintype=maintype,
+                subtype=subtype,
                 filename=name,
             )
 
@@ -425,14 +617,13 @@ def build_metlife_gmm_renewal_email_body(
         period_start = datetime.now().year
     period_end = period_start + 1
     return (
-        f"Hola {client_name}, ({client_email})\n\n"
+        f"Hola {client_name},\n\n"
         "Te compartimos la documentación correspondiente a la renovación de tu póliza "
         f"de Gastos Médicos Mayores MetLife para el periodo {period_start} - {period_end}.\n\n"
         "Adjuntamos:\n"
         "- CFDIs y avisos de la renovación.\n"
         "- Documentos de la póliza.\n\n"
         f"Póliza de referencia: {policy_number}\n\n"
-        "Este correo se envía únicamente al equipo interno durante la fase operativa actual.\n\n"
         "Saludos,\nTAIICO"
     )
 
@@ -1405,7 +1596,7 @@ async def send_renewal_email_endpoint(
                 f"Atentamente Taiico Life Advisors"
             )
         
-        # Read attachments if local folder exists
+        # Attach every file from a local folder or a Google Drive folder.
         attachments = []
         if expediente:
             exp_path = expediente.strip().strip("'").strip('"')
@@ -1425,6 +1616,8 @@ async def send_renewal_email_endpoint(
                             "name": os.path.basename(exp_path),
                             "content": f.read()
                         })
+            elif drive_file_id_from_url(exp_path):
+                attachments = drive_folder_attachments(exp_path)
             elif exp_path.startswith("http"):
                 body += f"\n\nLink al expediente: {exp_path}"
                 
@@ -1442,13 +1635,18 @@ async def send_renewal_email_endpoint(
         return {
             "message": "Correo de renovación enviado",
             "actual_recipients": recipients,
+            "cc_recipients": renewal_email_cc_recipients(recipients),
             "intended_client_email": recipient_email,
             "internal_only": os.getenv("RENEWAL_EMAIL_INTERNAL_ONLY", "true").lower() in {"1", "true", "yes"},
             "sender_source": "user_configuration" if user_smtp_settings else "server_fallback",
+            "attachment_count": len(attachments),
         }
         
     except HTTPException:
         raise
+    except DriveAttachmentError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         print(f"Error sending email: {e}")
         db.rollback()

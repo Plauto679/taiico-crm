@@ -1,10 +1,10 @@
 'use client';
 
 import { ChangeEvent, useMemo, useState } from 'react';
-import { CheckCircle2, ExternalLink, File, FolderOpen, Loader2, Upload, X } from 'lucide-react';
+import { CheckCircle2, ExternalLink, File, FolderOpen, Loader2, MessageSquarePlus, Upload, X } from 'lucide-react';
 
 import { PendingDocument, PendingDocumentsResponse, PendingRow } from '@/lib/types/pendientes';
-import { createPendingFolder, getPendingDocuments, uploadPendingDocument } from '@/modules/pendientes/service';
+import { createPendingFolder, createPendingFollowUp, getPendingDocuments, uploadPendingDocument } from '@/modules/pendientes/service';
 
 type PendingSourceKey = 'emision-servicios' | 'siniestros';
 type DetailTab = 'detalle' | 'expediente';
@@ -12,16 +12,20 @@ type DetailTab = 'detalle' | 'expediente';
 interface PendingHistoryModalProps {
     row: PendingRow | null;
     source: PendingSourceKey;
+    onUpdated: (row: PendingRow) => void;
     onClose: () => void;
 }
 
-export function PendingHistoryModal({ row, source, onClose }: PendingHistoryModalProps) {
+export function PendingHistoryModal({ row, source, onUpdated, onClose }: PendingHistoryModalProps) {
     const [tab, setTab] = useState<DetailTab>('detalle');
     const [documents, setDocuments] = useState<PendingDocumentsResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [creatingFolder, setCreatingFolder] = useState(false);
     const [uploadingName, setUploadingName] = useState<string | null>(null);
     const [additionalName, setAdditionalName] = useState('');
+    const [showFollowUp, setShowFollowUp] = useState(false);
+    const [followUpComment, setFollowUpComment] = useState('');
+    const [savingFollowUp, setSavingFollowUp] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     const openExpediente = async () => {
@@ -78,6 +82,22 @@ export function PendingHistoryModal({ row, source, onClose }: PendingHistoryModa
 
     const folderUrl = documents?.row.folder_url || row.folder_url;
 
+    const saveFollowUp = async () => {
+        if (!followUpComment.trim()) return;
+        setSavingFollowUp(true);
+        setError(null);
+        try {
+            const response = await createPendingFollowUp(source, row.source_row, followUpComment);
+            onUpdated(response.row);
+            setFollowUpComment('');
+            setShowFollowUp(false);
+        } catch (requestError) {
+            setError(requestError instanceof Error ? requestError.message : 'No fue posible guardar el seguimiento.');
+        } finally {
+            setSavingFollowUp(false);
+        }
+    };
+
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onMouseDown={onClose}>
             <div className="max-h-[92vh] w-full max-w-4xl overflow-hidden rounded-xl bg-white shadow-xl" onMouseDown={(event) => event.stopPropagation()}>
@@ -89,12 +109,30 @@ export function PendingHistoryModal({ row, source, onClose }: PendingHistoryModa
                     <button type="button" onClick={onClose} className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600" aria-label="Cerrar detalle"><X className="h-6 w-6" /></button>
                 </div>
 
-                <div className="flex border-b px-6">
-                    <TabButton active={tab === 'detalle'} onClick={() => setTab('detalle')}>Detalle e historial</TabButton>
-                    <TabButton active={tab === 'expediente'} onClick={openExpediente}>Integración del expediente</TabButton>
+                <div className="flex items-center justify-between gap-3 border-b px-6">
+                    <div className="flex">
+                        <TabButton active={tab === 'detalle'} onClick={() => setTab('detalle')}>Detalle e historial</TabButton>
+                        <TabButton active={tab === 'expediente'} onClick={openExpediente}>Integración del expediente</TabButton>
+                    </div>
+                    <button type="button" onClick={() => setShowFollowUp((current) => !current)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+                        <MessageSquarePlus className="h-4 w-4" /> Seguimiento
+                    </button>
                 </div>
 
                 <div className="max-h-[calc(92vh-142px)] overflow-y-auto p-6">
+                    {showFollowUp && (
+                        <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
+                            <label className="text-sm font-semibold text-blue-950" htmlFor="pending-follow-up">Comentario de seguimiento</label>
+                            <textarea id="pending-follow-up" autoFocus value={followUpComment} onChange={(event) => setFollowUpComment(event.target.value)} rows={3} maxLength={5000} placeholder="Ej. En espera de firma del cliente" className="mt-2 w-full resize-y rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                            <div className="mt-3 flex justify-end gap-2">
+                                <button type="button" onClick={() => { setShowFollowUp(false); setFollowUpComment(''); }} disabled={savingFollowUp} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-white">Cancelar</button>
+                                <button type="button" onClick={saveFollowUp} disabled={savingFollowUp || !followUpComment.trim()} className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                                    {savingFollowUp && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Guardar seguimiento
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                    {error && <div className="mb-5 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
                     {tab === 'detalle' ? (
                         <DetailTabContent row={row} />
                     ) : loading ? (
@@ -108,8 +146,6 @@ export function PendingHistoryModal({ row, source, onClose }: PendingHistoryModa
                                 </div>
                                 {folderUrl && <a href={folderUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-blue-600 hover:bg-slate-50">Abrir carpeta <ExternalLink className="h-4 w-4" /></a>}
                             </div>
-
-                            {error && <div className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
 
                             {documents?.folder_missing && !row.summary.RFC ? (
                                 <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
@@ -177,7 +213,7 @@ function DetailTabContent({ row }: { row: PendingRow }) {
         <h3 className="mb-3 mt-6 text-lg font-semibold text-gray-900">Historial de actualizaciones</h3>
         {row.history.length === 0 ? <p className="rounded-lg border border-dashed p-6 text-center text-sm text-gray-500">No hay actualizaciones registradas.</p> : (
             <ol className="space-y-3 border-l-2 border-blue-200 pl-5">
-                {[...row.history].reverse().map((entry, index) => <li key={`${entry.date}-${index}`} className="relative rounded-lg border bg-white p-4 shadow-sm"><span className="absolute -left-[1.72rem] top-5 h-3 w-3 rounded-full bg-blue-600 ring-4 ring-white" /><p className="text-sm font-semibold text-blue-700">{entry.date}</p><p className="mt-1 whitespace-pre-wrap text-sm text-gray-700">{entry.update}</p></li>)}
+                {[...row.history].reverse().map((entry, index) => <li key={`${entry.date}-${index}`} className="relative rounded-lg border bg-white p-4 shadow-sm"><span className="absolute -left-[1.72rem] top-5 h-3 w-3 rounded-full bg-blue-600 ring-4 ring-white" /><p className="text-sm font-semibold text-blue-700">{formatHistoryDate(entry.date)}</p><p className="mt-1 whitespace-pre-wrap text-sm text-gray-700">{entry.update}</p></li>)}
             </ol>
         )}
     </>;
@@ -197,6 +233,19 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 function normalizeDocumentName(name: string): string {
     return name.replace(/\.[^.]+$/, '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase('es-MX');
 }
+
+export function formatHistoryDate(value: string): string {
+    const text = value.trim();
+    const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (iso) return `${iso[3].padStart(2, '0')} - ${MONTH_NAMES[Number(iso[2]) - 1]}`;
+    const numeric = text.match(/^(\d{1,2})[/-](\d{1,2})[/-]\d{2,4}$/);
+    if (numeric) return `${numeric[1].padStart(2, '0')} - ${MONTH_NAMES[Number(numeric[2]) - 1]}`;
+    const named = text.match(/^(\d{1,2})\s*-\s*([A-Za-zÁÉÍÓÚáéíóú]{3})/);
+    if (named) return `${named[1].padStart(2, '0')} - ${named[2][0].toUpperCase()}${named[2].slice(1).toLowerCase()}`;
+    return text;
+}
+
+const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 
 function handleFileSelection(event: ChangeEvent<HTMLInputElement>, documentName: string, upload: (name: string, file: globalThis.File) => Promise<void>) {
     const file = event.target.files?.[0];

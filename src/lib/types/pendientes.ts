@@ -45,6 +45,12 @@ export interface PendingCreateResponse {
     folder_warning?: string | null;
 }
 
+export interface PendingFollowUpResponse {
+    updated: boolean;
+    date_header: string;
+    row: PendingRow;
+}
+
 export interface PendingDocument {
     id: string;
     name: string;
