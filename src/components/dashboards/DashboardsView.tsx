@@ -130,7 +130,7 @@ export function DashboardsView({ vidaData = [], gmmData = [], suraData = [], aar
                                 tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`} // Format as K for space
                             />
                             <Tooltip
-                                formatter={(value: number) => [formatMoney(value), 'Total']}
+                                formatter={(value) => [formatMoney(Number(value ?? 0)), 'Total']}
                                 labelFormatter={(label) => `Mes: ${label}`}
                             />
                             <Legend />

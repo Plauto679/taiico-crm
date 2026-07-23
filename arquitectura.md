@@ -1,6 +1,6 @@
 # Arquitectura actual de TAIICO CRM y TAIICO OS
 
-**Estado documentado:** 18 de julio de 2026<br>
+**Estado documentado:** 23 de julio de 2026<br>
 **Rama de referencia:** `taiico-os`
 
 Este documento describe la arquitectura que existe hoy en el repositorio. No es una propuesta de migración a la nube. La especificación conceptual de largo plazo permanece en `TAIICO_OS_ARCHITECTURE.md`; cuando exista una diferencia, este archivo es la referencia para operar y desarrollar el sistema actual.
@@ -15,13 +15,15 @@ TAIICO CRM y TAIICO OS comparten un solo repositorio y una sola instalación loc
 - El backend es una API **FastAPI / Python** en el puerto `7777`.
 - **Google Drive y sus carpetas adyacentes siguen siendo la fuente operacional canónica.** No se ha migrado la operación a Cloud SQL.
 - **SQLite local** conserva estado técnico, índices normalizados, colas, ejecuciones y trazabilidad. No reemplaza a Drive como repositorio operacional.
-- El sistema está diseñado para permanecer encendido en el Mac mini, aunque la ejecución diaria automática del agente todavía no está activada de forma permanente.
+- El CRM está publicado por HTTPS en `taiico-crm.com` mediante Cloudflare Tunnel; los puertos locales no se exponen directamente a Internet.
+- FastAPI y Next.js funcionan como servicios supervisados por `launchd` y se reinician automáticamente si terminan. La ejecución diaria del agente de renovaciones sigue siendo una tarea separada y todavía no está programada de forma permanente.
 
 ## 2. Vista general
 
 ```mermaid
 flowchart LR
-    U[Personal TAIICO] -->|Navegador| FE[Next.js :3000]
+    U[Personal TAIICO] -->|HTTPS| CF[Cloudflare<br/>DNS, TLS y Tunnel]
+    CF -->|Túnel saliente| FE[Next.js<br/>127.0.0.1:3000]
     FE -->|/api/*| BE[FastAPI :7777]
 
     BE --> AUTH[Autenticación y sesión]
@@ -61,6 +63,7 @@ La interfaz vive principalmente en `src/app`, `src/components` y `src/modules`.
 
 - Next.js App Router sirve las pantallas del CRM.
 - `src/middleware.ts` protege las rutas mediante la cookie `taiico_session` y redirige a `/login` cuando no existe sesión.
+- El middleware acepta únicamente los hostnames públicos configurados y fuerza el hostname canónico.
 - El navegador consume rutas relativas `/api/*`.
 - `next.config.ts` redirige esas solicitudes al backend en `http://127.0.0.1:7777`.
 - Los módulos visibles incluyen inicio, clientes, cartera, cobranza, renovaciones, pendientes, dashboards y configuración de correo.
@@ -131,7 +134,7 @@ Fuentes canónicas actualmente contempladas:
 ### 6.1 Acceso al CRM
 
 - Las credenciales de usuarios se leen de un workbook autorizado de Drive y se mantienen brevemente en caché.
-- FastAPI valida el login y entrega una cookie firmada, HTTP-only y con expiración.
+- FastAPI valida el login con limitación de intentos y entrega una cookie firmada, HTTP-only, `Secure` en producción, `SameSite=Lax` y con expiración.
 - Next.js comprueba la presencia de la cookie para proteger las pantallas.
 - La sesión es local; no existe actualmente un proveedor de identidad centralizado.
 
@@ -224,14 +227,18 @@ La integración usa WhatsApp Cloud API con la plantilla `renewal_ready_test` en 
 La instalación esperada usa:
 
 - repositorio y `.venv` en la raíz del proyecto;
-- intérprete `/usr/local/bin/python3`;
-- FastAPI en `7777`;
-- Next.js en `3000`;
+- intérprete de la aplicación `.venv/bin/python`, respaldado actualmente por Homebrew Python 3.13;
+- FastAPI enlazado exclusivamente a `127.0.0.1:7777`;
+- Next.js en `127.0.0.1:3000`;
 - Chrome persistente para MetLife en `9223`;
 - Google Drive para escritorio y acceso de API disponibles;
 - secretos cargados desde `backend/.env` y `local-secrets/`.
 
-El Mac mini debe permanecer encendido, sin suspensión que interrumpa Drive, Chrome o los procesos web. Actualmente las renovaciones pueden ejecutarse bajo demanda. La programación diaria a las 09:00 de Ciudad de México es una capacidad pendiente; no debe asumirse activa hasta instalar y verificar un servicio persistente de macOS.
+Cloudflare Tunnel funciona como servicio del sistema y publica `https://taiico-crm.com` sin abrir puertos entrantes en el router. Los LaunchAgents versionados en `ops/launchd/` mantienen FastAPI y Next.js activos, arrancan con la sesión del usuario y los reinician ante una caída. Sus logs viven en `.runtime/logs/` y no se versionan.
+
+Debido a que el repositorio está bajo `Desktop`, macOS requiere acceso total al disco para los ejecutables de Node y Python usados por `launchd`. Los LaunchAgents también requieren que la sesión del usuario operativo permanezca iniciada para acceder a Drive y a sus secretos.
+
+El Mac mini debe permanecer encendido y sin suspensión que interrumpa Drive, Chrome o los procesos web. Actualmente las renovaciones pueden ejecutarse bajo demanda. La programación diaria a las 09:00 de Ciudad de México es una capacidad pendiente; no debe asumirse activa hasta instalar y verificar su propio trabajo programado.
 
 ## 9. Seguridad y controles
 
@@ -242,6 +249,8 @@ El Mac mini debe permanecer encendido, sin suspensión que interrumpa Drive, Chr
 - Los runs y steps forman el rastro auditable de la automatización.
 - Las pruebas de correo y WhatsApp deben mantener activas las restricciones internas hasta una autorización explícita de producción.
 - Las carpetas de Drive y el portal deben conceder solamente los permisos necesarios.
+- Cloudflare es el único punto de entrada público; FastAPI y Next.js permanecen en loopback.
+- CORS se restringe a los orígenes autorizados, la documentación interactiva de FastAPI se desactiva en producción y los endpoints sensibles exigen sesión.
 
 ## 10. Mapa del repositorio
 
@@ -263,6 +272,7 @@ taiico-crm/
 │   ├── database.py          # modelos SQLAlchemy
 │   └── main.py              # aplicación FastAPI
 ├── local-secrets/           # credenciales locales ignoradas por Git
+├── ops/launchd/             # servicios persistentes de FastAPI y Next.js
 ├── alembic.ini
 ├── next.config.ts
 ├── package.json
@@ -273,7 +283,7 @@ taiico-crm/
 
 ## 11. Límites actuales y próximos puntos de evolución
 
-1. **Disponibilidad:** backend, frontend y Chrome todavía dependen de procesos locales; falta supervisión automática y reinicio ante fallas.
+1. **Disponibilidad:** backend y frontend ya están supervisados por `launchd`; Chrome y la disponibilidad de la sesión de usuario siguen siendo dependencias locales.
 2. **Agenda diaria:** falta instalar y comprobar la ejecución a las 09:00 `America/Mexico_City`.
 3. **WhatsApp productivo:** coexistencia y revisión de Meta siguen pendientes; el flujo actual es de prueba.
 4. **Datos maestros:** la calidad del enlace por RFC, teléfono, correo y agente depende de completar los directorios canónicos.

@@ -1,6 +1,20 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
+function sameOriginRedirect(request: NextRequest, path: string) {
+    const forwardedHost = request.headers.get('x-forwarded-host')
+        ?.split(',')[0]
+        .trim()
+        .toLowerCase();
+    const host = forwardedHost || request.headers.get('host')?.toLowerCase();
+    const publicHosts = new Set(['taiico-crm.com', 'www.taiico-crm.com']);
+    const origin = host && publicHosts.has(host)
+        ? `https://${host}`
+        : request.nextUrl.origin;
+
+    return NextResponse.redirect(new URL(path, origin));
+}
+
 export function middleware(request: NextRequest) {
     const path = request.nextUrl.pathname;
 
@@ -12,14 +26,14 @@ export function middleware(request: NextRequest) {
     if (isPublicPath) {
         // If user is already logged in and tries to access login page, redirect to dashboard
         if (path === '/login' && token) {
-            return NextResponse.redirect(new URL('/', request.url));
+            return sameOriginRedirect(request, '/');
         }
         return NextResponse.next();
     }
 
     // If no token and trying to access protected route, redirect to login
     if (!token) {
-        return NextResponse.redirect(new URL('/login', request.url));
+        return sameOriginRedirect(request, '/login');
     }
 
     return NextResponse.next();
