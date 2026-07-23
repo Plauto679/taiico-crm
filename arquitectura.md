@@ -134,7 +134,8 @@ Fuentes canónicas actualmente contempladas:
 ### 6.1 Acceso al CRM
 
 - Las credenciales de usuarios se leen de un workbook autorizado de Drive y se mantienen brevemente en caché.
-- FastAPI valida el login con limitación de intentos y entrega una cookie firmada, HTTP-only, `Secure` en producción, `SameSite=Lax` y con expiración.
+- FastAPI valida el login con limitación de intentos y entrega una cookie firmada, HTTP-only, `Secure` en producción y `SameSite=Lax`.
+- La sesión se renueva mientras existe actividad y se cierra después de 60 minutos sin interacción. El usuario también puede cerrarla manualmente desde la barra lateral.
 - Next.js comprueba la presencia de la cookie para proteger las pantallas.
 - La sesión es local; no existe actualmente un proveedor de identidad centralizado.
 

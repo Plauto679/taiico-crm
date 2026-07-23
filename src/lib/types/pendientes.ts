@@ -51,6 +51,12 @@ export interface PendingFollowUpResponse {
     row: PendingRow;
 }
 
+export interface PendingUpdateResponse {
+    updated: boolean;
+    row: PendingRow;
+    folder_warning?: string | null;
+}
+
 export interface PendingDocument {
     id: string;
     name: string;
@@ -65,4 +71,10 @@ export interface PendingDocumentsResponse {
     folder_missing: boolean;
     required_documents: string[];
     documents: PendingDocument[];
+}
+
+export interface PendingReportSendResponse {
+    sent: boolean;
+    recipient: string;
+    generated_on: string;
 }

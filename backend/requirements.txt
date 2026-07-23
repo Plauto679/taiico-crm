@@ -12,3 +12,4 @@ google-auth
 httpx
 playwright
 cryptography
+certifi

@@ -13,8 +13,16 @@ from fastapi import Cookie, HTTPException
 
 
 COOKIE_NAME = "taiico_session"
-SESSION_SECONDS = 24 * 60 * 60
+DEFAULT_SESSION_IDLE_SECONDS = 60 * 60
 SECRET_PATH = Path(__file__).resolve().parents[2] / "local-secrets" / "session-signing.key"
+
+
+def session_idle_seconds() -> int:
+    try:
+        configured = int(os.getenv("AUTH_SESSION_IDLE_SECONDS", str(DEFAULT_SESSION_IDLE_SECONDS)))
+    except ValueError:
+        configured = DEFAULT_SESSION_IDLE_SECONDS
+    return min(max(configured, 5 * 60), 24 * 60 * 60)
 
 
 def _secret() -> bytes:
@@ -29,8 +37,13 @@ def _secret() -> bytes:
 
 
 def create_session_token(username: str) -> str:
+    now = int(time.time())
     payload = json.dumps(
-        {"sub": username.strip().casefold(), "exp": int(time.time()) + SESSION_SECONDS},
+        {
+            "sub": username.strip().casefold(),
+            "iat": now,
+            "exp": now + session_idle_seconds(),
+        },
         separators=(",", ":"),
     ).encode()
     encoded = base64.urlsafe_b64encode(payload).rstrip(b"=")

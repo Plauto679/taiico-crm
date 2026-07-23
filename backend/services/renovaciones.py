@@ -31,7 +31,7 @@ from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
 from parsers.metlife_vida_renovaciones import PARSER_VERSION as METLIFE_VIDA_RENEWAL_PARSER_VERSION
 from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workbook
 from adapters.metlife_gmm_portal import MetLifeGmmPortalAdapter, MetLifeGmmPortalTask, result_to_dict, stable_chrome_profile_dir
-from services.mail_configuration import smtp_settings_for
+from services.mail_configuration import smtp_settings_for, smtp_ssl_context
 from services.session_auth import current_username
 from drive.client import build_drive_service
 
@@ -61,6 +61,10 @@ GOOGLE_NATIVE_EXPORTS = {
 
 
 class DriveAttachmentError(ValueError):
+    pass
+
+
+class SmtpDeliveryUncertainError(RuntimeError):
     pass
 
 def format_date(d):
@@ -562,6 +566,7 @@ def send_email_smtp(
     attachments: Optional[List[dict]] = None,
     cc_recipients: Optional[List[str]] = None,
     settings: dict | None = None,
+    html_body: str | None = None,
 ):
     settings = settings or {}
     host = settings.get("host") or os.environ.get("SMTP_HOST")
@@ -584,6 +589,8 @@ def send_email_smtp(
     if effective_cc:
         message["Cc"] = ", ".join(effective_cc)
     message.set_content(body)
+    if html_body:
+        message.add_alternative(html_body, subtype="html")
 
     for att in attachments or []:
         name = att.get("name")
@@ -598,11 +605,20 @@ def send_email_smtp(
                 filename=name,
             )
 
-    with smtplib.SMTP(host, port) as server:
-        if use_starttls:
-            server.starttls()
-        server.login(user, password)
-        server.send_message(message)
+    try:
+        with smtplib.SMTP(host, port, timeout=60) as server:
+            server.ehlo()
+            if use_starttls:
+                server.starttls(context=smtp_ssl_context())
+                server.ehlo()
+            server.login(user, password)
+            server.send_message(message)
+    except (BrokenPipeError, ConnectionResetError, smtplib.SMTPServerDisconnected) as exc:
+        raise SmtpDeliveryUncertainError(
+            "Gmail cerró la conexión durante el envío. Por seguridad no se reintentó "
+            "automáticamente para evitar duplicados. Revisa la carpeta Enviados antes "
+            "de volver a intentarlo."
+        ) from exc
 
 
 def build_metlife_gmm_renewal_email_body(
@@ -1647,6 +1663,18 @@ async def send_renewal_email_endpoint(
     except DriveAttachmentError as e:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(e)) from e
+    except SmtpDeliveryUncertainError as e:
+        db.rollback()
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except smtplib.SMTPAuthenticationError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Gmail rechazó la cuenta remitente. Vuelve a guardar la contraseña de "
+                "aplicación y usa Probar conexión."
+            ),
+        ) from e
     except Exception as e:
         print(f"Error sending email: {e}")
         db.rollback()

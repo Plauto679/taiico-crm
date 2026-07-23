@@ -25,6 +25,7 @@ export default function LoginPage() {
                 body: JSON.stringify({ username, password }),
             });
 
+            window.localStorage.setItem('taiico_last_activity', String(Date.now()));
             router.push('/');
         } catch {
             setError('Credenciales inválidas. Por favor intente de nuevo.');

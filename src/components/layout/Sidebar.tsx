@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { Home, DollarSign, Calendar, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { usePathname, useRouter } from 'next/navigation';
+import { Home, DollarSign, Calendar, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut } from 'lucide-react';
 
 const NAV_ITEMS = [
     { name: 'Inicio', href: '/', icon: Home },
@@ -18,11 +19,43 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
     const [collapsed, setCollapsed] = useState(false);
+    const [loggingOut, setLoggingOut] = useState(false);
+    const pathname = usePathname();
+    const router = useRouter();
+
+    if (pathname === '/login') return null;
+
+    async function handleLogout() {
+        if (loggingOut) return;
+        setLoggingOut(true);
+        try {
+            await fetch('/api/logout', {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+            });
+        } finally {
+            window.localStorage.removeItem('taiico_last_activity');
+            router.replace('/login');
+            router.refresh();
+        }
+    }
 
     return (
         <aside className={`relative flex h-screen shrink-0 flex-col border-r bg-white transition-[width] duration-200 ${collapsed ? 'w-20' : 'w-64'}`}>
-            <div className="flex h-32 items-center justify-center border-b px-3">
+            <div className="flex h-40 flex-col items-center justify-center gap-2 border-b px-3">
                 <img src="/logo.png" alt="TAIICO CRM" className={`w-auto transition-all ${collapsed ? 'h-12' : 'h-20'}`} />
+                <button
+                    type="button"
+                    onClick={handleLogout}
+                    disabled={loggingOut}
+                    className={`flex items-center justify-center rounded-md px-2 py-1.5 text-sm font-medium text-slate-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50 ${collapsed ? '' : 'w-full'}`}
+                    aria-label="Cerrar sesión"
+                    title="Cerrar sesión"
+                >
+                    <LogOut className={`h-4 w-4 ${collapsed ? '' : 'mr-2'}`} />
+                    {!collapsed && <span>{loggingOut ? 'Cerrando...' : 'Cerrar sesión'}</span>}
+                </button>
                 <button
                     type="button"
                     onClick={() => setCollapsed((current) => !current)}

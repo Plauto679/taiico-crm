@@ -8,7 +8,7 @@ from cryptography.fernet import Fernet
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services.mail_configuration import decrypt_password, encrypt_password
-from services.session_auth import create_session_token, read_session_token
+from services.session_auth import create_session_token, read_session_token, session_idle_seconds
 
 
 class MailConfigurationSecurityTests(unittest.TestCase):
@@ -29,6 +29,15 @@ class MailConfigurationSecurityTests(unittest.TestCase):
             token = create_session_token("user@taiico.com")
             with self.assertRaises(Exception):
                 read_session_token(token + "x")
+
+    def test_session_idle_timeout_defaults_to_one_hour(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AUTH_SESSION_IDLE_SECONDS", None)
+            self.assertEqual(session_idle_seconds(), 3600)
+
+    def test_session_idle_timeout_is_bounded(self):
+        with patch.dict(os.environ, {"AUTH_SESSION_IDLE_SECONDS": "30"}):
+            self.assertEqual(session_idle_seconds(), 300)
 
 
 if __name__ == "__main__":

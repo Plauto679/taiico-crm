@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { SessionActivityGuard } from "@/components/auth/SessionActivityGuard";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -19,6 +20,7 @@ export default function RootLayout({
     <html lang="es">
       <body className={inter.className}>
         <div className="flex h-screen bg-gray-100">
+          <SessionActivityGuard />
           <Sidebar />
           <main className="flex-1 flex flex-col overflow-hidden bg-[#34587C]">
             {children}

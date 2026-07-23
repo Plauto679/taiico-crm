@@ -1,10 +1,10 @@
 'use client';
 
 import { ChangeEvent, useMemo, useState } from 'react';
-import { CheckCircle2, ExternalLink, File, FolderOpen, Loader2, MessageSquarePlus, Upload, X } from 'lucide-react';
+import { CheckCircle2, ExternalLink, File, FolderOpen, Loader2, MessageSquarePlus, Save, Upload, X } from 'lucide-react';
 
 import { PendingDocument, PendingDocumentsResponse, PendingRow } from '@/lib/types/pendientes';
-import { createPendingFolder, createPendingFollowUp, getPendingDocuments, uploadPendingDocument } from '@/modules/pendientes/service';
+import { createPendingFolder, createPendingFollowUp, getPendingDocuments, updatePendingRecord, uploadPendingDocument } from '@/modules/pendientes/service';
 
 type PendingSourceKey = 'emision-servicios' | 'siniestros';
 type DetailTab = 'detalle' | 'expediente';
@@ -26,6 +26,9 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose }: Pending
     const [showFollowUp, setShowFollowUp] = useState(false);
     const [followUpComment, setFollowUpComment] = useState('');
     const [savingFollowUp, setSavingFollowUp] = useState(false);
+    const [detailValues, setDetailValues] = useState<Record<string, string>>(() => editableDetailValues(row?.summary || {}));
+    const [savingDetails, setSavingDetails] = useState(false);
+    const [folderNotice, setFolderNotice] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     const openExpediente = async () => {
@@ -98,6 +101,27 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose }: Pending
         }
     };
 
+    const saveDetails = async () => {
+        const changedValues = Object.fromEntries(
+            Object.entries(detailValues).filter(([key, value]) => value !== comparableDetailValue(key, row.summary[key] || '')),
+        );
+        if (Object.keys(changedValues).length === 0) return;
+        setSavingDetails(true);
+        setError(null);
+        setFolderNotice(null);
+        try {
+            const response = await updatePendingRecord(source, row.source_row, changedValues);
+            setDetailValues(editableDetailValues(response.row.summary));
+            setFolderNotice(response.folder_warning || null);
+            setDocuments(null);
+            onUpdated(response.row);
+        } catch (requestError) {
+            setError(requestError instanceof Error ? requestError.message : 'No fue posible guardar los cambios.');
+        } finally {
+            setSavingDetails(false);
+        }
+    };
+
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onMouseDown={onClose}>
             <div className="max-h-[92vh] w-full max-w-4xl overflow-hidden rounded-xl bg-white shadow-xl" onMouseDown={(event) => event.stopPropagation()}>
@@ -133,8 +157,15 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose }: Pending
                         </div>
                     )}
                     {error && <div className="mb-5 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+                    {folderNotice && <div className="mb-5 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{folderNotice}</div>}
                     {tab === 'detalle' ? (
-                        <DetailTabContent row={row} />
+                        <DetailTabContent
+                            row={row}
+                            values={detailValues}
+                            saving={savingDetails}
+                            onChange={(label, value) => setDetailValues((current) => applyDerivedDayValue(current, label, value))}
+                            onSave={saveDetails}
+                        />
                     ) : loading ? (
                         <div className="flex items-center justify-center py-16 text-slate-500"><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Consultando Drive...</div>
                     ) : (
@@ -142,14 +173,14 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose }: Pending
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div>
                                     <h3 className="text-lg font-semibold text-slate-900">Expediente {row.summary.RFC || ''}</h3>
-                                    <p className="text-sm text-slate-500">Los archivos se guardan en la carpeta de Drive nombrada con el RFC.</p>
+                                    <p className="text-sm text-slate-500">La carpeta de Drive se identifica por RFC y tipo de solicitud.</p>
                                 </div>
                                 {folderUrl && <a href={folderUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-blue-600 hover:bg-slate-50">Abrir carpeta <ExternalLink className="h-4 w-4" /></a>}
                             </div>
 
                             {documents?.folder_missing && !row.summary.RFC ? (
                                 <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
-                                    Este registro histórico todavía no tiene RFC. Agrégalo en el archivo canónico y recarga el módulo para habilitar su carpeta y expediente.
+                                    Este pendiente todavía no tiene RFC. Agrégalo en “Detalle e historial” para crear automáticamente su carpeta.
                                 </div>
                             ) : documents?.folder_missing ? (
                                 <div className="mt-5 rounded-xl border border-dashed border-slate-300 p-8 text-center">
@@ -205,11 +236,54 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose }: Pending
     );
 }
 
-function DetailTabContent({ row }: { row: PendingRow }) {
+function DetailTabContent({
+    row,
+    values,
+    saving,
+    onChange,
+    onSave,
+}: {
+    row: PendingRow;
+    values: Record<string, string>;
+    saving: boolean;
+    onChange: (label: string, value: string) => void;
+    onSave: () => void;
+}) {
+    const hasChanges = Object.entries(values).some(
+        ([key, value]) => value !== comparableDetailValue(key, row.summary[key] || ''),
+    );
     return <>
-        <dl className="grid grid-cols-1 gap-4 rounded-lg bg-gray-50 p-4 sm:grid-cols-2">
-            {Object.entries(row.summary).map(([label, value]) => <div key={label}><dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</dt><dd className="mt-1 text-sm text-gray-900">{value || '—'}</dd></div>)}
-        </dl>
+        <div className="rounded-lg bg-gray-50 p-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {Object.entries(values)
+                    .filter(([label]) => label.trim().toLocaleLowerCase('es-MX') !== 'fecha hoy')
+                    .map(([label, value]) => {
+                        const derived = isDerivedDayField(label);
+                        return (
+                            <label key={label} className="block">
+                                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
+                                {label.toLocaleLowerCase('es-MX').includes('comentario') ? (
+                                    <textarea value={value} onChange={(event) => onChange(label, event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                                ) : (
+                                    <input
+                                        type={isDateField(label) ? 'date' : 'text'}
+                                        value={value}
+                                        readOnly={derived}
+                                        onChange={(event) => onChange(label, label === 'RFC' ? event.target.value.toUpperCase() : event.target.value)}
+                                        className={`mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-gray-900 outline-none ${derived ? 'cursor-not-allowed bg-slate-100' : 'bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100'}`}
+                                    />
+                                )}
+                            </label>
+                        );
+                    })}
+            </div>
+            <div className="mt-4 flex justify-end">
+                <button type="button" onClick={onSave} disabled={saving || !hasChanges} className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                    Guardar cambios
+                </button>
+            </div>
+        </div>
         <h3 className="mb-3 mt-6 text-lg font-semibold text-gray-900">Historial de actualizaciones</h3>
         {row.history.length === 0 ? <p className="rounded-lg border border-dashed p-6 text-center text-sm text-gray-500">No hay actualizaciones registradas.</p> : (
             <ol className="space-y-3 border-l-2 border-blue-200 pl-5">
@@ -246,6 +320,88 @@ export function formatHistoryDate(value: string): string {
 }
 
 const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
+const DATE_TO_DAY_FIELD: Record<string, string> = {
+    'fecha inicio': 'dias transcurridos',
+    'fecha ingreso en la aseguradora': 'dias en la aseguradora',
+    'fecha de registro de siniestro': 'dias desde registro del siniestro',
+    'fecha de envio a la aseguradora': 'dias cumplidos en la aseguradora',
+    'fecha de envio': 'dias cumplidos',
+};
+
+const DERIVED_DAY_FIELDS = new Set(Object.values(DATE_TO_DAY_FIELD));
+
+function normalizeFieldLabel(value: string): string {
+    return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase('es-MX');
+}
+
+function isDateField(label: string): boolean {
+    return normalizeFieldLabel(label) in DATE_TO_DAY_FIELD;
+}
+
+function isDerivedDayField(label: string): boolean {
+    return DERIVED_DAY_FIELDS.has(normalizeFieldLabel(label));
+}
+
+function toDateInputValue(value: string): string {
+    const text = value.trim();
+    const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
+    const dayFirst = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+    if (dayFirst) {
+        const year = dayFirst[3].length === 2 ? `20${dayFirst[3]}` : dayFirst[3];
+        return `${year}-${dayFirst[2].padStart(2, '0')}-${dayFirst[1].padStart(2, '0')}`;
+    }
+    if (/^\d+(?:\.0+)?$/.test(text)) {
+        const serial = Number(text);
+        const date = new Date(Date.UTC(1899, 11, 30) + serial * 86_400_000);
+        return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
+    }
+    return '';
+}
+
+function comparableDetailValue(label: string, value: string): string {
+    return isDateField(label) ? toDateInputValue(value) : value;
+}
+
+function editableDetailValues(summary: Record<string, string>): Record<string, string> {
+    return Object.fromEntries(
+        Object.entries(summary).map(([label, value]) => [label, comparableDetailValue(label, value)]),
+    );
+}
+
+function mexicoCityTodayParts(): { year: number; month: number; day: number } {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Mexico_City',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    }).formatToParts(new Date());
+    const value = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value);
+    return { year: value('year'), month: value('month'), day: value('day') };
+}
+
+function daysSince(value: string): string {
+    const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!iso) return '';
+    const today = mexicoCityTodayParts();
+    const current = Date.UTC(today.year, today.month - 1, today.day);
+    const start = Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+    return String(Math.max(0, Math.floor((current - start) / 86_400_000)));
+}
+
+function applyDerivedDayValue(
+    values: Record<string, string>,
+    changedLabel: string,
+    value: string,
+): Record<string, string> {
+    const next = { ...values, [changedLabel]: value };
+    const targetNormalized = DATE_TO_DAY_FIELD[normalizeFieldLabel(changedLabel)];
+    if (!targetNormalized) return next;
+    const targetLabel = Object.keys(values).find((label) => normalizeFieldLabel(label) === targetNormalized);
+    if (targetLabel) next[targetLabel] = daysSince(value);
+    return next;
+}
 
 function handleFileSelection(event: ChangeEvent<HTMLInputElement>, documentName: string, upload: (name: string, file: globalThis.File) => Promise<void>) {
     const file = event.target.files?.[0];

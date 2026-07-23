@@ -118,6 +118,30 @@ class ApiSecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 429)
         self.assertIn("Retry-After", response.headers)
 
+    def test_session_refresh_renews_cookie_for_one_hour(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AUTH_SESSION_SECRET": "test-session-secret",
+                "AUTH_SESSION_IDLE_SECONDS": "3600",
+            },
+        ):
+            token = create_session_token("person@example.com")
+            response = self.client.post(
+                "/session/refresh",
+                cookies={COOKIE_NAME: token},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Max-Age=3600", response.headers["set-cookie"])
+
+    def test_logout_requires_a_session_and_clears_cookie(self):
+        self.assertEqual(self.client.post("/logout").status_code, 401)
+        with patch.dict(os.environ, {"AUTH_SESSION_SECRET": "test-session-secret"}):
+            token = create_session_token("person@example.com")
+            response = self.client.post("/logout", cookies={COOKIE_NAME: token})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("taiico_session=\"\"", response.headers["set-cookie"])
+
     def test_unlisted_cross_origin_request_gets_no_cors_permission(self):
         response = self.client.options(
             "/clientes/",

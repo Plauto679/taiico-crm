@@ -1,11 +1,12 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Mail, Plus } from 'lucide-react';
 import { DataTable } from '@/components/ui/DataTable';
 import { PendingRow, PendingSourceData } from '@/lib/types/pendientes';
 import { formatHistoryDate, PendingHistoryModal } from './PendingHistoryModal';
 import { RegisterPendingModal } from './RegisterPendingModal';
+import { PendingReportModal } from './PendingReportModal';
 
 interface PendientesViewProps {
     emisionServicios: PendingSourceData;
@@ -18,6 +19,7 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
     const [emisionData, setEmisionData] = useState(emisionServicios);
     const [siniestrosData, setSiniestrosData] = useState(siniestros);
     const [showRegisterModal, setShowRegisterModal] = useState(false);
+    const [showReportModal, setShowReportModal] = useState(false);
     const activeData = activeTab === 'emision-servicios' ? emisionData : siniestrosData;
 
     const columns = useMemo(() => [
@@ -74,6 +76,9 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
                     </div>
                     <div className="flex items-center gap-3">
                         <p className="text-sm text-blue-100">{activeData.rows.length} registros</p>
+                        <button type="button" onClick={() => setShowReportModal(true)} className="inline-flex items-center gap-2 rounded-lg border border-white/60 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10">
+                            <Mail className="h-4 w-4" /> Enviar informe
+                        </button>
                         <button type="button" onClick={() => setShowRegisterModal(true)} className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-50">
                             <Plus className="h-4 w-4" /> Registrar Pendiente
                         </button>
@@ -96,6 +101,7 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
                     onCreated={handleCreated}
                 />
             )}
+            {showReportModal && <PendingReportModal onClose={() => setShowReportModal(false)} />}
         </>
     );
 }

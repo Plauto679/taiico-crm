@@ -5,9 +5,19 @@ import {
     PendingDocument,
     PendingDocumentsResponse,
     PendingFollowUpResponse,
+    PendingReportSendResponse,
     PendingSourceData,
+    PendingUpdateResponse,
     SiniestrosPendingInput,
 } from '@/lib/types/pendientes';
+
+export function sendPendingReport(email: string): Promise<PendingReportSendResponse> {
+    return fetchFromApi('/pendientes/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+    });
+}
 
 export function getPendingSource(
     source: 'emision-servicios' | 'siniestros',
@@ -53,6 +63,18 @@ export function createPendingFollowUp(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ comment }),
+    });
+}
+
+export function updatePendingRecord(
+    source: 'emision-servicios' | 'siniestros',
+    sourceRow: number,
+    values: Record<string, string>,
+): Promise<PendingUpdateResponse> {
+    return fetchFromApi(`/pendientes/${source}/${sourceRow}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values }),
     });
 }
 

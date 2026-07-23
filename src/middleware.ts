@@ -24,10 +24,6 @@ export function middleware(request: NextRequest) {
     const token = request.cookies.get('taiico_session')?.value;
 
     if (isPublicPath) {
-        // If user is already logged in and tries to access login page, redirect to dashboard
-        if (path === '/login' && token) {
-            return sameOriginRedirect(request, '/');
-        }
         return NextResponse.next();
     }
 

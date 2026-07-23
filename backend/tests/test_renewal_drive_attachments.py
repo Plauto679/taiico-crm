@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from services.renovaciones import (
     DRIVE_FOLDER_MIME_TYPE,
     DriveAttachmentError,
+    SmtpDeliveryUncertainError,
     drive_file_id_from_url,
     drive_folder_attachments,
     send_email_smtp,
@@ -45,7 +46,8 @@ class FakeDriveService:
 class FakeSmtp:
     sent_message = None
 
-    def __init__(self, _host, _port):
+    def __init__(self, _host, _port, timeout=None):
+        self.timeout = timeout
         pass
 
     def __enter__(self):
@@ -54,7 +56,10 @@ class FakeSmtp:
     def __exit__(self, *_args):
         return False
 
-    def starttls(self):
+    def starttls(self, context=None):
+        pass
+
+    def ehlo(self):
         pass
 
     def login(self, _user, _password):
@@ -155,6 +160,35 @@ class RenewalDriveAttachmentTests(unittest.TestCase):
             FakeSmtp.sent_message["Cc"],
             "alberto.alfaro@taiico.com, veronica.alfaro@taiico.com, pamela.alfaro@taiico.com",
         )
+
+    def test_broken_pipe_is_reported_as_uncertain_without_retry(self):
+        class BrokenSmtp(FakeSmtp):
+            attempts = 0
+
+            def starttls(self, context=None):
+                pass
+
+            def send_message(self, _message):
+                type(self).attempts += 1
+                raise BrokenPipeError(32, "Broken pipe")
+
+        BrokenSmtp.attempts = 0
+        with patch("services.renovaciones.smtplib.SMTP", BrokenSmtp):
+            with self.assertRaisesRegex(SmtpDeliveryUncertainError, "Enviados"):
+                send_email_smtp(
+                    "Renovación",
+                    "Contenido",
+                    ["cliente@example.com"],
+                    settings={
+                        "host": "smtp.gmail.com",
+                        "port": 587,
+                        "user": "user",
+                        "password": "secret",
+                        "sender": "sender@example.com",
+                        "use_starttls": True,
+                    },
+                )
+        self.assertEqual(BrokenSmtp.attempts, 1)
 
 
 if __name__ == "__main__":

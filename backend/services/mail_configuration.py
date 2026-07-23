@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 import smtplib
+import ssl
 from datetime import datetime
 from pathlib import Path
 
+import certifi
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -15,6 +17,11 @@ from services.session_auth import current_username
 
 router = APIRouter(prefix="/mail-configuration", tags=["mail-configuration"])
 KEY_PATH = Path(__file__).resolve().parents[2] / "local-secrets" / "mail-credentials.key"
+
+
+def smtp_ssl_context() -> ssl.SSLContext:
+    """Use certifi so launchd Python processes have a reliable CA trust store."""
+    return ssl.create_default_context(cafile=certifi.where())
 
 
 class MailConfigurationInput(BaseModel):
@@ -129,7 +136,7 @@ def test_configuration(username: str = Depends(current_username)):
     try:
         with smtplib.SMTP(settings["host"], settings["port"], timeout=15) as server:
             if settings["use_starttls"]:
-                server.starttls()
+                server.starttls(context=smtp_ssl_context())
             server.login(settings["user"], settings["password"])
     except (smtplib.SMTPException, OSError) as exc:
         raise HTTPException(status_code=400, detail=f"Gmail rechazó la conexión: {exc}") from exc

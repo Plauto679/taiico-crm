@@ -6,6 +6,7 @@ import posixpath
 import re
 import threading
 import time
+import unicodedata
 import zipfile
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -24,7 +25,9 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from pydantic import BaseModel, Field
 
 from services.session_auth import current_username
-from services.pending_document_requirements import requirements_for
+from services.pending_document_requirements import requirements_for, split_request_types
+from services.mail_configuration import smtp_settings_for
+from services.renovaciones import send_email_smtp
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -88,8 +91,8 @@ VIDA_REQUEST_OPTIONS = {
 
 class EmisionServiciosCreateRequest(BaseModel):
     asegurado: str
-    rfc: str
-    poliza: str
+    rfc: str = ""
+    poliza: str = ""
     casificacion: Literal["Vida", "GMM"]
     tipo_tramite: Literal["Servicios", "Emisión"]
     solicitud_de: str
@@ -97,7 +100,7 @@ class EmisionServiciosCreateRequest(BaseModel):
 
 class SiniestrosCreateRequest(BaseModel):
     asegurado: str
-    rfc: str
+    rfc: str = ""
     tipo_tramite: Literal[
         "Cirugía Progamada",
         "Reembolso",
@@ -109,6 +112,14 @@ class SiniestrosCreateRequest(BaseModel):
 
 class PendingFollowUpRequest(BaseModel):
     comment: str = Field(min_length=1, max_length=5000)
+
+
+class PendingUpdateRequest(BaseModel):
+    values: dict[str, str]
+
+
+class PendingReportRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
 
 
 @dataclass(frozen=True)
@@ -144,6 +155,13 @@ _cache_lock = threading.Lock()
 _write_lock = threading.Lock()
 _cache: dict[str, tuple[float, dict]] = {}
 
+REPORT_COLORS = ("verde", "amarillo", "rojo")
+REPORT_COLOR_LABELS = {
+    "verde": "Verde",
+    "amarillo": "Amarillo",
+    "rojo": "Rojo",
+}
+
 
 def clean_cell(value: object) -> str:
     if value is None or pd.isna(value):
@@ -151,7 +169,304 @@ def clean_cell(value: object) -> str:
     return " ".join(str(value).replace("\xa0", " ").strip().split())
 
 
-def parse_pending_workbook(workbook: bytes, source: PendingSource) -> dict:
+def _normalized_header(value: str) -> str:
+    return " ".join(
+        unicodedata.normalize("NFKD", clean_cell(value))
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .casefold()
+        .split()
+    )
+
+
+def _looks_like_history_header(value: str) -> bool:
+    normalized = _normalized_header(value)
+    return normalized == "fecha hoy" or bool(
+        re.match(
+            r"^(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/-](?:\d{1,2}|[a-z]{3})(?:[/-]\d{2,4})?)",
+            normalized,
+        )
+    )
+
+
+def _core_count_for_headers(source: PendingSource, headers: list[str]) -> int:
+    return next(
+        (
+            index
+            for index, header in enumerate(headers)
+            if index >= source.core_column_count and _looks_like_history_header(header)
+        ),
+        source.core_column_count,
+    )
+
+
+DATE_COUNTER_PAIRS = (
+    ("Fecha Inicio", "Días Transcurridos"),
+    ("Fecha ingreso en la aseguradora", "Dias en la aseguradora"),
+    ("Fecha de registro de siniestro", "Dias desde registro del siniestro"),
+    ("Fecha de envío a la aseguradora", "DIAS CUMPLIDOS EN LA ASEGURADORA"),
+    # Compatibility while the renamed Siniestros headers propagate through Drive.
+    ("Fecha de envío", "DIAS CUMPLIDOS"),
+)
+
+
+def _parse_pending_date(value: str) -> date | None:
+    text = clean_cell(value)
+    if not text:
+        return None
+    if re.fullmatch(r"\d+(?:\.0+)?", text):
+        try:
+            return (datetime(1899, 12, 30) + pd.to_timedelta(float(text), unit="D")).date()
+        except (OverflowError, ValueError):
+            return None
+    try:
+        if re.match(r"^\d{4}-\d{1,2}-\d{1,2}", text):
+            return datetime.fromisoformat(text[:10]).date()
+        parsed = pd.to_datetime(text, dayfirst=True, errors="coerce")
+        return None if pd.isna(parsed) else parsed.date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _derived_day_values(summary: dict[str, str], today: date | None = None) -> dict[str, str]:
+    current_date = today or datetime.now(ZoneInfo("America/Mexico_City")).date()
+    headers = {_normalized_header(header): header for header in summary}
+    derived: dict[str, str] = {}
+    for date_label, days_label in DATE_COUNTER_PAIRS:
+        actual_date_header = headers.get(_normalized_header(date_label))
+        actual_days_header = headers.get(_normalized_header(days_label))
+        if not actual_date_header or not actual_days_header:
+            continue
+        start_date = _parse_pending_date(summary.get(actual_date_header, ""))
+        derived[actual_days_header] = (
+            str(max(0, (current_date - start_date).days))
+            if start_date
+            else ""
+        )
+    return derived
+
+
+def _summary_value(summary: dict[str, str], label: str) -> str:
+    normalized_label = _normalized_header(label)
+    return next(
+        (
+            clean_cell(value)
+            for header, value in summary.items()
+            if _normalized_header(header) == normalized_label
+        ),
+        "",
+    )
+
+
+def _day_number(value: object) -> int | None:
+    text = clean_cell(value)
+    if not text:
+        return None
+    try:
+        return max(0, int(float(text.replace(",", ""))))
+    except ValueError:
+        return None
+
+
+def _traffic_color(days: int) -> str:
+    if days <= 5:
+        return "verde"
+    if days <= 10:
+        return "amarillo"
+    return "rojo"
+
+
+def _report_metric(
+    rows: list[dict],
+    *,
+    key: str,
+    label: str,
+    days_header: str,
+    only_when_blank_header: str | None = None,
+) -> dict:
+    details = {color: [] for color in REPORT_COLORS}
+    for row in rows:
+        summary = row.get("summary", {})
+        if only_when_blank_header and _summary_value(summary, only_when_blank_header):
+            continue
+        days = _day_number(_summary_value(summary, days_header))
+        if days is None:
+            continue
+        color = _traffic_color(days)
+        details[color].append({
+            "source_row": row.get("source_row"),
+            "days": days,
+            "summary": summary,
+            "latest_update": row.get("latest_update", {}),
+        })
+    return {
+        "key": key,
+        "label": label,
+        "days_header": days_header,
+        "counts": {color: len(details[color]) for color in REPORT_COLORS},
+        "details": details,
+    }
+
+
+def build_pending_report(
+    emision_servicios: dict,
+    siniestros: dict,
+    generated_on: date | None = None,
+) -> dict:
+    report_date = generated_on or datetime.now(ZoneInfo("America/Mexico_City")).date()
+    return {
+        "generated_on": report_date.isoformat(),
+        "sections": [
+            {
+                "key": "emision-servicios",
+                "title": "Emisión y Servicios",
+                "metrics": [
+                    _report_metric(
+                        emision_servicios["rows"],
+                        key="dias-transcurridos",
+                        label="Días transcurridos (registro de la emisión/servicio)",
+                        days_header="Días Transcurridos",
+                        only_when_blank_header="Dias en la aseguradora",
+                    ),
+                    _report_metric(
+                        emision_servicios["rows"],
+                        key="dias-en-aseguradora",
+                        label="Días en la aseguradora",
+                        days_header="Dias en la aseguradora",
+                    ),
+                ],
+            },
+            {
+                "key": "siniestros",
+                "title": "Siniestros",
+                "metrics": [
+                    _report_metric(
+                        siniestros["rows"],
+                        key="dias-desde-registro",
+                        label="Días desde el registro del siniestro",
+                        days_header="Dias desde registro del siniestro",
+                        only_when_blank_header="DIAS CUMPLIDOS EN LA ASEGURADORA",
+                    ),
+                    _report_metric(
+                        siniestros["rows"],
+                        key="dias-en-aseguradora",
+                        label="Días cumplidos en la aseguradora",
+                        days_header="DIAS CUMPLIDOS EN LA ASEGURADORA",
+                    ),
+                ],
+            },
+        ],
+    }
+
+
+def _report_identity(detail: dict, section_key: str) -> tuple[str, str, str]:
+    summary = detail["summary"]
+    insured = _summary_value(summary, "Asegurado") or _summary_value(summary, "ASEGURADO")
+    rfc = _summary_value(summary, "RFC")
+    request = (
+        _summary_value(summary, "Solicitud de")
+        if section_key == "emision-servicios"
+        else _summary_value(summary, "Trámite")
+    )
+    return insured or "—", rfc or "—", request or "—"
+
+
+def pending_report_text(report: dict) -> str:
+    lines = [
+        "Informe de pendientes TAIICO",
+        f"Fecha: {report['generated_on']}",
+        "",
+        "Rangos: Verde 0-5 días; Amarillo 6-10 días; Rojo más de 10 días.",
+    ]
+    for section in report["sections"]:
+        lines.extend(["", section["title"], "=" * len(section["title"])])
+        for metric in section["metrics"]:
+            counts = metric["counts"]
+            lines.append(
+                f"{metric['label']}: Verde {counts['verde']} | "
+                f"Amarillo {counts['amarillo']} | Rojo {counts['rojo']}"
+            )
+            for color in REPORT_COLORS:
+                for detail in metric["details"][color]:
+                    insured, rfc, request = _report_identity(detail, section["key"])
+                    lines.append(
+                        f"- {REPORT_COLOR_LABELS[color]} | {detail['days']} días | "
+                        f"{insured} | {rfc} | {request}"
+                    )
+    return "\n".join(lines)
+
+
+def pending_report_html(report: dict) -> str:
+    color_styles = {
+        "verde": ("#166534", "#dcfce7"),
+        "amarillo": ("#854d0e", "#fef9c3"),
+        "rojo": ("#991b1b", "#fee2e2"),
+    }
+    sections = []
+    for section in report["sections"]:
+        metrics = []
+        for metric in section["metrics"]:
+            count_cells = "".join(
+                (
+                    f'<td style="padding:10px;border:1px solid #cbd5e1;'
+                    f'color:{color_styles[color][0]};background:{color_styles[color][1]};'
+                    f'font-weight:700;text-align:center">'
+                    f'{metric["counts"][color]}</td>'
+                )
+                for color in REPORT_COLORS
+            )
+            detail_groups = []
+            for color in REPORT_COLORS:
+                rows = []
+                for detail in metric["details"][color]:
+                    insured, rfc, request = _report_identity(detail, section["key"])
+                    latest = detail.get("latest_update", {})
+                    latest_text = (
+                        f"({clean_cell(latest.get('date'))}) {clean_cell(latest.get('update'))}"
+                        if clean_cell(latest.get("update"))
+                        else "—"
+                    )
+                    rows.append(
+                        "<tr>"
+                        f"<td>{escape(insured)}</td><td>{escape(rfc)}</td>"
+                        f"<td>{escape(request)}</td><td>{detail['days']}</td>"
+                        f"<td>{escape(latest_text)}</td>"
+                        "</tr>"
+                    )
+                if rows:
+                    foreground, background = color_styles[color]
+                    detail_groups.append(
+                        f'<h4 style="margin:18px 0 8px;color:{foreground}">'
+                        f'{REPORT_COLOR_LABELS[color]} ({len(rows)})</h4>'
+                        '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+                        "<thead><tr><th>Asegurado</th><th>RFC</th><th>Solicitud/Trámite</th>"
+                        "<th>Días</th><th>Última actualización</th></tr></thead>"
+                        f"<tbody>{''.join(rows)}</tbody></table>"
+                    )
+            metrics.append(
+                f"<h3>{escape(metric['label'])}</h3>"
+                '<table style="width:100%;border-collapse:collapse">'
+                "<thead><tr><th>Verde (0-5)</th><th>Amarillo (6-10)</th>"
+                f"<th>Rojo (&gt;10)</th></tr></thead><tbody><tr>{count_cells}</tr></tbody></table>"
+                + "".join(detail_groups)
+            )
+        sections.append(f"<h2>{escape(section['title'])}</h2>{''.join(metrics)}")
+    return (
+        "<!doctype html><html><body style=\"font-family:Arial,sans-serif;color:#0f172a\">"
+        "<style>th,td{padding:8px;border:1px solid #cbd5e1;text-align:left;vertical-align:top}"
+        "th{background:#e2e8f0}</style>"
+        "<h1>Informe de pendientes TAIICO</h1>"
+        f"<p>Fecha: {escape(report['generated_on'])}</p>"
+        "<p>El detalle incluye únicamente registros clasificables en cada indicador.</p>"
+        f"{''.join(sections)}</body></html>"
+    )
+
+
+def parse_pending_workbook(
+    workbook: bytes,
+    source: PendingSource,
+    today: date | None = None,
+) -> dict:
     table = pd.read_excel(
         io.BytesIO(workbook),
         sheet_name=source.sheet_name,
@@ -159,34 +474,37 @@ def parse_pending_workbook(workbook: bytes, source: PendingSource) -> dict:
         keep_default_na=False,
     )
     headers = [clean_cell(column) for column in table.columns]
-    if len(headers) <= source.core_column_count:
+    core_column_count = _core_count_for_headers(source, headers)
+    if len(headers) <= core_column_count:
         raise ValueError(
             f"{source.title} sheet {source.sheet_name} must contain more than "
-            f"{source.core_column_count} columns"
+            f"{core_column_count} columns"
         )
 
-    core_headers = headers[: source.core_column_count]
-    history_headers = headers[source.core_column_count :]
+    core_headers = headers[:core_column_count]
+    history_headers = headers[core_column_count:]
     latest_header = history_headers[-1]
     rows = []
 
     for index, (_, series) in enumerate(table.iterrows(), start=2):
         values = [clean_cell(value) for value in series.tolist()]
-        core_values = values[: source.core_column_count]
+        core_values = values[:core_column_count]
         if not any(core_values):
             continue
 
-        history_values = values[source.core_column_count :]
+        history_values = values[core_column_count:]
         history = [
             {"date": header, "update": value}
             for header, value in zip(history_headers, history_values)
             if value
         ]
         latest_update = history[-1] if history else {"date": "", "update": ""}
+        summary = dict(zip(core_headers, core_values))
+        summary.update(_derived_day_values(summary, today))
         rows.append({
             "id": f"{source.key}:{index}",
             "source_row": index,
-            "summary": dict(zip(core_headers, core_values)),
+            "summary": summary,
             "latest_update": latest_update,
             "history": history,
         })
@@ -224,6 +542,22 @@ def _folder_name_for_rfc(rfc: str) -> str:
     return cleaned[:180]
 
 
+def _folder_descriptor_from_row(row: dict) -> str:
+    summary = row.get("summary", {})
+    return clean_cell(
+        summary.get("Solicitud de")
+        or summary.get("Trámite")
+        or summary.get("Tipo de Trámite")
+        or ""
+    )
+
+
+def _folder_name_for_row(row: dict) -> str:
+    rfc = _folder_name_for_rfc(_rfc_from_row(row))
+    descriptor = re.sub(r"[\\/:*?\"<>|]+", "-", _folder_descriptor_from_row(row))
+    return f"{rfc} - {descriptor}"[:180] if descriptor else rfc
+
+
 def _document_name_for(value: str, original_filename: str) -> str:
     cleaned = re.sub(r"[\\/:*?\"<>|]+", "-", clean_cell(value))
     if not cleaned:
@@ -255,8 +589,13 @@ def _decorate_rows_with_folders(result: dict, service) -> dict:
     }
     for row in result["rows"]:
         rfc = _rfc_from_row(row)
-        folder_name = _folder_name_for_rfc(rfc) if rfc else ""
-        folder = folders.get(folder_name.casefold()) if folder_name else None
+        folder_name = _folder_name_for_row(row) if rfc else ""
+        legacy_name = _folder_name_for_rfc(rfc) if rfc else ""
+        folder = (
+            folders.get(folder_name.casefold()) or folders.get(legacy_name.casefold())
+            if folder_name
+            else None
+        )
         row["folder_name"] = folder_name
         row["folder_id"] = folder.get("id") if folder else None
         row["folder_url"] = folder.get("webViewLink") if folder else None
@@ -266,24 +605,35 @@ def _decorate_rows_with_folders(result: dict, service) -> dict:
 
 
 def _create_folder_for_row(service, row: dict) -> dict:
-    rfc = _rfc_from_row(row)
-    folder_name = _folder_name_for_rfc(rfc)
+    folder_name = _folder_name_for_row(row)
+    legacy_name = _folder_name_for_rfc(_rfc_from_row(row))
     existing = next(
         (
             folder for folder in _list_pending_folders(service)
-            if clean_cell(folder.get("name", "")).casefold() == folder_name.casefold()
+            if clean_cell(folder.get("name", "")).casefold()
+            in {folder_name.casefold(), legacy_name.casefold()}
         ),
         None,
     )
-    folder = existing or service.files().create(
-        body={
-            "name": folder_name,
-            "parents": [_documents_root_id()],
-            "mimeType": FOLDER_MIME_TYPE,
-        },
-        fields="id,name,webViewLink",
-        supportsAllDrives=True,
-    ).execute()
+    if existing:
+        folder = existing
+        if clean_cell(existing.get("name", "")).casefold() != folder_name.casefold():
+            folder = service.files().update(
+                fileId=existing["id"],
+                body={"name": folder_name},
+                fields="id,name,webViewLink",
+                supportsAllDrives=True,
+            ).execute()
+    else:
+        folder = service.files().create(
+            body={
+                "name": folder_name,
+                "parents": [_documents_root_id()],
+                "mimeType": FOLDER_MIME_TYPE,
+            },
+            fields="id,name,webViewLink",
+            supportsAllDrives=True,
+        ).execute()
     row["folder_name"] = folder_name
     row["folder_id"] = folder.get("id")
     row["folder_url"] = folder.get("webViewLink")
@@ -326,6 +676,28 @@ def append_pending_record(workbook: bytes, source: PendingSource, values: dict[s
     return _append_xlsx_row(workbook, source.sheet_name, next_row, indexed_values), next_row
 
 
+def update_pending_record(
+    workbook: bytes,
+    source: PendingSource,
+    source_row: int,
+    values: dict[str, str],
+) -> bytes:
+    parsed = parse_pending_workbook(workbook, source)
+    if not any(row["source_row"] == source_row for row in parsed["rows"]):
+        raise ValueError(f"La fila {source_row} no existe en el archivo canónico")
+    header_columns = {header: index + 1 for index, header in enumerate(parsed["core_headers"])}
+    missing = sorted(set(values).difference(header_columns))
+    if missing:
+        raise ValueError("La base no contiene las columnas: " + ", ".join(missing))
+    if not values:
+        raise ValueError("No se recibieron cambios para guardar")
+    updates = {
+        (source_row, header_columns[header]): clean_cell(value)
+        for header, value in values.items()
+    }
+    return _update_xlsx_cells(workbook, source.sheet_name, updates)
+
+
 def add_pending_follow_up(
     workbook: bytes,
     source: PendingSource,
@@ -348,10 +720,11 @@ def add_pending_follow_up(
 
     target_date = follow_up_date or datetime.now(ZoneInfo("America/Mexico_City")).date()
     headers = [clean_cell(column) for column in table.columns]
+    core_column_count = _core_count_for_headers(source, headers)
     target_column = next(
         (
             index + 1 for index, header in enumerate(headers)
-            if index >= source.core_column_count and _history_header_matches_date(header, target_date)
+            if index >= core_column_count and _history_header_matches_date(header, target_date)
         ),
         None,
     )
@@ -715,6 +1088,45 @@ def load_pending_source(source: PendingSource, service=None) -> dict:
         return result
 
 
+@router.post("/report")
+def send_pending_report(
+    request: PendingReportRequest,
+    username: str = Depends(current_username),
+):
+    recipient = request.email.strip().casefold()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", recipient):
+        raise HTTPException(status_code=422, detail="Ingresa una dirección de correo válida")
+    try:
+        service = build_pending_drive_service()
+        for source_key in SOURCES:
+            _clear_source_cache(source_key)
+        report = build_pending_report(
+            load_pending_source(SOURCES["emision-servicios"], service),
+            load_pending_source(SOURCES["siniestros"], service),
+        )
+        send_email_smtp(
+            subject=f"Informe de pendientes TAIICO - {report['generated_on']}",
+            body=pending_report_text(report),
+            html_body=pending_report_html(report),
+            recipients=[recipient],
+            cc_recipients=[],
+            settings=smtp_settings_for(username),
+        )
+        return {
+            "sent": True,
+            "recipient": recipient,
+            "generated_on": report["generated_on"],
+            "report": report,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"No fue posible enviar el informe de pendientes: {exc}",
+        ) from exc
+
+
 @router.get("/{source_key}")
 async def get_pending_source(source_key: str):
     source = SOURCES.get(source_key)
@@ -735,10 +1147,19 @@ def create_emision_servicios_pending(
     _username: str = Depends(current_username),
 ):
     allowed_requests = GMM_REQUEST_OPTIONS if request.casificacion == "GMM" else VIDA_REQUEST_OPTIONS
-    if request.solicitud_de not in allowed_requests:
+    selected_requests = split_request_types(request.solicitud_de)
+    invalid_requests = [
+        selected_request
+        for selected_request in selected_requests
+        if selected_request not in allowed_requests
+    ]
+    if not selected_requests or invalid_requests:
         raise HTTPException(
             status_code=422,
-            detail=f"Solicitud de no válida para {request.casificacion}",
+            detail=(
+                f"Solicitud de no válida para {request.casificacion}: "
+                + ", ".join(invalid_requests or ["sin selección"])
+            ),
         )
     values = {
         "Asegurado": request.asegurado,
@@ -746,7 +1167,7 @@ def create_emision_servicios_pending(
         "Póliza": request.poliza,
         "Casificacion": request.casificacion,
         "Tipo de Trámite": request.tipo_tramite,
-        "Solicitud de": request.solicitud_de,
+        "Solicitud de": ", ".join(selected_requests),
     }
     return _create_pending_record(SOURCES["emision-servicios"], values)
 
@@ -768,8 +1189,6 @@ def create_siniestros_pending(
 def _create_pending_record(source: PendingSource, values: dict[str, str]):
     if not clean_cell(values.get("Asegurado") or values.get("ASEGURADO")):
         raise HTTPException(status_code=422, detail="El nombre del asegurado es obligatorio")
-    if not clean_cell(values.get("RFC")):
-        raise HTTPException(status_code=422, detail="El RFC es obligatorio")
     try:
         with _write_lock:
             service = build_pending_drive_service()
@@ -786,7 +1205,7 @@ def _create_pending_record(source: PendingSource, values: dict[str, str]):
         if not created:
             raise RuntimeError("El registro se guardó, pero no pudo releerse desde Drive")
         folder_warning = None
-        if not created.get("folder_id"):
+        if _rfc_from_row(created) and not created.get("folder_id"):
             try:
                 _create_folder_for_row(service, created)
                 _clear_source_cache(source.key)
@@ -813,6 +1232,87 @@ def _get_pending_row(source_key: str, source_row: int, service=None) -> tuple[Pe
     if not row:
         raise HTTPException(status_code=404, detail="Pendiente no encontrado en el archivo canónico")
     return source, row
+
+
+@router.patch("/{source_key}/{source_row}")
+def update_pending(
+    source_key: str,
+    source_row: int,
+    request: PendingUpdateRequest,
+    _username: str = Depends(current_username),
+):
+    source = SOURCES.get(source_key)
+    if not source:
+        raise HTTPException(status_code=404, detail="Fuente de pendientes no encontrada")
+    values = {clean_cell(key): clean_cell(value) for key, value in request.values.items()}
+    if "RFC" in values:
+        values["RFC"] = values["RFC"].upper()
+    try:
+        with _write_lock:
+            service = build_pending_drive_service()
+            _, original_row = _get_pending_row(source_key, source_row, service)
+            merged_summary = {**original_row["summary"], **values}
+            values.update(_derived_day_values(merged_summary))
+            file_id = _source_file_id(source)
+            updated_workbook = update_pending_record(
+                _download_workbook(file_id, service),
+                source,
+                source_row,
+                values,
+            )
+            _upload_workbook(file_id, updated_workbook, service)
+            _clear_source_cache(source.key)
+            refreshed = load_pending_source(source, service)
+            updated_row = next(
+                (row for row in refreshed["rows"] if row["source_row"] == source_row),
+                None,
+            )
+            if not updated_row:
+                raise RuntimeError("Los cambios se guardaron, pero no pudieron releerse desde Drive")
+
+            folder_warning = None
+            new_rfc = _rfc_from_row(updated_row)
+            old_folder_id = original_row.get("folder_id")
+            if new_rfc:
+                try:
+                    target_name = _folder_name_for_row(updated_row)
+                    if old_folder_id:
+                        folder = service.files().update(
+                            fileId=old_folder_id,
+                            body={"name": target_name},
+                            fields="id,name,webViewLink",
+                            supportsAllDrives=True,
+                        ).execute()
+                        updated_row["folder_name"] = target_name
+                        updated_row["folder_id"] = folder.get("id")
+                        updated_row["folder_url"] = folder.get("webViewLink")
+                    elif not updated_row.get("folder_id"):
+                        _create_folder_for_row(service, updated_row)
+                    elif updated_row.get("folder_name") != target_name:
+                        folder = service.files().update(
+                            fileId=updated_row["folder_id"],
+                            body={"name": target_name},
+                            fields="id,name,webViewLink",
+                            supportsAllDrives=True,
+                        ).execute()
+                        updated_row["folder_name"] = target_name
+                        updated_row["folder_url"] = folder.get("webViewLink")
+                    _clear_source_cache(source.key)
+                except Exception as exc:
+                    folder_warning = (
+                        "Los datos se guardaron, pero no fue posible sincronizar la carpeta: "
+                        f"{exc}"
+                    )
+        return {"updated": True, "row": updated_row, "folder_warning": folder_warning}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"No fue posible actualizar el pendiente en {source.title}: {exc}",
+        ) from exc
 
 
 @router.post("/{source_key}/{source_row}/follow-up")

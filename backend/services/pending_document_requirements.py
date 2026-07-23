@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 
 GMM_DOCUMENT_REQUIREMENTS: dict[str, list[str]] = {
     "EMISION PERSONA FISICA": [
@@ -70,6 +72,22 @@ VIDA_DOCUMENT_REQUIREMENTS: dict[str, list[str]] = {
 }
 
 
+def split_request_types(request_types: str) -> list[str]:
+    return [
+        " ".join(value.split())
+        for value in re.split(r"\s*(?:,|&|\|)\s*", request_types)
+        if value.strip()
+    ]
+
+
 def requirements_for(classification: str, request_type: str) -> list[str]:
     catalog = GMM_DOCUMENT_REQUIREMENTS if classification.strip().casefold() == "gmm" else VIDA_DOCUMENT_REQUIREMENTS
-    return list(catalog.get(" ".join(request_type.split()), []))
+    combined: list[str] = []
+    seen: set[str] = set()
+    for selected_request in split_request_types(request_type):
+        for document in catalog.get(selected_request, []):
+            key = " ".join(document.split()).casefold()
+            if key not in seen:
+                seen.add(key)
+                combined.append(document)
+    return combined

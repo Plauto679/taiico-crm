@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, useState } from 'react';
-import { ClipboardPlus, Loader2, X } from 'lucide-react';
+import { ClipboardPlus, Loader2, Plus, X } from 'lucide-react';
 
 import { PendingRow } from '@/lib/types/pendientes';
 import {
@@ -71,7 +71,7 @@ export function RegisterPendingModal({ source, onClose, onCreated }: RegisterPen
     const [poliza, setPoliza] = useState('');
     const [casificacion, setCasificacion] = useState<'Vida' | 'GMM' | ''>('');
     const [tipoTramite, setTipoTramite] = useState('');
-    const [solicitudDe, setSolicitudDe] = useState('');
+    const [solicitudesDe, setSolicitudesDe] = useState<string[]>(['']);
     const [tramite, setTramite] = useState('');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -88,7 +88,7 @@ export function RegisterPendingModal({ source, onClose, onCreated }: RegisterPen
                     poliza,
                     casificacion: casificacion as 'Vida' | 'GMM',
                     tipo_tramite: tipoTramite as 'Servicios' | 'Emisión',
-                    solicitud_de: solicitudDe,
+                    solicitud_de: solicitudesDe.filter(Boolean).join(', '),
                 })
                 : await createSiniestrosPending({
                     asegurado,
@@ -105,6 +105,12 @@ export function RegisterPendingModal({ source, onClose, onCreated }: RegisterPen
     };
 
     const requestOptions = casificacion === 'GMM' ? GMM_REQUESTS : casificacion === 'Vida' ? VIDA_REQUESTS : [];
+    const updateSolicitud = (index: number, value: string) => {
+        setSolicitudesDe((current) => current.map((item, itemIndex) => itemIndex === index ? value : item));
+    };
+    const removeSolicitud = (index: number) => {
+        setSolicitudesDe((current) => current.filter((_, itemIndex) => itemIndex !== index));
+    };
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onMouseDown={onClose}>
@@ -123,14 +129,45 @@ export function RegisterPendingModal({ source, onClose, onCreated }: RegisterPen
                 <form onSubmit={submit} className="p-5">
                     <div className="grid gap-4 sm:grid-cols-2">
                         <TextField label="Nombre del Asegurado" value={asegurado} onChange={setAsegurado} />
-                        <TextField label="RFC" value={rfc} onChange={(value) => setRfc(value.toUpperCase())} />
+                        <TextField label="RFC" value={rfc} onChange={(value) => setRfc(value.toUpperCase())} required={false} />
                         {source === 'emision-servicios' ? (
                             <>
-                                <TextField label="Póliza" value={poliza} onChange={setPoliza} />
-                                <SelectField label="Casificación" value={casificacion} onChange={(value) => { setCasificacion(value as 'Vida' | 'GMM'); setSolicitudDe(''); }} options={['Vida', 'GMM']} />
+                                <TextField label="Póliza" value={poliza} onChange={setPoliza} required={false} />
+                                <SelectField label="Casificación" value={casificacion} onChange={(value) => { setCasificacion(value as 'Vida' | 'GMM'); setSolicitudesDe(['']); }} options={['Vida', 'GMM']} />
                                 <SelectField label="Tipo de Trámite" value={tipoTramite} onChange={setTipoTramite} options={['Servicios', 'Emisión']} />
                                 <div className="sm:col-span-2">
-                                    <SelectField label="Solicitud de" value={solicitudDe} onChange={setSolicitudDe} options={requestOptions} disabled={!casificacion} />
+                                    <span className="text-sm font-medium text-slate-700">Solicitud de</span>
+                                    <div className="mt-1.5 space-y-2">
+                                        {solicitudesDe.map((solicitud, index) => (
+                                            <div key={index} className="flex items-center gap-2">
+                                                <select
+                                                    required
+                                                    value={solicitud}
+                                                    onChange={(event) => updateSolicitud(index, event.target.value)}
+                                                    disabled={!casificacion}
+                                                    className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
+                                                >
+                                                    <option value="">Seleccionar...</option>
+                                                    {requestOptions
+                                                        .filter((option) => option === solicitud || !solicitudesDe.includes(option))
+                                                        .map((option) => <option key={option} value={option}>{option}</option>)}
+                                                </select>
+                                                {solicitudesDe.length > 1 && (
+                                                    <button type="button" onClick={() => removeSolicitud(index)} className="rounded-lg border border-slate-300 p-2 text-slate-500 hover:bg-red-50 hover:text-red-600" aria-label="Quitar solicitud">
+                                                        <X className="h-4 w-4" />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setSolicitudesDe((current) => [...current, ''])}
+                                        disabled={!casificacion || solicitudesDe.some((value) => !value) || solicitudesDe.length >= requestOptions.length}
+                                        className="mt-2 inline-flex items-center gap-1 rounded-lg border border-blue-200 px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        <Plus className="h-4 w-4" /> Agregar otra solicitud
+                                    </button>
                                 </div>
                             </>
                         ) : (
@@ -156,11 +193,11 @@ export function RegisterPendingModal({ source, onClose, onCreated }: RegisterPen
     );
 }
 
-function TextField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function TextField({ label, value, onChange, required = true }: { label: string; value: string; onChange: (value: string) => void; required?: boolean }) {
     return (
         <label className="block">
-            <span className="text-sm font-medium text-slate-700">{label}</span>
-            <input required value={value} onChange={(event) => onChange(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+            <span className="text-sm font-medium text-slate-700">{label}{!required && <span className="ml-1 font-normal text-slate-400">(opcional)</span>}</span>
+            <input required={required} value={value} onChange={(event) => onChange(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
         </label>
     );
 }

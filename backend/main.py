@@ -4,7 +4,12 @@ from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from services import cobranza, renovaciones, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, client_email_directory, whatsapp, pendientes, mail_configuration, recluta
 from services.login_security import login_rate_limiter, secure_cookie_for
-from services.session_auth import COOKIE_NAME, SESSION_SECONDS, create_session_token, current_username
+from services.session_auth import (
+    COOKIE_NAME,
+    create_session_token,
+    current_username,
+    session_idle_seconds,
+)
 from pydantic import BaseModel, Field
 
 is_production = os.getenv("TAIICO_ENV", "development").strip().casefold() == "production"
@@ -54,7 +59,7 @@ async def login(payload: LoginRequest, request: Request, response: Response):
         response.set_cookie(
             COOKIE_NAME,
             create_session_token(username),
-            max_age=SESSION_SECONDS,
+            max_age=session_idle_seconds(),
             httponly=True,
             samesite="lax",
             secure=secure_cookie_for(request),
@@ -67,6 +72,24 @@ async def login(payload: LoginRequest, request: Request, response: Response):
 
 @app.get("/session")
 async def session(username: str = Depends(current_username)):
+    return {"authenticated": True, "username": username}
+
+
+@app.post("/session/refresh")
+async def refresh_session(
+    request: Request,
+    response: Response,
+    username: str = Depends(current_username),
+):
+    response.set_cookie(
+        COOKIE_NAME,
+        create_session_token(username),
+        max_age=session_idle_seconds(),
+        httponly=True,
+        samesite="lax",
+        secure=secure_cookie_for(request),
+        path="/",
+    )
     return {"authenticated": True, "username": username}
 
 
