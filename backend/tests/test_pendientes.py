@@ -24,6 +24,7 @@ from services.pendientes import (
     append_pending_record,
     build_pending_report,
     pending_report_html,
+    normalize_report_recipients,
     parse_pending_workbook,
     update_pending_record,
 )
@@ -393,6 +394,25 @@ class PendingWorkbookTests(unittest.TestCase):
         self.assertIn("Verde (0-5)", html)
         self.assertIn("Cliente &lt;Uno&gt;", html)
         self.assertNotIn("Cliente <Uno>", html)
+
+    def test_report_recipients_accept_multiple_separators_and_remove_duplicates(self):
+        self.assertEqual(
+            normalize_report_recipients([
+                "Pamela.Alfaro@taiico.com; veronica.alfaro@taiico.com",
+                "pamela.alfaro@taiico.com\nalberto.alfaro@taiico.com",
+            ]),
+            [
+                "pamela.alfaro@taiico.com",
+                "veronica.alfaro@taiico.com",
+                "alberto.alfaro@taiico.com",
+            ],
+        )
+
+    def test_report_recipients_reject_invalid_or_empty_values(self):
+        with self.assertRaises(ValueError):
+            normalize_report_recipients(["no-es-correo"])
+        with self.assertRaises(ValueError):
+            normalize_report_recipients(["", "  "])
 
     def test_document_requirements_follow_classification_and_request(self):
         gmm = requirements_for("GMM", "Reembolso GMM")

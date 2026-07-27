@@ -76,5 +76,6 @@ export interface PendingDocumentsResponse {
 export interface PendingReportSendResponse {
     sent: boolean;
     recipient: string;
+    recipients: string[];
     generated_on: string;
 }

@@ -23,8 +23,10 @@ Privacidad y seguridad > Acceso total al disco**.
 mkdir -p .runtime/logs ~/Library/LaunchAgents
 cp ops/launchd/com.taiico.crm.backend.plist ~/Library/LaunchAgents/
 cp ops/launchd/com.taiico.crm.frontend.plist ~/Library/LaunchAgents/
+cp ops/launchd/com.taiico.crm.pending-report.plist ~/Library/LaunchAgents/
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.backend.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.frontend.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.pending-report.plist
 ```
 
 ## Estado
@@ -32,6 +34,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.frontend.
 ```bash
 launchctl print gui/$(id -u)/com.taiico.crm.backend
 launchctl print gui/$(id -u)/com.taiico.crm.frontend
+launchctl print gui/$(id -u)/com.taiico.crm.pending-report
 ```
 
 ## Reinicio después de desplegar cambios
@@ -41,12 +44,15 @@ Antes de reiniciar el frontend, ejecutar `npm run build`.
 ```bash
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.backend
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.frontend
+launchctl kickstart -k gui/$(id -u)/com.taiico.crm.pending-report
 ```
 
 Los logs se escriben en `.runtime/logs/` y no se versionan.
 
 ## Alcance
 
-Estos agentes mantienen disponibles la interfaz web y la API. No programan la
-ejecución diaria del agente de renovaciones. Esa agenda debe instalarse y
-validarse por separado.
+Estos agentes mantienen disponibles la interfaz web y la API. El agente
+`com.taiico.crm.pending-report` comprueba cada cinco minutos la hora de
+`America/Mexico_City` y envía el informe una sola vez por día después de las
+19:00. La ejecución diaria del agente de renovaciones sigue siendo una agenda
+separada.

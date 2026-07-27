@@ -11,11 +11,11 @@ import {
     SiniestrosPendingInput,
 } from '@/lib/types/pendientes';
 
-export function sendPendingReport(email: string): Promise<PendingReportSendResponse> {
+export function sendPendingReport(emails: string[]): Promise<PendingReportSendResponse> {
     return fetchFromApi('/pendientes/report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ emails }),
     });
 }
 

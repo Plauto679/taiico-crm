@@ -2,7 +2,7 @@ import os
 
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from services import cobranza, renovaciones, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, client_email_directory, whatsapp, pendientes, mail_configuration, recluta
+from services import cobranza, renovaciones, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, client_email_directory, whatsapp, pendientes, mail_configuration, recluta, password_management
 from services.login_security import login_rate_limiter, secure_cookie_for
 from services.session_auth import (
     COOKIE_NAME,
@@ -49,6 +49,21 @@ class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=320)
     password: str = Field(min_length=1, max_length=256)
 
+
+class PasswordResetRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=512)
+    new_password: str = Field(min_length=8, max_length=256)
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=8, max_length=256)
+
+
 @app.post("/login")
 async def login(payload: LoginRequest, request: Request, response: Response):
     username = payload.username.strip().casefold()
@@ -68,6 +83,53 @@ async def login(payload: LoginRequest, request: Request, response: Response):
         return {"success": True, "username": username, "message": "Login successful"}
     login_rate_limiter.record_failure(rate_limit_key)
     raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
+@app.post("/password/forgot")
+async def forgot_password(payload: PasswordResetRequest, request: Request):
+    email = payload.email.strip().casefold()
+    rate_limit_key = login_rate_limiter.key(request, f"password-reset:{email}")
+    login_rate_limiter.check(rate_limit_key)
+    login_rate_limiter.record_failure(rate_limit_key)
+    try:
+        password_management.request_password_reset(email)
+    except Exception as exc:
+        # Never reveal whether an address is registered.
+        print(f"Password reset email unavailable: {type(exc).__name__}: {exc}")
+    return {
+        "success": True,
+        "message": "Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.",
+    }
+
+
+@app.post("/password/reset")
+async def reset_password(payload: PasswordResetConfirmRequest):
+    try:
+        password_management.consume_reset_token(payload.token, payload.new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": True, "message": "Contraseña actualizada"}
+
+
+@app.post("/password/change")
+async def change_password(
+    payload: PasswordChangeRequest,
+    username: str = Depends(current_username),
+):
+    if payload.current_password == payload.new_password:
+        raise HTTPException(
+            status_code=400,
+            detail="La contraseña nueva debe ser diferente a la actual",
+        )
+    try:
+        password_management.change_password(
+            username,
+            payload.current_password,
+            payload.new_password,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": True, "message": "Contraseña actualizada"}
 
 
 @app.get("/session")

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, DollarSign, Calendar, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut } from 'lucide-react';
+import { Home, DollarSign, Calendar, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound } from 'lucide-react';
 
 const NAV_ITEMS = [
     { name: 'Inicio', href: '/', icon: Home },
@@ -23,7 +23,7 @@ export function Sidebar() {
     const pathname = usePathname();
     const router = useRouter();
 
-    if (pathname === '/login') return null;
+    if (pathname === '/login' || pathname === '/olvide-password' || pathname === '/restablecer-password') return null;
 
     async function handleLogout() {
         if (loggingOut) return;
@@ -56,6 +56,15 @@ export function Sidebar() {
                     <LogOut className={`h-4 w-4 ${collapsed ? '' : 'mr-2'}`} />
                     {!collapsed && <span>{loggingOut ? 'Cerrando...' : 'Cerrar sesión'}</span>}
                 </button>
+                <Link
+                    href="/cambiar-password"
+                    className={`flex items-center justify-center rounded-md px-2 py-1.5 text-sm font-medium text-slate-500 hover:bg-blue-50 hover:text-blue-700 ${collapsed ? '' : 'w-full'}`}
+                    aria-label="Cambiar contraseña"
+                    title="Cambiar contraseña"
+                >
+                    <KeyRound className={`h-4 w-4 ${collapsed ? '' : 'mr-2'}`} />
+                    {!collapsed && <span>Cambiar contraseña</span>}
+                </Link>
                 <button
                     type="button"
                     onClick={() => setCollapsed((current) => !current)}

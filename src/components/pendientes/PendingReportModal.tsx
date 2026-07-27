@@ -9,7 +9,7 @@ interface PendingReportModalProps {
 }
 
 export function PendingReportModal({ onClose }: PendingReportModalProps) {
-    const [email, setEmail] = useState('');
+    const [emails, setEmails] = useState('');
     const [sending, setSending] = useState(false);
     const [error, setError] = useState('');
     const [sentTo, setSentTo] = useState('');
@@ -19,8 +19,15 @@ export function PendingReportModal({ onClose }: PendingReportModalProps) {
         setSending(true);
         setError('');
         try {
-            const response = await sendPendingReport(email);
-            setSentTo(response.recipient);
+            const recipients = emails
+                .split(/[,;\n]+/)
+                .map((email) => email.trim())
+                .filter(Boolean);
+            if (recipients.length === 0) {
+                throw new Error('Ingresa al menos un correo electrónico.');
+            }
+            const response = await sendPendingReport(recipients);
+            setSentTo(response.recipients.join(', '));
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : 'No fue posible enviar el informe.');
         } finally {
@@ -64,16 +71,19 @@ export function PendingReportModal({ onClose }: PendingReportModalProps) {
                             además del detalle de los registros incluidos en cada clasificación.
                         </p>
                         <label className="block">
-                            <span className="mb-2 block text-sm font-semibold text-slate-700">Correo electrónico</span>
-                            <input
-                                type="email"
+                            <span className="mb-2 block text-sm font-semibold text-slate-700">Correos electrónicos</span>
+                            <textarea
                                 required
                                 autoFocus
-                                value={email}
-                                onChange={(event) => setEmail(event.target.value)}
-                                placeholder="nombre@taiico.com"
-                                className="w-full rounded-lg border border-slate-300 px-4 py-3 text-slate-900 outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
+                                rows={4}
+                                value={emails}
+                                onChange={(event) => setEmails(event.target.value)}
+                                placeholder={'nombre@taiico.com\notro@taiico.com'}
+                                className="w-full resize-y rounded-lg border border-slate-300 px-4 py-3 text-slate-900 outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
                             />
+                            <span className="mt-2 block text-xs text-slate-500">
+                                Separa los destinatarios con comas, punto y coma o una línea nueva.
+                            </span>
                         </label>
                         {error && (
                             <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>

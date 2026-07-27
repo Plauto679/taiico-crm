@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { fetchFromApi } from '@/lib/api';
 
 export default function LoginPage() {
@@ -91,6 +92,14 @@ export default function LoginPage() {
                         >
                             {isLoading ? 'Iniciando...' : 'Ingresar'}
                         </button>
+                    </div>
+                    <div className="text-center">
+                        <Link
+                            href="/olvide-password"
+                            className="text-sm font-medium text-blue-600 hover:text-blue-800"
+                        >
+                            ¿Olvidaste tu contraseña?
+                        </Link>
                     </div>
                 </form>
             </div>

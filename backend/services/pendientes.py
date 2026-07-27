@@ -119,7 +119,9 @@ class PendingUpdateRequest(BaseModel):
 
 
 class PendingReportRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
+    emails: list[str] = Field(default_factory=list, max_length=50)
+    # Kept temporarily for backwards compatibility with older CRM clients.
+    email: str | None = Field(default=None, min_length=3, max_length=320)
 
 
 @dataclass(frozen=True)
@@ -1068,6 +1070,55 @@ def _clear_source_cache(source_key: str) -> None:
         _cache.pop(source_key, None)
 
 
+def normalize_report_recipients(values: list[str]) -> list[str]:
+    recipients: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for candidate in re.split(r"[,;\n]+", str(value or "")):
+            recipient = candidate.strip().casefold()
+            if not recipient:
+                continue
+            if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", recipient):
+                raise ValueError(f"Dirección de correo inválida: {candidate.strip()}")
+            if recipient not in seen:
+                recipients.append(recipient)
+                seen.add(recipient)
+    if not recipients:
+        raise ValueError("Ingresa al menos una dirección de correo válida")
+    return recipients
+
+
+def deliver_pending_report(
+    recipients: list[str],
+    *,
+    sender_username: str,
+) -> dict:
+    normalized_recipients = normalize_report_recipients(recipients)
+    service = build_pending_drive_service()
+    for source_key in SOURCES:
+        _clear_source_cache(source_key)
+    report = build_pending_report(
+        load_pending_source(SOURCES["emision-servicios"], service),
+        load_pending_source(SOURCES["siniestros"], service),
+    )
+    settings = smtp_settings_for(sender_username)
+    send_email_smtp(
+        subject=f"Informe de pendientes TAIICO - {report['generated_on']}",
+        body=pending_report_text(report),
+        html_body=pending_report_html(report),
+        recipients=normalized_recipients,
+        cc_recipients=[],
+        settings=settings,
+    )
+    return {
+        "sent": True,
+        "recipient": ", ".join(normalized_recipients),
+        "recipients": normalized_recipients,
+        "generated_on": report["generated_on"],
+        "report": report,
+    }
+
+
 def load_pending_source(source: PendingSource, service=None) -> dict:
     cache_seconds = max(
         0,
@@ -1093,31 +1144,16 @@ def send_pending_report(
     request: PendingReportRequest,
     username: str = Depends(current_username),
 ):
-    recipient = request.email.strip().casefold()
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", recipient):
-        raise HTTPException(status_code=422, detail="Ingresa una dirección de correo válida")
+    requested_recipients = list(request.emails)
+    if request.email:
+        requested_recipients.append(request.email)
     try:
-        service = build_pending_drive_service()
-        for source_key in SOURCES:
-            _clear_source_cache(source_key)
-        report = build_pending_report(
-            load_pending_source(SOURCES["emision-servicios"], service),
-            load_pending_source(SOURCES["siniestros"], service),
+        return deliver_pending_report(
+            requested_recipients,
+            sender_username=username,
         )
-        send_email_smtp(
-            subject=f"Informe de pendientes TAIICO - {report['generated_on']}",
-            body=pending_report_text(report),
-            html_body=pending_report_html(report),
-            recipients=[recipient],
-            cc_recipients=[],
-            settings=smtp_settings_for(username),
-        )
-        return {
-            "sent": True,
-            "recipient": recipient,
-            "generated_on": report["generated_on"],
-            "report": report,
-        }
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except HTTPException:
         raise
     except Exception as exc:

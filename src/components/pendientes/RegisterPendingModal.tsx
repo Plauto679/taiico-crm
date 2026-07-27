@@ -113,9 +113,9 @@ export function RegisterPendingModal({ source, onClose, onCreated }: RegisterPen
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onMouseDown={onClose}>
-            <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-                <div className="flex items-center justify-between border-b border-slate-200 p-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto overscroll-contain bg-slate-950/50 p-2 sm:p-4" onMouseDown={onClose}>
+            <div className="flex max-h-[calc(100dvh-1rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:max-h-[calc(100dvh-2rem)]" onMouseDown={(event) => event.stopPropagation()}>
+                <div className="flex shrink-0 items-center justify-between border-b border-slate-200 p-4 sm:p-5">
                     <div className="flex items-center gap-3">
                         <div className="rounded-full bg-blue-100 p-2 text-blue-700"><ClipboardPlus className="h-5 w-5" /></div>
                         <div>
@@ -126,63 +126,65 @@ export function RegisterPendingModal({ source, onClose, onCreated }: RegisterPen
                     <button type="button" onClick={onClose} disabled={saving} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Cerrar"><X className="h-5 w-5" /></button>
                 </div>
 
-                <form onSubmit={submit} className="p-5">
-                    <div className="grid gap-4 sm:grid-cols-2">
-                        <TextField label="Nombre del Asegurado" value={asegurado} onChange={setAsegurado} />
-                        <TextField label="RFC" value={rfc} onChange={(value) => setRfc(value.toUpperCase())} required={false} />
-                        {source === 'emision-servicios' ? (
-                            <>
-                                <TextField label="Póliza" value={poliza} onChange={setPoliza} required={false} />
-                                <SelectField label="Casificación" value={casificacion} onChange={(value) => { setCasificacion(value as 'Vida' | 'GMM'); setSolicitudesDe(['']); }} options={['Vida', 'GMM']} />
-                                <SelectField label="Tipo de Trámite" value={tipoTramite} onChange={setTipoTramite} options={['Servicios', 'Emisión']} />
-                                <div className="sm:col-span-2">
-                                    <span className="text-sm font-medium text-slate-700">Solicitud de</span>
-                                    <div className="mt-1.5 space-y-2">
-                                        {solicitudesDe.map((solicitud, index) => (
-                                            <div key={index} className="flex items-center gap-2">
-                                                <select
-                                                    required
-                                                    value={solicitud}
-                                                    onChange={(event) => updateSolicitud(index, event.target.value)}
-                                                    disabled={!casificacion}
-                                                    className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
-                                                >
-                                                    <option value="">Seleccionar...</option>
-                                                    {requestOptions
-                                                        .filter((option) => option === solicitud || !solicitudesDe.includes(option))
-                                                        .map((option) => <option key={option} value={option}>{option}</option>)}
-                                                </select>
-                                                {solicitudesDe.length > 1 && (
-                                                    <button type="button" onClick={() => removeSolicitud(index)} className="rounded-lg border border-slate-300 p-2 text-slate-500 hover:bg-red-50 hover:text-red-600" aria-label="Quitar solicitud">
-                                                        <X className="h-4 w-4" />
-                                                    </button>
-                                                )}
-                                            </div>
-                                        ))}
+                <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 [-webkit-overflow-scrolling:touch] sm:p-5">
+                        <div className="grid gap-4 sm:grid-cols-2">
+                            <TextField label="Nombre del Asegurado" value={asegurado} onChange={setAsegurado} />
+                            <TextField label="RFC" value={rfc} onChange={(value) => setRfc(value.toUpperCase())} required={false} />
+                            {source === 'emision-servicios' ? (
+                                <>
+                                    <TextField label="Póliza" value={poliza} onChange={setPoliza} required={false} />
+                                    <SelectField label="Casificación" value={casificacion} onChange={(value) => { setCasificacion(value as 'Vida' | 'GMM'); setSolicitudesDe(['']); }} options={['Vida', 'GMM']} />
+                                    <SelectField label="Tipo de Trámite" value={tipoTramite} onChange={setTipoTramite} options={['Servicios', 'Emisión']} />
+                                    <div className="sm:col-span-2">
+                                        <span className="text-sm font-medium text-slate-700">Solicitud de</span>
+                                        <div className="mt-1.5 space-y-2">
+                                            {solicitudesDe.map((solicitud, index) => (
+                                                <div key={index} className="flex items-center gap-2">
+                                                    <select
+                                                        required
+                                                        value={solicitud}
+                                                        onChange={(event) => updateSolicitud(index, event.target.value)}
+                                                        disabled={!casificacion}
+                                                        className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
+                                                    >
+                                                        <option value="">Seleccionar...</option>
+                                                        {requestOptions
+                                                            .filter((option) => option === solicitud || !solicitudesDe.includes(option))
+                                                            .map((option) => <option key={option} value={option}>{option}</option>)}
+                                                    </select>
+                                                    {solicitudesDe.length > 1 && (
+                                                        <button type="button" onClick={() => removeSolicitud(index)} className="rounded-lg border border-slate-300 p-2 text-slate-500 hover:bg-red-50 hover:text-red-600" aria-label="Quitar solicitud">
+                                                            <X className="h-4 w-4" />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSolicitudesDe((current) => [...current, ''])}
+                                            disabled={!casificacion || solicitudesDe.some((value) => !value) || solicitudesDe.length >= requestOptions.length}
+                                            className="mt-2 inline-flex items-center gap-1 rounded-lg border border-blue-200 px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                            <Plus className="h-4 w-4" /> Agregar otra solicitud
+                                        </button>
                                     </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => setSolicitudesDe((current) => [...current, ''])}
-                                        disabled={!casificacion || solicitudesDe.some((value) => !value) || solicitudesDe.length >= requestOptions.length}
-                                        className="mt-2 inline-flex items-center gap-1 rounded-lg border border-blue-200 px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                    >
-                                        <Plus className="h-4 w-4" /> Agregar otra solicitud
-                                    </button>
-                                </div>
-                            </>
-                        ) : (
-                            <>
-                                <SelectField label="Tipo de Trámite" value={tipoTramite} onChange={setTipoTramite} options={['Cirugía Progamada', 'Reembolso', 'Programación de Medicamentos', 'Programación de estudios/terapias']} />
-                                <SelectField label="Trámite" value={tramite} onChange={setTramite} options={['Complemento', 'Reconsideración', 'Garantías']} />
-                            </>
-                        )}
+                                </>
+                            ) : (
+                                <>
+                                    <SelectField label="Tipo de Trámite" value={tipoTramite} onChange={setTipoTramite} options={['Cirugía Progamada', 'Reembolso', 'Programación de Medicamentos', 'Programación de estudios/terapias']} />
+                                    <SelectField label="Trámite" value={tramite} onChange={setTramite} options={['Complemento', 'Reconsideración', 'Garantías']} />
+                                </>
+                            )}
+                        </div>
+
+                        {error && <div className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
                     </div>
 
-                    {error && <div className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-
-                    <div className="mt-6 flex justify-end gap-3">
-                        <button type="button" onClick={onClose} disabled={saving} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60">Cancelar</button>
-                        <button type="submit" disabled={saving} className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60">
+                    <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200 bg-white p-4 sm:flex-row sm:justify-end sm:gap-3 sm:p-5">
+                        <button type="button" onClick={onClose} disabled={saving} className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60 sm:w-auto">Cancelar</button>
+                        <button type="submit" disabled={saving} className="inline-flex w-full items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60 sm:w-auto">
                             {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                             Guardar pendiente
                         </button>

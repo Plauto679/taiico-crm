@@ -13,7 +13,7 @@ export function SessionActivityGuard() {
     const router = useRouter();
 
     useEffect(() => {
-        if (pathname === '/login') return;
+        if (pathname === '/login' || pathname === '/olvide-password' || pathname === '/restablecer-password') return;
 
         let lastHeartbeat = 0;
         let lastRecordedActivity = 0;

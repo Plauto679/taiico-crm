@@ -29,7 +29,7 @@ class ApiSecurityTests(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "Authentication required")
 
     def test_every_service_router_has_server_side_session_dependency(self):
-        public_paths = {"/", "/login"}
+        public_paths = {"/", "/login", "/password/forgot", "/password/reset"}
         unprotected = []
         for route in main.app.routes:
             if not isinstance(route, APIRoute) or route.path in public_paths:
@@ -151,6 +151,26 @@ class ApiSecurityTests(unittest.TestCase):
             },
         )
         self.assertNotIn("access-control-allow-origin", response.headers)
+
+    def test_password_change_requires_session(self):
+        response = self.client.post(
+            "/password/change",
+            json={"current_password": "old-secret", "new_password": "new-secret"},
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_password_reset_request_never_reveals_registration(self):
+        with patch.object(
+            main.password_management,
+            "request_password_reset",
+            side_effect=RuntimeError("smtp unavailable"),
+        ):
+            response = self.client.post(
+                "/password/forgot",
+                json={"email": "unknown@example.com"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Si el correo está registrado", response.json()["message"])
 
 
 if __name__ == "__main__":

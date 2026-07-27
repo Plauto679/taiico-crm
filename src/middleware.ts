@@ -19,7 +19,12 @@ export function middleware(request: NextRequest) {
     const path = request.nextUrl.pathname;
 
     // Define public paths that don't require authentication
-    const isPublicPath = path === '/login' || path.startsWith('/_next') || path.startsWith('/static') || path === '/logo.png';
+    const isPublicPath = path === '/login'
+        || path === '/olvide-password'
+        || path === '/restablecer-password'
+        || path.startsWith('/_next')
+        || path.startsWith('/static')
+        || path === '/logo.png';
 
     const token = request.cookies.get('taiico_session')?.value;
 
