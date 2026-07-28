@@ -24,9 +24,11 @@ mkdir -p .runtime/logs ~/Library/LaunchAgents
 cp ops/launchd/com.taiico.crm.backend.plist ~/Library/LaunchAgents/
 cp ops/launchd/com.taiico.crm.frontend.plist ~/Library/LaunchAgents/
 cp ops/launchd/com.taiico.crm.pending-report.plist ~/Library/LaunchAgents/
+cp ops/launchd/com.taiico.crm.renewal-agent.plist ~/Library/LaunchAgents/
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.backend.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.frontend.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.pending-report.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.renewal-agent.plist
 ```
 
 ## Estado
@@ -35,6 +37,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.pending-r
 launchctl print gui/$(id -u)/com.taiico.crm.backend
 launchctl print gui/$(id -u)/com.taiico.crm.frontend
 launchctl print gui/$(id -u)/com.taiico.crm.pending-report
+launchctl print gui/$(id -u)/com.taiico.crm.renewal-agent
 ```
 
 ## Reinicio después de desplegar cambios
@@ -45,6 +48,7 @@ Antes de reiniciar el frontend, ejecutar `npm run build`.
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.backend
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.frontend
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.pending-report
+launchctl kickstart -k gui/$(id -u)/com.taiico.crm.renewal-agent
 ```
 
 Los logs se escriben en `.runtime/logs/` y no se versionan.
@@ -54,5 +58,12 @@ Los logs se escriben en `.runtime/logs/` y no se versionan.
 Estos agentes mantienen disponibles la interfaz web y la API. El agente
 `com.taiico.crm.pending-report` comprueba cada cinco minutos la hora de
 `America/Mexico_City` y envía el informe una sola vez por día después de las
-19:00. La ejecución diaria del agente de renovaciones sigue siendo una agenda
-separada.
+19:00.
+
+El agente `com.taiico.crm.renewal-agent` realiza la misma comprobación y comienza
+una sola corrida diaria de renovaciones MetLife GMM después de las 09:00 de
+Ciudad de México. Incluye pendientes vencidos que continúen en cola y pólizas
+con vencimiento durante los siguientes 30 días. La fecha de inicio se guarda
+antes de procesar para impedir reintentos automáticos y correos duplicados si
+la corrida falla. WhatsApp está desactivado en este job; sólo se realizan los
+correos autorizados y se registra el paso como omitido.

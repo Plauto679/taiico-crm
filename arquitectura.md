@@ -1,6 +1,6 @@
 # Arquitectura actual de TAIICO CRM y TAIICO OS
 
-**Estado documentado:** 23 de julio de 2026<br>
+**Estado documentado:** 28 de julio de 2026<br>
 **Rama de referencia:** `taiico-os`
 
 Este documento describe la arquitectura que existe hoy en el repositorio. No es una propuesta de migración a la nube. La especificación conceptual de largo plazo permanece en `TAIICO_OS_ARCHITECTURE.md`; cuando exista una diferencia, este archivo es la referencia para operar y desarrollar el sistema actual.
@@ -16,7 +16,7 @@ TAIICO CRM y TAIICO OS comparten un solo repositorio y una sola instalación loc
 - **Google Drive y sus carpetas adyacentes siguen siendo la fuente operacional canónica.** No se ha migrado la operación a Cloud SQL.
 - **SQLite local** conserva estado técnico, índices normalizados, colas, ejecuciones y trazabilidad. No reemplaza a Drive como repositorio operacional.
 - El CRM está publicado por HTTPS en `taiico-crm.com` mediante Cloudflare Tunnel; los puertos locales no se exponen directamente a Internet.
-- FastAPI y Next.js funcionan como servicios supervisados por `launchd` y se reinician automáticamente si terminan. La ejecución diaria del agente de renovaciones sigue siendo una tarea separada y todavía no está programada de forma permanente.
+- FastAPI, Next.js y el agente diario de renovaciones funcionan como procesos supervisados por `launchd`. El agente inicia una sola corrida después de las 09:00 de Ciudad de México.
 
 ## 2. Vista general
 
@@ -42,7 +42,7 @@ flowchart LR
 
     AG --> CH[Chrome persistente<br/>MetLife GMM]
     AG --> SMTP[SMTP por usuario<br/>o fallback global]
-    AG --> WA[WhatsApp Cloud API<br/>modo de prueba]
+    AG -.-> WA[WhatsApp Cloud API<br/>desactivado en la agenda diaria]
 ```
 
 ## 3. Principios vigentes
@@ -52,7 +52,7 @@ flowchart LR
 3. **Cambios quirúrgicos.** CRM y agentes evolucionan en el mismo repositorio, pero cada cambio debe respetar los límites del módulo afectado.
 4. **Automatización observable.** Las ingestiones y recuperaciones registran sus ejecuciones, pasos, resultados y errores.
 5. **Humano en el circuito.** MFA, términos del portal, decisiones sensibles y fallas recuperables pueden requerir intervención humana.
-6. **Comunicaciones protegidas.** El correo puede limitarse a destinatarios internos y WhatsApp opera con modo de prueba y lista permitida hasta completar la conexión productiva.
+6. **Comunicaciones protegidas.** El correo respeta los destinatarios y copias configurados. WhatsApp permanece disponible únicamente para pruebas manuales y está desactivado en la agenda diaria.
 7. **Secretos fuera de Git.** Contraseñas, tokens, credenciales OAuth y llaves privadas viven en `backend/.env` o `local-secrets/`, ambos fuera del control de versiones.
 
 ## 4. Capas y responsabilidades
@@ -152,15 +152,14 @@ El flujo combina información de Drive, una cola local y automatización control
 
 ```mermaid
 sequenceDiagram
-    participant O as Operador / ejecución
+    participant O as launchd / operador
     participant API as FastAPI
     participant DB as SQLite
     participant M as Portal MetLife
     participant D as Google Drive
     participant E as Correo
-    participant W as WhatsApp
 
-    O->>API: Iniciar proceso de renovaciones
+    O->>API: Iniciar proceso diario después de las 09:00 CDMX
     API->>D: Leer fuente canónica y directorios
     API->>DB: Crear/actualizar cola de 30 días
     API->>E: Aviso interno de inicio
@@ -178,7 +177,7 @@ sequenceDiagram
         API->>M: Seleccionar PDF de Clientes y descargar
         API->>D: Descomprimir, organizar, renombrar y cargar expediente
         API->>E: Enviar correo de renovación
-        API->>W: Enviar aviso posterior al correo
+        Note over API: Registrar WhatsApp como omitido
         API->>DB: Registrar éxito o falla por paso
     end
 
@@ -190,6 +189,7 @@ sequenceDiagram
 - La vista de renovaciones consulta una ventana futura, normalmente de **30 días**.
 - La ingestión crea o actualiza `policy_document_retrieval_tasks` sin duplicar filas equivalentes.
 - RFC es la llave de enlace preferida entre renovación y cliente; número de póliza y nombre sirven como apoyo.
+- La corrida diaria incluye también tareas vencidas que continúen en estado `queued`.
 
 ### 7.2 Sesión persistente del portal
 
@@ -211,16 +211,17 @@ sequenceDiagram
 - El ZIP descargado se valida y descomprime.
 - Los CFDI y documentos de póliza se reúnen en una carpeta de renovación con nombre normalizado.
 - La carpeta se carga al destino autorizado de Drive.
-- El proceso envía un correo interno de inicio, un correo por renovación y un resumen interno final.
-- El aviso de WhatsApp se ejecuta después del correo.
+- El proceso envía un correo interno de inicio, un correo por renovación al cliente con las copias autorizadas y un resumen interno final.
+- La agenda diaria no importa ni invoca el conector de WhatsApp y registra ese paso como omitido.
 
 ### 7.5 Estado de WhatsApp
 
-La integración usa WhatsApp Cloud API con la plantilla `renewal_ready_test` en español de México.
+La integración manual de prueba usa WhatsApp Cloud API con la plantilla `renewal_ready_test` en español de México.
 
 - El código actual exige token, Phone Number ID, WABA ID y versión de API mediante variables de entorno.
 - El modo de prueba obliga a que todos los destinatarios estén en una allowlist.
 - Cada intento queda registrado como `agent_action`.
+- `backend/jobs/run_renewal_agent.py` mantiene `WHATSAPP_ENABLED = False`; por ello la ejecución diaria no requiere renovar el token ni intenta enviar mensajes.
 - La conexión del número empresarial con coexistencia de WhatsApp Business y Cloud API está pendiente de la revisión de Meta. Hasta completarla, este canal debe considerarse de prueba y no productivo.
 
 ## 8. Operación en el Mac mini
@@ -235,11 +236,11 @@ La instalación esperada usa:
 - Google Drive para escritorio y acceso de API disponibles;
 - secretos cargados desde `backend/.env` y `local-secrets/`.
 
-Cloudflare Tunnel funciona como servicio del sistema y publica `https://taiico-crm.com` sin abrir puertos entrantes en el router. Los LaunchAgents versionados en `ops/launchd/` mantienen FastAPI y Next.js activos, arrancan con la sesión del usuario y los reinician ante una caída. Sus logs viven en `.runtime/logs/` y no se versionan.
+Cloudflare Tunnel funciona como servicio del sistema y publica `https://taiico-crm.com` sin abrir puertos entrantes en el router. Los LaunchAgents versionados en `ops/launchd/` mantienen FastAPI y Next.js activos, arrancan con la sesión del usuario y los reinician ante una caída. `com.taiico.crm.renewal-agent` comprueba la agenda cada cinco minutos y ejecuta como máximo una corrida por fecha local. Sus logs viven en `.runtime/logs/` y no se versionan.
 
 Debido a que el repositorio está bajo `Desktop`, macOS requiere acceso total al disco para los ejecutables de Node y Python usados por `launchd`. Los LaunchAgents también requieren que la sesión del usuario operativo permanezca iniciada para acceder a Drive y a sus secretos.
 
-El Mac mini debe permanecer encendido y sin suspensión que interrumpa Drive, Chrome o los procesos web. Actualmente las renovaciones pueden ejecutarse bajo demanda. La programación diaria a las 09:00 de Ciudad de México es una capacidad pendiente; no debe asumirse activa hasta instalar y verificar su propio trabajo programado.
+El Mac mini debe permanecer encendido y sin suspensión que interrumpa Drive, Chrome o los procesos web. Las renovaciones pueden ejecutarse bajo demanda y también se programan diariamente después de las 09:00 de `America/Mexico_City`. El job guarda la fecha antes de procesar, usa un bloqueo de archivo y no reintenta automáticamente el mismo día para evitar duplicar comunicaciones.
 
 ## 9. Seguridad y controles
 
@@ -248,7 +249,7 @@ El Mac mini debe permanecer encendido y sin suspensión que interrumpa Drive, Ch
 - Las credenciales del portal y de Meta se obtienen en tiempo de ejecución.
 - Los códigos MFA no se guardan.
 - Los runs y steps forman el rastro auditable de la automatización.
-- Las pruebas de correo y WhatsApp deben mantener activas las restricciones internas hasta una autorización explícita de producción.
+- Las pruebas de WhatsApp deben mantener activas las restricciones internas hasta una autorización explícita de producción.
 - Las carpetas de Drive y el portal deben conceder solamente los permisos necesarios.
 - Cloudflare es el único punto de entrada público; FastAPI y Next.js permanecen en loopback.
 - CORS se restringe a los orígenes autorizados, la documentación interactiva de FastAPI se desactiva en producción y los endpoints sensibles exigen sesión.
@@ -273,7 +274,7 @@ taiico-crm/
 │   ├── database.py          # modelos SQLAlchemy
 │   └── main.py              # aplicación FastAPI
 ├── local-secrets/           # credenciales locales ignoradas por Git
-├── ops/launchd/             # servicios persistentes de FastAPI y Next.js
+├── ops/launchd/             # servicios persistentes y agendas del Mac mini
 ├── alembic.ini
 ├── next.config.ts
 ├── package.json
@@ -285,7 +286,7 @@ taiico-crm/
 ## 11. Límites actuales y próximos puntos de evolución
 
 1. **Disponibilidad:** backend y frontend ya están supervisados por `launchd`; Chrome y la disponibilidad de la sesión de usuario siguen siendo dependencias locales.
-2. **Agenda diaria:** falta instalar y comprobar la ejecución a las 09:00 `America/Mexico_City`.
+2. **Agenda diaria:** la ejecución está programada después de las 09:00 `America/Mexico_City`; su disponibilidad depende de la sesión del Mac mini, Drive, Chrome y el portal de MetLife.
 3. **WhatsApp productivo:** coexistencia y revisión de Meta siguen pendientes; el flujo actual es de prueba.
 4. **Datos maestros:** la calidad del enlace por RFC, teléfono, correo y agente depende de completar los directorios canónicos.
 5. **Autenticación:** el workbook de usuarios y la cookie local son suficientes para la instalación actual, pero no equivalen a SSO empresarial.
