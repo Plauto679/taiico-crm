@@ -27,6 +27,7 @@ from services.pendientes import (
     add_pending_follow_up,
     append_pending_record,
     build_pending_report,
+    delete_pending_record,
     pending_report_html,
     normalize_report_recipients,
     parse_pending_workbook,
@@ -335,6 +336,34 @@ class PendingWorkbookTests(unittest.TestCase):
         self.assertEqual(row["summary"]["RFC"], "AAMA950203I52")
         self.assertEqual(row["summary"]["Póliza"], "")
         self.assertEqual(row["latest_update"]["update"], "Registrado")
+
+    def test_delete_pending_record_removes_only_target_row_and_shrinks_table(self):
+        source = PendingSource("test", "Test", "TEST_ID", "file", "Base", 3)
+        original = workbook_with_table(
+            "Base",
+            ["Asegurado", "RFC", "Póliza", "22-jul"],
+            [
+                ["Primero", "RFC1", "101", "Seguimiento 1"],
+                ["Eliminar", "RFC2", "102", "Seguimiento 2"],
+                ["Tercero", "RFC3", "103", "Seguimiento 3"],
+            ],
+        )
+
+        updated = delete_pending_record(original, source, 3)
+        parsed = parse_pending_workbook(updated, source)
+
+        self.assertEqual(
+            [row["summary"]["Asegurado"] for row in parsed["rows"]],
+            ["Primero", "Tercero"],
+        )
+        self.assertEqual(
+            [row["source_row"] for row in parsed["rows"]],
+            [2, 3],
+        )
+        with zipfile.ZipFile(io.BytesIO(updated)) as archive:
+            self.assertIsNone(archive.testzip())
+            table_xml = archive.read("xl/tables/table1.xml").decode()
+        self.assertIn('ref="A1:D3"', table_xml)
 
     def test_assignment_update_preserves_untouched_comments(self):
         source = PendingSource("test", "Test", "TEST_ID", "file", "Base", 4)

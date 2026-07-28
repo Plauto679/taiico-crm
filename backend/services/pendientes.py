@@ -921,6 +921,36 @@ def update_pending_record(
     return _update_xlsx_cells(workbook, source.sheet_name, updates)
 
 
+def delete_pending_record(
+    workbook: bytes,
+    source: PendingSource,
+    source_row: int,
+) -> bytes:
+    parsed = parse_pending_workbook(workbook, source)
+    if source_row < 2 or not any(row["source_row"] == source_row for row in parsed["rows"]):
+        raise ValueError(f"La fila {source_row} no existe en el archivo canónico")
+
+    with zipfile.ZipFile(io.BytesIO(workbook), "r") as archive:
+        sheet_path = _worksheet_path(archive, source.sheet_name)
+        sheet_xml = archive.read(sheet_path).decode("utf-8")
+        replacements = {
+            sheet_path: _delete_sheet_row(sheet_xml, source_row).encode("utf-8"),
+        }
+        for table_path in _related_table_paths(archive, sheet_path):
+            table_xml = archive.read(table_path).decode("utf-8")
+            replacements[table_path] = _shrink_table_after_row_delete(
+                table_xml,
+                source_row,
+            ).encode("utf-8")
+
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as destination:
+            for item in archive.infolist():
+                content = replacements.get(item.filename, archive.read(item.filename))
+                destination.writestr(item, content)
+    return repair_workbook_integrity(output.getvalue())
+
+
 def add_pending_follow_up(
     workbook: bytes,
     source: PendingSource,
@@ -1219,6 +1249,101 @@ def _insert_sheet_row(sheet_xml: str, row_number: int, values: dict[int, str]) -
     updated_rows = rows_xml[:insertion_point] + new_row + rows_xml[insertion_point:]
     updated_xml = sheet_xml[:sheet_data.start(2)] + updated_rows + sheet_xml[sheet_data.end(2):]
     return _extend_dimension(updated_xml, row_number)
+
+
+def _delete_sheet_row(sheet_xml: str, row_number: int) -> str:
+    sheet_data = re.search(r"(<sheetData>)(.*?)(</sheetData>)", sheet_xml, flags=re.DOTALL)
+    if not sheet_data:
+        raise ValueError("La pestaña no contiene una tabla de datos válida")
+
+    row_pattern = re.compile(
+        r'<row\b[^>]*\br="(\d+)"[^>]*(?:/>|>.*?</row>)',
+        re.DOTALL,
+    )
+    found = False
+    rebuilt_rows: list[str] = []
+    cursor = 0
+    for match in row_pattern.finditer(sheet_data.group(2)):
+        rebuilt_rows.append(sheet_data.group(2)[cursor:match.start()])
+        current_row = int(match.group(1))
+        if current_row == row_number:
+            found = True
+        elif current_row > row_number:
+            rebuilt_rows.append(
+                _shift_sheet_row_number(match.group(0), current_row, current_row - 1),
+            )
+        else:
+            rebuilt_rows.append(match.group(0))
+        cursor = match.end()
+    rebuilt_rows.append(sheet_data.group(2)[cursor:])
+    if not found:
+        raise ValueError(f"La fila {row_number} no existe en la pestaña")
+
+    updated = (
+        sheet_xml[:sheet_data.start(2)]
+        + "".join(rebuilt_rows)
+        + sheet_xml[sheet_data.end(2):]
+    )
+    return _shrink_dimension_after_row_delete(updated, row_number)
+
+
+def _shift_sheet_row_number(row_xml: str, old_row: int, new_row: int) -> str:
+    shifted = re.sub(
+        rf'(<row\b[^>]*\br="){old_row}(")',
+        rf'\g<1>{new_row}\2',
+        row_xml,
+        count=1,
+    )
+    shifted = re.sub(
+        rf'(<c\b[^>]*\br="[A-Z]+){old_row}(")',
+        rf'\g<1>{new_row}\2',
+        shifted,
+    )
+    return re.sub(
+        rf'(?<![A-Z0-9_])(\$?[A-Z]{{1,3}}\$?){old_row}(?!\d)',
+        rf'\g<1>{new_row}',
+        shifted,
+    )
+
+
+def _shrink_dimension_after_row_delete(sheet_xml: str, deleted_row: int) -> str:
+    dimension = re.search(
+        r'(<dimension\b[^>]*\bref="[A-Z]+\d+:)([A-Z]+)(\d+)(")',
+        sheet_xml,
+    )
+    if not dimension or int(dimension.group(3)) < deleted_row:
+        return sheet_xml
+    replacement = (
+        f"{dimension.group(1)}{dimension.group(2)}"
+        f"{max(1, int(dimension.group(3)) - 1)}{dimension.group(4)}"
+    )
+    return sheet_xml[:dimension.start()] + replacement + sheet_xml[dimension.end():]
+
+
+def _shrink_table_after_row_delete(table_xml: str, deleted_row: int) -> str:
+    table_ref = re.search(
+        r'(<table\b[^>]*\bref="[A-Z]+)(\d+):([A-Z]+)(\d+)(")',
+        table_xml,
+    )
+    if not table_ref:
+        return table_xml
+    start_row = int(table_ref.group(2))
+    end_row = int(table_ref.group(4))
+    if not (start_row < deleted_row <= end_row):
+        return table_xml
+
+    new_end_row = max(start_row, end_row - 1)
+    replacement = (
+        f"{table_ref.group(1)}{start_row}:"
+        f"{table_ref.group(3)}{new_end_row}{table_ref.group(5)}"
+    )
+    updated = table_xml[:table_ref.start()] + replacement + table_xml[table_ref.end():]
+    return re.sub(
+        r'(<autoFilter\b[^>]*\bref="[A-Z]+\d+:[A-Z]+)\d+(")',
+        rf'\g<1>{new_end_row}\2',
+        updated,
+        count=1,
+    )
 
 
 def _cell_styles(row_xml: str, row_number: int) -> dict[int, str]:
@@ -1685,6 +1810,44 @@ def update_pending(
         raise HTTPException(
             status_code=502,
             detail=f"No fue posible actualizar el pendiente en {source.title}: {exc}",
+        ) from exc
+
+
+@router.delete("/{source_key}/{source_row}")
+def delete_pending(
+    source_key: str,
+    source_row: int,
+    profile: AccessProfile = Depends(require_module_access("pendientes", operation=True)),
+):
+    source = SOURCES.get(source_key)
+    if not source:
+        raise HTTPException(status_code=404, detail="Fuente de pendientes no encontrada")
+    try:
+        with _write_lock:
+            service = build_pending_drive_service()
+            _, row = _get_pending_row(source_key, source_row, service)
+            _ensure_row_access(row, profile, operation=True)
+            file_id = _source_file_id(source)
+            updated_workbook = delete_pending_record(
+                _download_workbook(file_id, service),
+                source,
+                source_row,
+            )
+            _upload_workbook(file_id, updated_workbook, service)
+            _clear_source_cache(source.key)
+        return {
+            "deleted": True,
+            "source_row": source_row,
+            "folder_preserved": True,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"No fue posible eliminar el pendiente en {source.title}: {exc}",
         ) from exc
 
 

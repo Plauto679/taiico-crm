@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
@@ -18,6 +18,7 @@ interface DataTableProps<T> {
     columns: Column<T>[];
     className?: string;
     onRowClick?: (row: T) => void;
+    onProcessedDataChange?: (rows: T[]) => void;
 }
 
 type SortDirection = 'asc' | 'desc' | null;
@@ -27,7 +28,7 @@ interface SortConfig<T> {
     direction: SortDirection;
 }
 
-export function DataTable<T>({ data, columns, className, onRowClick }: DataTableProps<T>) {
+export function DataTable<T>({ data, columns, className, onRowClick, onProcessedDataChange }: DataTableProps<T>) {
     const [sortConfig, setSortConfig] = useState<SortConfig<T>>({ key: null, direction: null });
     const [filters, setFilters] = useState<Record<string, string>>({});
 
@@ -97,6 +98,10 @@ export function DataTable<T>({ data, columns, className, onRowClick }: DataTable
 
         return filtered;
     }, [data, filters, sortConfig, columns]);
+
+    useEffect(() => {
+        onProcessedDataChange?.(processedData);
+    }, [onProcessedDataChange, processedData]);
 
     return (
         <div className={twMerge("overflow-x-auto rounded-lg border border-gray-200 shadow-sm", className)}>

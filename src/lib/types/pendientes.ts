@@ -90,6 +90,12 @@ export interface PendingUpdateResponse {
     folder_warning?: string | null;
 }
 
+export interface PendingDeleteResponse {
+    deleted: boolean;
+    source_row: number;
+    folder_preserved: boolean;
+}
+
 export interface PendingDocument {
     id: string;
     name: string;

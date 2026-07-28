@@ -1,10 +1,10 @@
 'use client';
 
 import { ChangeEvent, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ExternalLink, File, FolderOpen, Loader2, MessageSquarePlus, Save, Upload, X } from 'lucide-react';
+import { CheckCircle2, ExternalLink, File, FolderOpen, Loader2, MessageSquarePlus, Save, Trash2, Upload, X } from 'lucide-react';
 
 import { PendingAccess, PendingDocument, PendingDocumentsResponse, PendingRow } from '@/lib/types/pendientes';
-import { createPendingFolder, createPendingFollowUp, getPendingDocuments, updatePendingRecord, uploadPendingDocument } from '@/modules/pendientes/service';
+import { createPendingFolder, createPendingFollowUp, deletePendingRecord, getPendingDocuments, updatePendingRecord, uploadPendingDocument } from '@/modules/pendientes/service';
 import { agentsForPromotoria, PendingAgentSelect } from './PendingAgentSelect';
 
 type PendingSourceKey = 'emision-servicios' | 'siniestros';
@@ -14,11 +14,12 @@ interface PendingHistoryModalProps {
     row: PendingRow | null;
     source: PendingSourceKey;
     onUpdated: (row: PendingRow) => void;
+    onDeleted: (row: PendingRow) => void | Promise<void>;
     onClose: () => void;
     access: PendingAccess;
 }
 
-export function PendingHistoryModal({ row, source, onUpdated, onClose, access }: PendingHistoryModalProps) {
+export function PendingHistoryModal({ row, source, onUpdated, onDeleted, onClose, access }: PendingHistoryModalProps) {
     const canOperate = access.can_operate;
     const [tab, setTab] = useState<DetailTab>('detalle');
     const [documents, setDocuments] = useState<PendingDocumentsResponse | null>(null);
@@ -32,6 +33,7 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose, access }:
     const [detailValues, setDetailValues] = useState<Record<string, string>>(() => editableDetailValues(row?.summary || {}));
     const [dirtyDetailFields, setDirtyDetailFields] = useState<Set<string>>(() => new Set());
     const [savingDetails, setSavingDetails] = useState(false);
+    const [deleting, setDeleting] = useState(false);
     const [folderNotice, setFolderNotice] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -138,6 +140,23 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose, access }:
         }
     };
 
+    const deleteRecord = async () => {
+        const confirmed = window.confirm(
+            '¿Eliminar este registro de pendiente? Esta acción quitará la fila de la tabla. '
+            + 'La carpeta del expediente y sus documentos se conservarán.',
+        );
+        if (!confirmed) return;
+        setDeleting(true);
+        setError(null);
+        try {
+            await deletePendingRecord(source, row.source_row);
+            await onDeleted(row);
+        } catch (requestError) {
+            setError(requestError instanceof Error ? requestError.message : 'No fue posible eliminar el pendiente.');
+            setDeleting(false);
+        }
+    };
+
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onMouseDown={onClose}>
             {successMessage && (
@@ -160,9 +179,22 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose, access }:
                         <TabButton active={tab === 'detalle'} onClick={() => setTab('detalle')}>Detalle e historial</TabButton>
                         <TabButton active={tab === 'expediente'} onClick={openExpediente}>Integración del expediente</TabButton>
                     </div>
-                    {canOperate && <button type="button" onClick={() => setShowFollowUp((current) => !current)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700">
-                        <MessageSquarePlus className="h-4 w-4" /> Seguimiento
-                    </button>}
+                    {canOperate && (
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={deleteRecord}
+                                disabled={deleting}
+                                className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                            >
+                                {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                <span className="hidden sm:inline">Eliminar registro</span>
+                            </button>
+                            <button type="button" onClick={() => setShowFollowUp((current) => !current)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+                                <MessageSquarePlus className="h-4 w-4" /> Seguimiento
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 <div className="max-h-[calc(92vh-142px)] overflow-y-auto p-6">

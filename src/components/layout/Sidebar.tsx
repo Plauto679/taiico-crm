@@ -21,6 +21,7 @@ export function Sidebar() {
     const [collapsed, setCollapsed] = useState(false);
     const [loggingOut, setLoggingOut] = useState(false);
     const [permissions, setPermissions] = useState<Record<string, string> | null>(null);
+    const [username, setUsername] = useState('');
     const pathname = usePathname();
     const router = useRouter();
 
@@ -30,7 +31,10 @@ export function Sidebar() {
         fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' })
             .then((response) => response.ok ? response.json() : Promise.reject())
             .then((data) => {
-                if (active) setPermissions(data.module_permissions || {});
+                if (active) {
+                    setPermissions(data.module_permissions || {});
+                    setUsername(data.username || '');
+                }
             })
             .catch(() => {
                 if (active) setPermissions({});
@@ -58,8 +62,14 @@ export function Sidebar() {
 
     return (
         <aside className={`relative flex h-screen shrink-0 flex-col border-r bg-white transition-[width] duration-200 ${collapsed ? 'w-20' : 'w-64'}`}>
-            <div className="flex h-40 flex-col items-center justify-center gap-2 border-b px-3">
+            <div className="flex min-h-52 flex-none flex-col items-center justify-center gap-2 border-b px-3 py-4">
                 <img src="/logo.png" alt="TAIICO CRM" className={`w-auto transition-all ${collapsed ? 'h-12' : 'h-20'}`} />
+                {!collapsed && (
+                    <p className="w-full text-center text-xs leading-4 text-slate-500">
+                        Sesión iniciada como:
+                        <span className="block break-all font-semibold text-slate-700">{username || 'Cargando...'}</span>
+                    </p>
+                )}
                 <button
                     type="button"
                     onClick={handleLogout}

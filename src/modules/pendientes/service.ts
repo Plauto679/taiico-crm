@@ -3,6 +3,7 @@ import {
     EmisionServiciosPendingInput,
     PendingCreateResponse,
     PendingDocument,
+    PendingDeleteResponse,
     PendingDocumentsResponse,
     PendingFollowUpResponse,
     PendingReportSendResponse,
@@ -75,6 +76,15 @@ export function updatePendingRecord(
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ values }),
+    });
+}
+
+export function deletePendingRecord(
+    source: 'emision-servicios' | 'siniestros',
+    sourceRow: number,
+): Promise<PendingDeleteResponse> {
+    return fetchFromApi(`/pendientes/${source}/${sourceRow}`, {
+        method: 'DELETE',
     });
 }
 
