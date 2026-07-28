@@ -29,6 +29,7 @@ from services.authorization import current_access_profile, require_module_access
 from services.pending_document_requirements import requirements_for, split_request_types
 from services.mail_configuration import smtp_settings_for
 from services.renovaciones import send_email_smtp
+from services.xlsx_integrity import repair_workbook_integrity
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -1041,7 +1042,7 @@ def _update_xlsx_cells(
             for item in archive.infolist():
                 content = replacements.get(item.filename, archive.read(item.filename))
                 destination.writestr(item, content)
-    return output.getvalue()
+    return repair_workbook_integrity(output.getvalue())
 
 
 def _related_table_paths(archive: zipfile.ZipFile, sheet_path: str) -> list[str]:

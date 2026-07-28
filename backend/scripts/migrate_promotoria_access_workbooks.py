@@ -9,6 +9,8 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
+from services.xlsx_integrity import repair_workbook_integrity
+
 
 PROMOTORIAS = {
     "ABBONDANZA",
@@ -253,7 +255,7 @@ def migrate_pending_low_level(
         with zipfile.ZipFile(output, "w") as destination:
             for item in archive.infolist():
                 destination.writestr(item, replacements.get(item.filename, archive.read(item.filename)))
-    path.write_bytes(output.getvalue())
+    path.write_bytes(repair_workbook_integrity(output.getvalue()))
 
 
 def validate(path: Path, sheet_name: str, required_headers: set[str]) -> None:
