@@ -336,6 +336,35 @@ class PendingWorkbookTests(unittest.TestCase):
         self.assertEqual(row["summary"]["Póliza"], "")
         self.assertEqual(row["latest_update"]["update"], "Registrado")
 
+    def test_assignment_update_preserves_untouched_comments(self):
+        source = PendingSource("test", "Test", "TEST_ID", "file", "Base", 4)
+        original = workbook_bytes(
+            "Base",
+            ["Asegurado", "Comentarios", "Promotoria", "RFC Agente", "22-jul"],
+            [[
+                "Cliente",
+                "Pendiente de respuesta por parte de MetLife",
+                "",
+                "",
+                "Seguimiento anterior",
+            ]],
+        )
+
+        updated = update_pending_record(
+            original,
+            source,
+            2,
+            {"Promotoria": "TAIICO", "RFC Agente": "AAMA950203I52"},
+        )
+        row = parse_pending_workbook(updated, source)["rows"][0]
+
+        self.assertEqual(
+            row["summary"]["Comentarios"],
+            "Pendiente de respuesta por parte de MetLife",
+        )
+        self.assertEqual(row["summary"]["Promotoria"], "TAIICO")
+        self.assertEqual(row["summary"]["RFC Agente"], "AAMA950203I52")
+
     def test_folder_name_combines_rfc_and_request(self):
         self.assertEqual(
             _folder_name_for_row({

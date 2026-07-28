@@ -1,6 +1,6 @@
 'use client';
 
-import { ChangeEvent, useMemo, useState } from 'react';
+import { ChangeEvent, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, ExternalLink, File, FolderOpen, Loader2, MessageSquarePlus, Save, Upload, X } from 'lucide-react';
 
 import { PendingAccess, PendingDocument, PendingDocumentsResponse, PendingRow } from '@/lib/types/pendientes';
@@ -30,9 +30,17 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose, access }:
     const [followUpComment, setFollowUpComment] = useState('');
     const [savingFollowUp, setSavingFollowUp] = useState(false);
     const [detailValues, setDetailValues] = useState<Record<string, string>>(() => editableDetailValues(row?.summary || {}));
+    const [dirtyDetailFields, setDirtyDetailFields] = useState<Set<string>>(() => new Set());
     const [savingDetails, setSavingDetails] = useState(false);
     const [folderNotice, setFolderNotice] = useState<string | null>(null);
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!successMessage) return;
+        const timeout = window.setTimeout(() => setSuccessMessage(null), 3000);
+        return () => window.clearTimeout(timeout);
+    }, [successMessage]);
 
     const openExpediente = async () => {
         setTab('expediente');
@@ -106,16 +114,21 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose, access }:
 
     const saveDetails = async () => {
         const changedValues = Object.fromEntries(
-            Object.entries(detailValues).filter(([key, value]) => value !== comparableDetailValue(key, row.summary[key] || '')),
+            [...dirtyDetailFields]
+                .filter((key) => detailValues[key] !== comparableDetailValue(key, row.summary[key] || ''))
+                .map((key) => [key, detailValues[key]]),
         );
         if (Object.keys(changedValues).length === 0) return;
         setSavingDetails(true);
         setError(null);
         setFolderNotice(null);
+        setSuccessMessage(null);
         try {
             const response = await updatePendingRecord(source, row.source_row, changedValues);
             setDetailValues(editableDetailValues(response.row.summary));
+            setDirtyDetailFields(new Set());
             setFolderNotice(response.folder_warning || null);
+            setSuccessMessage('Pendiente actualizado correctamente.');
             setDocuments(null);
             onUpdated(response.row);
         } catch (requestError) {
@@ -127,6 +140,12 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose, access }:
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onMouseDown={onClose}>
+            {successMessage && (
+                <div role="status" className="fixed right-4 top-4 z-[60] flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 shadow-lg">
+                    <CheckCircle2 className="h-5 w-5" />
+                    {successMessage}
+                </div>
+            )}
             <div className="max-h-[92vh] w-full max-w-4xl overflow-hidden rounded-xl bg-white shadow-xl" onMouseDown={(event) => event.stopPropagation()}>
                 <div className="flex items-start justify-between border-b px-6 py-4">
                     <div>
@@ -166,7 +185,16 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose, access }:
                             row={row}
                             values={detailValues}
                             saving={savingDetails}
-                            onChange={(label, value) => setDetailValues((current) => applyDerivedDayValue(current, label, value))}
+                            dirtyFields={dirtyDetailFields}
+                            onChange={(label, value) => {
+                                setDetailValues((current) => applyDerivedDayValue(current, label, value));
+                                setDirtyDetailFields((current) => {
+                                    const next = new Set(current).add(label);
+                                    const derivedLabel = derivedFieldLabel(detailValues, label);
+                                    if (derivedLabel) next.add(derivedLabel);
+                                    return next;
+                                });
+                            }}
                             onSave={saveDetails}
                             access={access}
                         />
@@ -244,6 +272,7 @@ function DetailTabContent({
     row,
     values,
     saving,
+    dirtyFields,
     onChange,
     onSave,
     access,
@@ -251,6 +280,7 @@ function DetailTabContent({
     row: PendingRow;
     values: Record<string, string>;
     saving: boolean;
+    dirtyFields: Set<string>;
     onChange: (label: string, value: string) => void;
     onSave: () => void;
     access: PendingAccess;
@@ -263,8 +293,8 @@ function DetailTabContent({
         (label) => normalizeFieldLabel(label) === 'rfc agente',
     );
     const selectedPromotoria = promotoriaLabel ? values[promotoriaLabel] : '';
-    const hasChanges = Object.entries(values).some(
-        ([key, value]) => value !== comparableDetailValue(key, row.summary[key] || ''),
+    const hasChanges = [...dirtyFields].some(
+        (key) => values[key] !== comparableDetailValue(key, row.summary[key] || ''),
     );
     return <>
         <div className="rounded-lg bg-gray-50 p-4">
@@ -450,6 +480,12 @@ function applyDerivedDayValue(
     const targetLabel = Object.keys(values).find((label) => normalizeFieldLabel(label) === targetNormalized);
     if (targetLabel) next[targetLabel] = daysSince(value);
     return next;
+}
+
+function derivedFieldLabel(values: Record<string, string>, changedLabel: string): string | null {
+    const targetNormalized = DATE_TO_DAY_FIELD[normalizeFieldLabel(changedLabel)];
+    if (!targetNormalized) return null;
+    return Object.keys(values).find((label) => normalizeFieldLabel(label) === targetNormalized) || null;
 }
 
 function handleFileSelection(event: ChangeEvent<HTMLInputElement>, documentName: string, upload: (name: string, file: globalThis.File) => Promise<void>) {
