@@ -8,6 +8,7 @@ import {
     createEmisionServiciosPending,
     createSiniestrosPending,
 } from '@/modules/pendientes/service';
+import { agentsForPromotoria, PendingAgentSelect } from './PendingAgentSelect';
 
 
 type PendingSourceKey = 'emision-servicios' | 'siniestros';
@@ -120,6 +121,12 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
     const removeSolicitud = (index: number) => {
         setSolicitudesDe((current) => current.filter((_, itemIndex) => itemIndex !== index));
     };
+    const updatePromotoria = (value: string) => {
+        setPromotoria(value);
+        if (!agentsForPromotoria(access.agents, value).some((agent) => agent.rfc === rfcAgente)) {
+            setRfcAgente('');
+        }
+    };
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto overscroll-contain bg-slate-950/50 p-2 sm:p-4" onMouseDown={onClose}>
@@ -141,15 +148,20 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                             <SelectField
                                 label="Promotoría"
                                 value={promotoria}
-                                onChange={setPromotoria}
+                                onChange={updatePromotoria}
                                 options={access.promotorias}
                                 disabled={access.promotorias.length === 1}
                             />
-                            <TextField
-                                label="RFC Agente"
-                                value={rfcAgente}
-                                onChange={(value) => setRfcAgente(value.toUpperCase())}
-                            />
+                            <label className="block">
+                                <span className="text-sm font-medium text-slate-700">RFC Agente</span>
+                                <PendingAgentSelect
+                                    agents={access.agents}
+                                    promotoria={promotoria}
+                                    value={rfcAgente}
+                                    onChange={setRfcAgente}
+                                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
+                                />
+                            </label>
                             <TextField label="Nombre del Asegurado" value={asegurado} onChange={setAsegurado} />
                             <TextField label="RFC" value={rfc} onChange={(value) => setRfc(value.toUpperCase())} required={false} />
                             {source === 'emision-servicios' ? (

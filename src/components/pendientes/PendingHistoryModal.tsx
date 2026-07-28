@@ -3,8 +3,9 @@
 import { ChangeEvent, useMemo, useState } from 'react';
 import { CheckCircle2, ExternalLink, File, FolderOpen, Loader2, MessageSquarePlus, Save, Upload, X } from 'lucide-react';
 
-import { PendingDocument, PendingDocumentsResponse, PendingRow } from '@/lib/types/pendientes';
+import { PendingAccess, PendingDocument, PendingDocumentsResponse, PendingRow } from '@/lib/types/pendientes';
 import { createPendingFolder, createPendingFollowUp, getPendingDocuments, updatePendingRecord, uploadPendingDocument } from '@/modules/pendientes/service';
+import { agentsForPromotoria, PendingAgentSelect } from './PendingAgentSelect';
 
 type PendingSourceKey = 'emision-servicios' | 'siniestros';
 type DetailTab = 'detalle' | 'expediente';
@@ -14,10 +15,11 @@ interface PendingHistoryModalProps {
     source: PendingSourceKey;
     onUpdated: (row: PendingRow) => void;
     onClose: () => void;
-    canOperate: boolean;
+    access: PendingAccess;
 }
 
-export function PendingHistoryModal({ row, source, onUpdated, onClose, canOperate }: PendingHistoryModalProps) {
+export function PendingHistoryModal({ row, source, onUpdated, onClose, access }: PendingHistoryModalProps) {
+    const canOperate = access.can_operate;
     const [tab, setTab] = useState<DetailTab>('detalle');
     const [documents, setDocuments] = useState<PendingDocumentsResponse | null>(null);
     const [loading, setLoading] = useState(false);
@@ -166,7 +168,7 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose, canOperat
                             saving={savingDetails}
                             onChange={(label, value) => setDetailValues((current) => applyDerivedDayValue(current, label, value))}
                             onSave={saveDetails}
-                            canOperate={canOperate}
+                            access={access}
                         />
                     ) : loading ? (
                         <div className="flex items-center justify-center py-16 text-slate-500"><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Consultando Drive...</div>
@@ -244,15 +246,23 @@ function DetailTabContent({
     saving,
     onChange,
     onSave,
-    canOperate,
+    access,
 }: {
     row: PendingRow;
     values: Record<string, string>;
     saving: boolean;
     onChange: (label: string, value: string) => void;
     onSave: () => void;
-    canOperate: boolean;
+    access: PendingAccess;
 }) {
+    const canOperate = access.can_operate;
+    const promotoriaLabel = Object.keys(values).find(
+        (label) => normalizeFieldLabel(label) === 'promotoria',
+    );
+    const rfcAgenteLabel = Object.keys(values).find(
+        (label) => normalizeFieldLabel(label) === 'rfc agente',
+    );
+    const selectedPromotoria = promotoriaLabel ? values[promotoriaLabel] : '';
     const hasChanges = Object.entries(values).some(
         ([key, value]) => value !== comparableDetailValue(key, row.summary[key] || ''),
     );
@@ -263,10 +273,44 @@ function DetailTabContent({
                     .filter(([label]) => label.trim().toLocaleLowerCase('es-MX') !== 'fecha hoy')
                     .map(([label, value]) => {
                         const derived = isDerivedDayField(label);
+                        const normalizedLabel = normalizeFieldLabel(label);
                         return (
                             <label key={label} className="block">
                                 <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
-                                {label.toLocaleLowerCase('es-MX').includes('comentario') ? (
+                                {normalizedLabel === 'promotoria' ? (
+                                    <select
+                                        required
+                                        disabled={!canOperate || access.promotorias.length === 1}
+                                        value={value}
+                                        onChange={(event) => {
+                                            const nextPromotoria = event.target.value;
+                                            onChange(label, nextPromotoria);
+                                            if (
+                                                rfcAgenteLabel
+                                                && !agentsForPromotoria(access.agents, nextPromotoria)
+                                                    .some((agent) => agent.rfc === values[rfcAgenteLabel])
+                                            ) {
+                                                onChange(rfcAgenteLabel, '');
+                                            }
+                                        }}
+                                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+                                    >
+                                        <option value="">Seleccionar...</option>
+                                        {access.promotorias.map((promotoria) => (
+                                            <option key={promotoria} value={promotoria}>{promotoria}</option>
+                                        ))}
+                                    </select>
+                                ) : normalizedLabel === 'rfc agente' ? (
+                                    <PendingAgentSelect
+                                        agents={access.agents}
+                                        promotoria={selectedPromotoria}
+                                        value={value}
+                                        onChange={(nextValue) => onChange(label, nextValue)}
+                                        disabled={!canOperate}
+                                        required={false}
+                                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+                                    />
+                                ) : label.toLocaleLowerCase('es-MX').includes('comentario') ? (
                                     <textarea disabled={!canOperate} value={value} onChange={(event) => onChange(label, event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100" />
                                 ) : (
                                     <input

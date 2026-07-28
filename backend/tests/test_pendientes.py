@@ -4,6 +4,7 @@ import unittest
 import zipfile
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 from openpyxl import Workbook
@@ -21,6 +22,7 @@ from services.pendientes import (
     _derived_day_values,
     _folder_name_for_row,
     _filter_source_for_profile,
+    _assigned_agent_rfc,
     _assigned_promotoria,
     add_pending_follow_up,
     append_pending_record,
@@ -28,6 +30,7 @@ from services.pendientes import (
     pending_report_html,
     normalize_report_recipients,
     parse_pending_workbook,
+    parse_agents_workbook,
     update_pending_record,
 )
 from services.auth import AccessProfile, PROMOTORIAS
@@ -113,6 +116,54 @@ class PendingWorkbookTests(unittest.TestCase):
         )
 
         self.assertEqual(_assigned_promotoria("TAIICO", profile), "ABBONDANZA")
+
+    def test_agents_workbook_builds_rfc_name_promotoria_labels(self):
+        agents = parse_agents_workbook(
+            workbook_bytes(
+                "Datos",
+                [
+                    "RFC",
+                    "Promotoria",
+                    "Nombres",
+                    "Apellido_Paterno",
+                    "Apellido_Materno",
+                ],
+                [["aama950203i52", "Taiico", "ALBERTO", "ALFARO", "MENDOZA"]],
+            ),
+        )
+
+        self.assertEqual(agents, [{
+            "rfc": "AAMA950203I52",
+            "name": "Alberto Alfaro Mendoza",
+            "promotoria": "TAIICO",
+            "label": "AAMA950203I52 - Alberto Alfaro Mendoza",
+        }])
+
+    def test_agent_assignment_must_match_selected_promotoria(self):
+        profile = AccessProfile(
+            "admin@example.com",
+            "admin",
+            ("TAIICO", "EKILIBRA"),
+            "",
+            (),
+            {"pendientes": "operacion"},
+        )
+        agents = [
+            {
+                "rfc": "AAMA950203I52",
+                "name": "Alberto Alfaro Mendoza",
+                "promotoria": "TAIICO",
+                "label": "AAMA950203I52 - Alberto Alfaro Mendoza",
+            },
+        ]
+
+        with patch("services.pendientes.load_agent_directory", return_value=agents):
+            self.assertEqual(
+                _assigned_agent_rfc("aama950203i52", "TAIICO", profile),
+                "AAMA950203I52",
+            )
+            with self.assertRaisesRegex(Exception, "promotoría asignada"):
+                _assigned_agent_rfc("AAMA950203I52", "EKILIBRA", profile)
 
     def test_central_admin_sees_unassigned_records_and_inconsistencies(self):
         source = {

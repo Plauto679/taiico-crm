@@ -31,6 +31,14 @@ export interface PendingAccess {
     promotorias: string[];
     rfc: string;
     central_admin: boolean;
+    agents: PendingAgentOption[];
+}
+
+export interface PendingAgentOption {
+    rfc: string;
+    name: string;
+    promotoria: string;
+    label: string;
 }
 
 export interface PendingAssignmentInconsistency {

@@ -105,7 +105,7 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
                 </p>
             </div>
 
-            {selectedRow && <PendingHistoryModal key={`${activeTab}:${selectedRow.id}`} row={selectedRow} source={activeTab} canOperate={canOperate} onUpdated={handleUpdated} onClose={() => setSelectedRow(null)} />}
+            {selectedRow && <PendingHistoryModal key={`${activeTab}:${selectedRow.id}`} row={selectedRow} source={activeTab} access={activeData.access} onUpdated={handleUpdated} onClose={() => setSelectedRow(null)} />}
             {showRegisterModal && (
                 <RegisterPendingModal
                     source={activeTab}

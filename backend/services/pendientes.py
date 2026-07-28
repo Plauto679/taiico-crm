@@ -37,6 +37,7 @@ router = APIRouter(prefix="/pendientes", tags=["pendientes"])
 DEFAULT_EMISION_SERVICIOS_FILE_ID = "1JMr-EwtniwHvPm6zefhGJroTw2vxivmC"
 DEFAULT_SINIESTROS_FILE_ID = "1UvXo2LboTKWl5323mEuP6bmmyIhLYveL"
 DEFAULT_PENDING_DOCUMENTS_FOLDER_ID = "1IIIgHB8SlEIZr5vSAuly14NJMO50ke1b"
+DEFAULT_AGENTS_METLIFE_FILE_ID = "1IoeLDCQe4T3DofStiBSaI09xjX2-RSby"
 DEFAULT_CACHE_SECONDS = 300
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
@@ -159,8 +160,10 @@ SOURCES = {
 }
 
 _cache_lock = threading.Lock()
+_agent_cache_lock = threading.Lock()
 _write_lock = threading.Lock()
 _cache: dict[str, tuple[float, dict]] = {}
+_agent_cache: tuple[float, list[dict[str, str]]] | None = None
 
 REPORT_COLORS = ("verde", "amarillo", "rojo")
 REPORT_COLOR_LABELS = {
@@ -601,6 +604,7 @@ def _filter_source_for_profile(result: dict, profile: AccessProfile) -> dict:
         "promotorias": list(profile.promotorias),
         "rfc": profile.rfc,
         "central_admin": profile.is_central_admin,
+        "agents": [],
     }
     filtered["inconsistencies"] = (
         _inconsistency_rows(result) if profile.is_central_admin else []
@@ -623,6 +627,107 @@ def _assigned_promotoria(requested: str, profile: AccessProfile) -> str:
             detail="Selecciona una promotoría autorizada para tu usuario",
         )
     return selected
+
+
+def parse_agents_workbook(workbook: bytes) -> list[dict[str, str]]:
+    table = pd.read_excel(
+        io.BytesIO(workbook),
+        sheet_name="Datos",
+        dtype=str,
+        keep_default_na=False,
+    )
+    required = {"RFC", "Promotoria"}
+    missing = sorted(required.difference(table.columns))
+    if missing:
+        raise ValueError(
+            "La base de Agentes MetLife no contiene las columnas: " + ", ".join(missing)
+        )
+
+    agents: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for _, row in table.iterrows():
+        rfc = clean_cell(row.get("RFC")).upper()
+        promotoria = clean_cell(row.get("Promotoria")).upper()
+        if not rfc or not promotoria or rfc in seen:
+            continue
+        name_parts = [
+            clean_cell(row.get("Nombres")),
+            clean_cell(row.get("Apellido_Paterno")),
+            clean_cell(row.get("Apellido_Materno")),
+        ]
+        name = " ".join(part for part in name_parts if part).title()
+        if not name:
+            name = clean_cell(row.get("Nombre")).title()
+        agents.append({
+            "rfc": rfc,
+            "name": name or "Nombre no registrado",
+            "promotoria": promotoria,
+            "label": f"{rfc} - {name or 'Nombre no registrado'}",
+        })
+        seen.add(rfc)
+    return sorted(agents, key=lambda agent: (agent["promotoria"], agent["name"], agent["rfc"]))
+
+
+def load_agent_directory(service=None) -> list[dict[str, str]]:
+    global _agent_cache
+    cache_seconds = max(
+        0,
+        int(os.getenv("PENDING_AGENTS_CACHE_SECONDS", str(DEFAULT_CACHE_SECONDS))),
+    )
+    now = time.monotonic()
+    with _agent_cache_lock:
+        if _agent_cache and now < _agent_cache[0]:
+            return _agent_cache[1]
+        file_id = os.getenv(
+            "GOOGLE_DRIVE_AGENTS_METLIFE_FILE_ID",
+            DEFAULT_AGENTS_METLIFE_FILE_ID,
+        ).strip()
+        agents = parse_agents_workbook(_download_workbook(file_id, service))
+        _agent_cache = (now + cache_seconds, agents)
+        return agents
+
+
+def _agent_options_for_profile(
+    profile: AccessProfile,
+    service=None,
+) -> list[dict[str, str]]:
+    allowed_promotorias = set(profile.promotorias)
+    options = [
+        agent
+        for agent in load_agent_directory(service)
+        if agent["promotoria"] in allowed_promotorias
+    ]
+    if profile.is_agent:
+        options = [agent for agent in options if agent["rfc"] == profile.rfc]
+    return options
+
+
+def _assigned_agent_rfc(
+    requested: str,
+    promotoria: str,
+    profile: AccessProfile,
+    *,
+    service=None,
+    allow_empty: bool = False,
+) -> str:
+    selected = clean_cell(requested).upper()
+    if not selected and allow_empty:
+        return ""
+    if not selected:
+        raise HTTPException(status_code=422, detail="Selecciona un agente")
+    matching = next(
+        (
+            agent for agent in _agent_options_for_profile(profile, service)
+            if agent["rfc"] == selected and agent["promotoria"] == promotoria
+        ),
+        None,
+    )
+    if not matching:
+        raise HTTPException(
+            status_code=422,
+            detail="Selecciona un agente perteneciente a la promotoría asignada",
+        )
+    return matching["rfc"]
 
 
 def _ensure_row_access(row: dict, profile: AccessProfile, *, operation: bool = False) -> None:
@@ -1364,6 +1469,7 @@ def pending_access_options(
         "promotorias": list(profile.promotorias),
         "rfc": profile.rfc,
         "central_admin": profile.is_central_admin,
+        "agents": _agent_options_for_profile(profile),
     }
 
 
@@ -1376,7 +1482,9 @@ async def get_pending_source(
     if not source:
         raise HTTPException(status_code=404, detail="Unknown pending source")
     try:
-        return _filter_source_for_profile(load_pending_source(source), profile)
+        filtered = _filter_source_for_profile(load_pending_source(source), profile)
+        filtered["access"]["agents"] = _agent_options_for_profile(profile)
+        return filtered
     except Exception as exc:
         raise HTTPException(
             status_code=502,
@@ -1404,6 +1512,7 @@ def create_emision_servicios_pending(
                 + ", ".join(invalid_requests or ["sin selección"])
             ),
         )
+    promotoria = _assigned_promotoria(request.promotoria, profile)
     values = {
         "Asegurado": request.asegurado,
         "RFC": request.rfc.strip().upper(),
@@ -1411,8 +1520,8 @@ def create_emision_servicios_pending(
         "Casificacion": request.casificacion,
         "Tipo de Trámite": request.tipo_tramite,
         "Solicitud de": ", ".join(selected_requests),
-        "Promotoria": _assigned_promotoria(request.promotoria, profile),
-        "RFC Agente": request.rfc_agente.strip().upper(),
+        "Promotoria": promotoria,
+        "RFC Agente": _assigned_agent_rfc(request.rfc_agente, promotoria, profile),
     }
     return _create_pending_record(SOURCES["emision-servicios"], values)
 
@@ -1422,13 +1531,14 @@ def create_siniestros_pending(
     request: SiniestrosCreateRequest,
     profile: AccessProfile = Depends(require_module_access("pendientes", operation=True)),
 ):
+    promotoria = _assigned_promotoria(request.promotoria, profile)
     values = {
         "ASEGURADO": request.asegurado,
         "RFC": request.rfc.strip().upper(),
         "Tipo de Trámite": request.tipo_tramite,
         "Trámite": request.tramite,
-        "Promotoria": _assigned_promotoria(request.promotoria, profile),
-        "RFC Agente": request.rfc_agente.strip().upper(),
+        "Promotoria": promotoria,
+        "RFC Agente": _assigned_agent_rfc(request.rfc_agente, promotoria, profile),
     }
     return _create_pending_record(SOURCES["siniestros"], values)
 
@@ -1499,11 +1609,21 @@ def update_pending(
             service = build_pending_drive_service()
             _, original_row = _get_pending_row(source_key, source_row, service)
             _ensure_row_access(original_row, profile, operation=True)
-            if "Promotoria" in values:
-                values["Promotoria"] = _assigned_promotoria(values["Promotoria"], profile)
-            if "RFC Agente" in values:
-                values["RFC Agente"] = values["RFC Agente"].upper()
             merged_summary = {**original_row["summary"], **values}
+            if "Promotoria" in values or "RFC Agente" in values:
+                assigned_promotoria = _assigned_promotoria(
+                    clean_cell(merged_summary.get("Promotoria")),
+                    profile,
+                )
+                values["Promotoria"] = assigned_promotoria
+                values["RFC Agente"] = _assigned_agent_rfc(
+                    clean_cell(merged_summary.get("RFC Agente")),
+                    assigned_promotoria,
+                    profile,
+                    service=service,
+                    allow_empty=True,
+                )
+                merged_summary = {**original_row["summary"], **values}
             values.update(_derived_day_values(merged_summary))
             file_id = _source_file_id(source)
             updated_workbook = update_pending_record(
