@@ -1,27 +1,42 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Home, DollarSign, Calendar, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound } from 'lucide-react';
 
 const NAV_ITEMS = [
-    { name: 'Inicio', href: '/', icon: Home },
-    { name: 'Cobranza', href: '/cobranza', icon: DollarSign },
-    { name: 'Renovaciones', href: '/renovaciones', icon: Calendar },
-    { name: 'Pendientes', href: '/pendientes', icon: ClipboardList },
-    { name: 'Cartera', href: '/cartera', icon: Briefcase },
-    { name: 'Clientes', href: '/clientes', icon: Users },
-    { name: 'Recluta', href: '/recluta', icon: UserRoundSearch },
-    { name: 'Dashboards', href: '/dashboards', icon: BarChart3 },
-    { name: 'Configuración de Mail', href: '/configuracion-mail', icon: Mail },
+    { name: 'Inicio', href: '/', icon: Home, module: 'inicio' },
+    { name: 'Cobranza', href: '/cobranza', icon: DollarSign, module: 'cobranza' },
+    { name: 'Renovaciones', href: '/renovaciones', icon: Calendar, module: 'renovaciones' },
+    { name: 'Pendientes', href: '/pendientes', icon: ClipboardList, module: 'pendientes' },
+    { name: 'Cartera', href: '/cartera', icon: Briefcase, module: 'cartera' },
+    { name: 'Clientes', href: '/clientes', icon: Users, module: 'clientes' },
+    { name: 'Recluta', href: '/recluta', icon: UserRoundSearch, module: 'recluta' },
+    { name: 'Dashboards', href: '/dashboards', icon: BarChart3, module: 'dashboards' },
+    { name: 'Configuración de Mail', href: '/configuracion-mail', icon: Mail, module: 'configuracion_mail' },
 ];
 
 export function Sidebar() {
     const [collapsed, setCollapsed] = useState(false);
     const [loggingOut, setLoggingOut] = useState(false);
+    const [permissions, setPermissions] = useState<Record<string, string> | null>(null);
     const pathname = usePathname();
     const router = useRouter();
+
+    useEffect(() => {
+        if (pathname === '/login' || pathname === '/olvide-password' || pathname === '/restablecer-password') return;
+        let active = true;
+        fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' })
+            .then((response) => response.ok ? response.json() : Promise.reject())
+            .then((data) => {
+                if (active) setPermissions(data.module_permissions || {});
+            })
+            .catch(() => {
+                if (active) setPermissions({});
+            });
+        return () => { active = false; };
+    }, [pathname]);
 
     if (pathname === '/login' || pathname === '/olvide-password' || pathname === '/restablecer-password') return null;
 
@@ -76,7 +91,10 @@ export function Sidebar() {
                 </button>
             </div>
             <nav className="flex-1 space-y-1 px-2 py-4">
-                {NAV_ITEMS.map((item) => (
+                {NAV_ITEMS.filter((item) => (
+                    permissions?.[item.module] === 'lectura'
+                    || permissions?.[item.module] === 'operacion'
+                )).map((item) => (
                     <Link
                         key={item.name}
                         href={item.href}

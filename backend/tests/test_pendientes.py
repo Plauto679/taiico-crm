@@ -20,6 +20,8 @@ from services.pendientes import (
     PendingSource,
     _derived_day_values,
     _folder_name_for_row,
+    _filter_source_for_profile,
+    _assigned_promotoria,
     add_pending_follow_up,
     append_pending_record,
     build_pending_report,
@@ -28,6 +30,7 @@ from services.pendientes import (
     parse_pending_workbook,
     update_pending_record,
 )
+from services.auth import AccessProfile, PROMOTORIAS
 from services.pending_document_requirements import (
     GMM_DOCUMENT_REQUIREMENTS,
     VIDA_DOCUMENT_REQUIREMENTS,
@@ -63,6 +66,85 @@ def workbook_with_table(sheet_name, headers, rows):
 
 
 class PendingWorkbookTests(unittest.TestCase):
+    def test_pending_rows_are_scoped_by_promotoria_or_agent_rfc(self):
+        source = {
+            "source": "emision-servicios",
+            "title": "Emisión y Servicios",
+            "rows": [
+                {"source_row": 2, "summary": {"Promotoria": "TAIICO", "RFC Agente": "RFC1"}},
+                {"source_row": 3, "summary": {"Promotoria": "EKILIBRA", "RFC Agente": "RFC2"}},
+                {"source_row": 4, "summary": {"Promotoria": "", "RFC Agente": ""}},
+            ],
+        }
+        admin = AccessProfile(
+            "admin@example.com",
+            "admin",
+            ("EKILIBRA",),
+            "",
+            (),
+            {"pendientes": "operacion"},
+        )
+        agent = AccessProfile(
+            "agent@example.com",
+            "agente",
+            ("TAIICO",),
+            "RFC1",
+            (),
+            {"pendientes": "lectura"},
+        )
+
+        self.assertEqual(
+            [row["source_row"] for row in _filter_source_for_profile(source, admin)["rows"]],
+            [3],
+        )
+        self.assertEqual(
+            [row["source_row"] for row in _filter_source_for_profile(source, agent)["rows"]],
+            [2],
+        )
+
+    def test_single_promotoria_is_forced_when_admin_creates_pending(self):
+        profile = AccessProfile(
+            "admin@example.com",
+            "admin",
+            ("ABBONDANZA",),
+            "",
+            (),
+            {"pendientes": "operacion"},
+        )
+
+        self.assertEqual(_assigned_promotoria("TAIICO", profile), "ABBONDANZA")
+
+    def test_central_admin_sees_unassigned_records_and_inconsistencies(self):
+        source = {
+            "source": "siniestros",
+            "title": "Siniestros",
+            "rows": [{
+                "source_row": 2,
+                "summary": {
+                    "ASEGURADO": "Cliente",
+                    "Promotoria": "",
+                    "RFC Agente": "",
+                },
+            }],
+        }
+        profile = AccessProfile(
+            "central@example.com",
+            "admin",
+            PROMOTORIAS,
+            "",
+            (),
+            {"pendientes": "operacion"},
+        )
+
+        filtered = _filter_source_for_profile(source, profile)
+
+        self.assertEqual(len(filtered["rows"]), 1)
+        self.assertEqual(len(filtered["inconsistencies"]), 1)
+        self.assertIn(
+            "Falta asignar promotoría",
+            filtered["inconsistencies"][0]["problems"],
+        )
+
     def test_summary_uses_core_columns_and_latest_update(self):
         source = PendingSource("test", "Test", "TEST_ID", "file", "Base", 2)
         result = parse_pending_workbook(

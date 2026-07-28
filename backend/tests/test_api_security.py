@@ -11,6 +11,7 @@ from fastapi.routing import APIRoute
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main
+from services.auth import AccessProfile
 from services.login_security import login_rate_limiter
 from services.session_auth import COOKIE_NAME, create_session_token
 
@@ -56,6 +57,16 @@ class ApiSecurityTests(unittest.TestCase):
         with patch.dict(os.environ, {"AUTH_SESSION_SECRET": "test-session-secret"}), patch(
             "services.mail_configuration.configuration_for",
             return_value=None,
+        ), patch(
+            "services.authorization.get_access_profile",
+            return_value=AccessProfile(
+                username="person@example.com",
+                role="admin",
+                promotorias=("TAIICO",),
+                rfc="",
+                aseguradoras=(),
+                module_permissions={"configuracion_mail": "operacion"},
+            ),
         ):
             token = create_session_token("person@example.com")
             response = self.client.get(

@@ -24,7 +24,8 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from pydantic import BaseModel, Field
 
-from services.session_auth import current_username
+from services.auth import AccessProfile, PROMOTORIAS
+from services.authorization import current_access_profile, require_module_access
 from services.pending_document_requirements import requirements_for, split_request_types
 from services.mail_configuration import smtp_settings_for
 from services.renovaciones import send_email_smtp
@@ -96,6 +97,8 @@ class EmisionServiciosCreateRequest(BaseModel):
     casificacion: Literal["Vida", "GMM"]
     tipo_tramite: Literal["Servicios", "Emisión"]
     solicitud_de: str
+    promotoria: str = ""
+    rfc_agente: str = ""
 
 
 class SiniestrosCreateRequest(BaseModel):
@@ -108,6 +111,8 @@ class SiniestrosCreateRequest(BaseModel):
         "Programación de estudios/terapias",
     ]
     tramite: Literal["Complemento", "Reconsideración", "Garantías"]
+    promotoria: str = ""
+    rfc_agente: str = ""
 
 
 class PendingFollowUpRequest(BaseModel):
@@ -163,6 +168,12 @@ REPORT_COLOR_LABELS = {
     "amarillo": "Amarillo",
     "rojo": "Rojo",
 }
+
+INCONSISTENCY_RECIPIENTS = (
+    "alberto.alfaro@taiico.com",
+    "pamela.alfaro@taiico.com",
+    "veronica.alfaro@taiico.com",
+)
 
 
 def clean_cell(value: object) -> str:
@@ -358,6 +369,10 @@ def build_pending_report(
                 ],
             },
         ],
+        "inconsistencies": [
+            *_inconsistency_rows(emision_servicios, "Emisión y Servicios"),
+            *_inconsistency_rows(siniestros, "Siniestros"),
+        ],
     }
 
 
@@ -519,6 +534,106 @@ def parse_pending_workbook(
         "latest_update_header": latest_header,
         "rows": rows,
     }
+
+
+def _assignment_issues(row: dict) -> list[str]:
+    summary = row.get("summary", {})
+    promotoria = clean_cell(summary.get("Promotoria", "")).upper()
+    rfc_agente = clean_cell(summary.get("RFC Agente", "")).upper()
+    issues = []
+    if not promotoria:
+        issues.append("Falta asignar promotoría")
+    elif promotoria not in PROMOTORIAS:
+        issues.append(f"Promotoría no reconocida: {promotoria}")
+    if not rfc_agente:
+        issues.append("Falta asignar RFC Agente")
+    return issues
+
+
+def _inconsistency_rows(result: dict, source_label: str = "") -> list[dict]:
+    inconsistencies = []
+    for row in result["rows"]:
+        issues = _assignment_issues(row)
+        if not issues:
+            continue
+        summary = row["summary"]
+        inconsistencies.append({
+            "source": clean_cell(
+                result.get("title")
+                or result.get("source")
+                or source_label
+                or "Pendientes"
+            ),
+            "source_row": row["source_row"],
+            "asegurado": clean_cell(
+                summary.get("Asegurado") or summary.get("ASEGURADO")
+            ),
+            "poliza": clean_cell(summary.get("Póliza") or summary.get("POLIZA")),
+            "promotoria": clean_cell(summary.get("Promotoria")),
+            "rfc_agente": clean_cell(summary.get("RFC Agente")),
+            "problems": issues,
+            "action": "Editar el pendiente y completar su asignación",
+        })
+    return inconsistencies
+
+
+def _filter_source_for_profile(result: dict, profile: AccessProfile) -> dict:
+    allowed_promotorias = set(profile.promotorias)
+    if profile.is_central_admin:
+        rows = result["rows"]
+    elif profile.is_agent:
+        agent_rfc = profile.rfc
+        rows = [
+            row for row in result["rows"]
+            if agent_rfc
+            and clean_cell(row["summary"].get("RFC Agente", "")).upper() == agent_rfc
+        ]
+    else:
+        rows = [
+            row for row in result["rows"]
+            if clean_cell(row["summary"].get("Promotoria", "")).upper()
+            in allowed_promotorias
+        ]
+    filtered = {**result, "rows": rows}
+    filtered["access"] = {
+        "role": profile.role,
+        "can_operate": profile.can_operate("pendientes"),
+        "promotorias": list(profile.promotorias),
+        "rfc": profile.rfc,
+        "central_admin": profile.is_central_admin,
+    }
+    filtered["inconsistencies"] = (
+        _inconsistency_rows(result) if profile.is_central_admin else []
+    )
+    return filtered
+
+
+def _assigned_promotoria(requested: str, profile: AccessProfile) -> str:
+    if not profile.can_operate("pendientes"):
+        raise HTTPException(status_code=403, detail="Tu usuario sólo tiene acceso de consulta")
+    allowed = tuple(profile.promotorias)
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Tu usuario no tiene promotorías asignadas")
+    if len(allowed) == 1:
+        return allowed[0]
+    selected = clean_cell(requested).upper()
+    if selected not in allowed:
+        raise HTTPException(
+            status_code=422,
+            detail="Selecciona una promotoría autorizada para tu usuario",
+        )
+    return selected
+
+
+def _ensure_row_access(row: dict, profile: AccessProfile, *, operation: bool = False) -> None:
+    allowed = _filter_source_for_profile(
+        {"rows": [row], "source": "", "title": "", "sheet_name": ""},
+        profile,
+    )["rows"]
+    if not allowed:
+        raise HTTPException(status_code=404, detail="Pendiente no encontrado")
+    if operation and not profile.can_operate("pendientes"):
+        raise HTTPException(status_code=403, detail="Tu usuario sólo tiene acceso de consulta")
 
 
 def build_pending_drive_service():
@@ -1092,15 +1207,18 @@ def deliver_pending_report(
     recipients: list[str],
     *,
     sender_username: str,
+    profile: AccessProfile | None = None,
 ) -> dict:
     normalized_recipients = normalize_report_recipients(recipients)
     service = build_pending_drive_service()
     for source_key in SOURCES:
         _clear_source_cache(source_key)
-    report = build_pending_report(
-        load_pending_source(SOURCES["emision-servicios"], service),
-        load_pending_source(SOURCES["siniestros"], service),
-    )
+    emision = load_pending_source(SOURCES["emision-servicios"], service)
+    siniestros = load_pending_source(SOURCES["siniestros"], service)
+    if profile is not None:
+        emision = _filter_source_for_profile(emision, profile)
+        siniestros = _filter_source_for_profile(siniestros, profile)
+    report = build_pending_report(emision, siniestros)
     settings = smtp_settings_for(sender_username)
     send_email_smtp(
         subject=f"Informe de pendientes TAIICO - {report['generated_on']}",
@@ -1116,6 +1234,78 @@ def deliver_pending_report(
         "recipients": normalized_recipients,
         "generated_on": report["generated_on"],
         "report": report,
+    }
+
+
+def assignment_inconsistency_text(report: dict) -> str:
+    lines = [
+        "Inconsistencias de asignación de pendientes",
+        f"Fecha: {report['generated_on']}",
+        "",
+    ]
+    for item in report["inconsistencies"]:
+        lines.append(
+            f"- {item['source']} fila {item['source_row']} | "
+            f"{item['asegurado'] or '—'} | {item['poliza'] or '—'} | "
+            f"{'; '.join(item['problems'])} | {item['action']}"
+        )
+    if not report["inconsistencies"]:
+        lines.append("No se detectaron inconsistencias.")
+    return "\n".join(lines)
+
+
+def assignment_inconsistency_html(report: dict) -> str:
+    rows = "".join(
+        "<tr>"
+        f"<td>{escape(item['source'])}</td>"
+        f"<td>{item['source_row']}</td>"
+        f"<td>{escape(item['asegurado'] or '—')}</td>"
+        f"<td>{escape(item['poliza'] or '—')}</td>"
+        f"<td>{escape('; '.join(item['problems']))}</td>"
+        f"<td>{escape(item['action'])}</td>"
+        "</tr>"
+        for item in report["inconsistencies"]
+    )
+    if not rows:
+        rows = '<tr><td colspan="6">No se detectaron inconsistencias.</td></tr>'
+    return (
+        "<!doctype html><html><body style=\"font-family:Arial,sans-serif;color:#0f172a\">"
+        "<style>th,td{padding:8px;border:1px solid #cbd5e1;text-align:left}"
+        "th{background:#fef3c7}</style>"
+        "<h1>Inconsistencias de asignación de pendientes</h1>"
+        f"<p>Fecha: {escape(report['generated_on'])}</p>"
+        "<table style=\"border-collapse:collapse;width:100%\"><thead><tr>"
+        "<th>Base</th><th>Fila</th><th>Asegurado</th><th>Póliza</th>"
+        "<th>Problema detectado</th><th>Acción requerida</th>"
+        f"</tr></thead><tbody>{rows}</tbody></table></body></html>"
+    )
+
+
+def deliver_assignment_inconsistency_report(
+    recipients: list[str],
+    *,
+    sender_username: str,
+) -> dict:
+    normalized_recipients = normalize_report_recipients(recipients)
+    service = build_pending_drive_service()
+    report = build_pending_report(
+        load_pending_source(SOURCES["emision-servicios"], service),
+        load_pending_source(SOURCES["siniestros"], service),
+    )
+    settings = smtp_settings_for(sender_username)
+    send_email_smtp(
+        subject=f"Inconsistencias de asignación de pendientes - {report['generated_on']}",
+        body=assignment_inconsistency_text(report),
+        html_body=assignment_inconsistency_html(report),
+        recipients=normalized_recipients,
+        cc_recipients=[],
+        settings=settings,
+    )
+    return {
+        "sent": True,
+        "recipients": normalized_recipients,
+        "generated_on": report["generated_on"],
+        "count": len(report["inconsistencies"]),
     }
 
 
@@ -1142,7 +1332,7 @@ def load_pending_source(source: PendingSource, service=None) -> dict:
 @router.post("/report")
 def send_pending_report(
     request: PendingReportRequest,
-    username: str = Depends(current_username),
+    profile: AccessProfile = Depends(require_module_access("pendientes", operation=True)),
 ):
     requested_recipients = list(request.emails)
     if request.email:
@@ -1150,7 +1340,8 @@ def send_pending_report(
     try:
         return deliver_pending_report(
             requested_recipients,
-            sender_username=username,
+            sender_username=profile.username,
+            profile=profile,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1163,13 +1354,29 @@ def send_pending_report(
         ) from exc
 
 
+@router.get("/access-options")
+def pending_access_options(
+    profile: AccessProfile = Depends(current_access_profile),
+):
+    return {
+        "role": profile.role,
+        "can_operate": profile.can_operate("pendientes"),
+        "promotorias": list(profile.promotorias),
+        "rfc": profile.rfc,
+        "central_admin": profile.is_central_admin,
+    }
+
+
 @router.get("/{source_key}")
-async def get_pending_source(source_key: str):
+async def get_pending_source(
+    source_key: str,
+    profile: AccessProfile = Depends(current_access_profile),
+):
     source = SOURCES.get(source_key)
     if not source:
         raise HTTPException(status_code=404, detail="Unknown pending source")
     try:
-        return load_pending_source(source)
+        return _filter_source_for_profile(load_pending_source(source), profile)
     except Exception as exc:
         raise HTTPException(
             status_code=502,
@@ -1180,7 +1387,7 @@ async def get_pending_source(source_key: str):
 @router.post("/emision-servicios")
 def create_emision_servicios_pending(
     request: EmisionServiciosCreateRequest,
-    _username: str = Depends(current_username),
+    profile: AccessProfile = Depends(require_module_access("pendientes", operation=True)),
 ):
     allowed_requests = GMM_REQUEST_OPTIONS if request.casificacion == "GMM" else VIDA_REQUEST_OPTIONS
     selected_requests = split_request_types(request.solicitud_de)
@@ -1204,6 +1411,8 @@ def create_emision_servicios_pending(
         "Casificacion": request.casificacion,
         "Tipo de Trámite": request.tipo_tramite,
         "Solicitud de": ", ".join(selected_requests),
+        "Promotoria": _assigned_promotoria(request.promotoria, profile),
+        "RFC Agente": request.rfc_agente.strip().upper(),
     }
     return _create_pending_record(SOURCES["emision-servicios"], values)
 
@@ -1211,13 +1420,15 @@ def create_emision_servicios_pending(
 @router.post("/siniestros")
 def create_siniestros_pending(
     request: SiniestrosCreateRequest,
-    _username: str = Depends(current_username),
+    profile: AccessProfile = Depends(require_module_access("pendientes", operation=True)),
 ):
     values = {
         "ASEGURADO": request.asegurado,
         "RFC": request.rfc.strip().upper(),
         "Tipo de Trámite": request.tipo_tramite,
         "Trámite": request.tramite,
+        "Promotoria": _assigned_promotoria(request.promotoria, profile),
+        "RFC Agente": request.rfc_agente.strip().upper(),
     }
     return _create_pending_record(SOURCES["siniestros"], values)
 
@@ -1275,7 +1486,7 @@ def update_pending(
     source_key: str,
     source_row: int,
     request: PendingUpdateRequest,
-    _username: str = Depends(current_username),
+    profile: AccessProfile = Depends(require_module_access("pendientes", operation=True)),
 ):
     source = SOURCES.get(source_key)
     if not source:
@@ -1287,6 +1498,11 @@ def update_pending(
         with _write_lock:
             service = build_pending_drive_service()
             _, original_row = _get_pending_row(source_key, source_row, service)
+            _ensure_row_access(original_row, profile, operation=True)
+            if "Promotoria" in values:
+                values["Promotoria"] = _assigned_promotoria(values["Promotoria"], profile)
+            if "RFC Agente" in values:
+                values["RFC Agente"] = values["RFC Agente"].upper()
             merged_summary = {**original_row["summary"], **values}
             values.update(_derived_day_values(merged_summary))
             file_id = _source_file_id(source)
@@ -1356,7 +1572,7 @@ def create_pending_follow_up(
     source_key: str,
     source_row: int,
     request: PendingFollowUpRequest,
-    _username: str = Depends(current_username),
+    profile: AccessProfile = Depends(require_module_access("pendientes", operation=True)),
 ):
     source = SOURCES.get(source_key)
     if not source:
@@ -1364,6 +1580,8 @@ def create_pending_follow_up(
     try:
         with _write_lock:
             service = build_pending_drive_service()
+            _, row = _get_pending_row(source_key, source_row, service)
+            _ensure_row_access(row, profile, operation=True)
             file_id = _source_file_id(source)
             updated_workbook, date_header = add_pending_follow_up(
                 _download_workbook(file_id, service),
@@ -1393,10 +1611,15 @@ def create_pending_follow_up(
 
 
 @router.get("/{source_key}/{source_row}/documents")
-def get_pending_documents(source_key: str, source_row: int):
+def get_pending_documents(
+    source_key: str,
+    source_row: int,
+    profile: AccessProfile = Depends(current_access_profile),
+):
     try:
         service = build_pending_drive_service()
         _, row = _get_pending_row(source_key, source_row, service)
+        _ensure_row_access(row, profile)
         if not row.get("folder_id"):
             return {
                 "row": row,
@@ -1428,11 +1651,12 @@ def get_pending_documents(source_key: str, source_row: int):
 def create_pending_folder(
     source_key: str,
     source_row: int,
-    _username: str = Depends(current_username),
+    profile: AccessProfile = Depends(require_module_access("pendientes", operation=True)),
 ):
     try:
         service = build_pending_drive_service()
         source, row = _get_pending_row(source_key, source_row, service)
+        _ensure_row_access(row, profile, operation=True)
         if row.get("folder_id"):
             return {"created": False, "row": row}
         _create_folder_for_row(service, row)
@@ -1452,11 +1676,12 @@ async def upload_pending_document(
     source_row: int,
     document_name: str = Form(...),
     document: UploadFile = File(...),
-    _username: str = Depends(current_username),
+    profile: AccessProfile = Depends(require_module_access("pendientes", operation=True)),
 ):
     try:
         service = build_pending_drive_service()
         _, row = _get_pending_row(source_key, source_row, service)
+        _ensure_row_access(row, profile, operation=True)
         if not row.get("folder_id"):
             raise HTTPException(status_code=409, detail="Primero debe crearse la carpeta del expediente")
 

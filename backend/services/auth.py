@@ -8,6 +8,7 @@ import re
 import threading
 import time
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree
 from xml.sax.saxutils import escape
@@ -28,7 +29,64 @@ REQUIRED_COLUMNS = {"Usuario", "Password"}
 
 _cache_lock = threading.RLock()
 _cached_credentials: dict[str, str] | None = None
+_cached_profiles: dict[str, "AccessProfile"] | None = None
 _cache_expires_at = 0.0
+
+PROMOTORIAS = (
+    "ABBONDANZA",
+    "CELAVI",
+    "EKILIBRA",
+    "FENIX PRE-VISION",
+    "TAIICO",
+    "URQUIZA GARCIA",
+)
+MODULES = (
+    "inicio",
+    "cobranza",
+    "renovaciones",
+    "pendientes",
+    "cartera",
+    "clientes",
+    "recluta",
+    "dashboards",
+    "configuracion_mail",
+)
+MODULE_COLUMNS = {
+    module: f"Permiso_{module.title()}"
+    for module in MODULES
+}
+MODULE_COLUMNS["configuracion_mail"] = "Permiso_Configuracion_Mail"
+
+
+@dataclass(frozen=True)
+class AccessProfile:
+    username: str
+    role: str
+    promotorias: tuple[str, ...]
+    rfc: str
+    aseguradoras: tuple[str, ...]
+    module_permissions: dict[str, str]
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == "admin"
+
+    @property
+    def is_agent(self) -> bool:
+        return self.role == "agente"
+
+    @property
+    def is_central_admin(self) -> bool:
+        return self.is_admin and set(self.promotorias) == set(PROMOTORIAS)
+
+    def permission_for(self, module: str) -> str:
+        return self.module_permissions.get(module, "ninguno")
+
+    def can_read(self, module: str) -> bool:
+        return self.permission_for(module) in {"lectura", "operacion"}
+
+    def can_operate(self, module: str) -> bool:
+        return self.is_admin and self.permission_for(module) == "operacion"
 
 
 def _download_users_workbook(file_id: str) -> bytes:
@@ -87,7 +145,51 @@ def _upload_users_workbook(file_id: str, workbook: bytes) -> None:
     ).execute()
 
 
-def _read_credentials(workbook: bytes) -> dict[str, str]:
+def _split_access_values(value: object) -> tuple[str, ...]:
+    text = str(value or "").strip()
+    if not text:
+        return ()
+    return tuple(
+        item.strip().upper()
+        for item in re.split(r"[,;\n]+", text)
+        if item.strip()
+    )
+
+
+def _normalize_permission(value: object) -> str:
+    normalized = (
+        str(value or "").strip().casefold()
+        .replace("ó", "o")
+        .replace("á", "a")
+    )
+    if normalized in {"operacion", "operativo", "escritura", "admin"}:
+        return "operacion"
+    if normalized in {"lectura", "consulta", "read"}:
+        return "lectura"
+    return "ninguno"
+
+
+def _default_module_permissions(role: str, promotorias: tuple[str, ...]) -> dict[str, str]:
+    if not promotorias:
+        return {module: "ninguno" for module in MODULES}
+    if role == "agente":
+        return {
+            module: ("lectura" if module == "pendientes" else "ninguno")
+            for module in MODULES
+        }
+    if role == "admin" and set(promotorias) == set(PROMOTORIAS):
+        return {module: "operacion" for module in MODULES}
+    if role == "admin":
+        return {
+            module: ("operacion" if module == "pendientes" else "ninguno")
+            for module in MODULES
+        }
+    return {module: "ninguno" for module in MODULES}
+
+
+def _read_user_directory(
+    workbook: bytes,
+) -> tuple[dict[str, str], dict[str, AccessProfile]]:
     table = pd.read_excel(io.BytesIO(workbook), dtype=str, keep_default_na=False)
     missing_columns = REQUIRED_COLUMNS.difference(table.columns)
     if missing_columns:
@@ -97,12 +199,42 @@ def _read_credentials(workbook: bytes) -> dict[str, str]:
         )
 
     credentials: dict[str, str] = {}
+    profiles: dict[str, AccessProfile] = {}
     for _, row in table.iterrows():
         username = str(row["Usuario"]).strip().casefold()
         password = str(row["Password"])
         if username and password:
             credentials[username] = password
-    return credentials
+        if not username:
+            continue
+        role = str(row.get("Rol", "")).strip().casefold()
+        promotorias = _split_access_values(row.get("Promotoria", ""))
+        if "*" in promotorias:
+            promotorias = PROMOTORIAS
+        defaults = _default_module_permissions(role, promotorias)
+        permissions = {
+            module: (
+                _normalize_permission(row.get(column, ""))
+                if column in table.columns
+                else defaults[module]
+            )
+            for module, column in MODULE_COLUMNS.items()
+        }
+        profiles[username] = AccessProfile(
+            username=username,
+            role=role,
+            promotorias=tuple(
+                promotoria for promotoria in PROMOTORIAS if promotoria in promotorias
+            ),
+            rfc=str(row.get("RFC", "")).strip().upper(),
+            aseguradoras=_split_access_values(row.get("Aseguradoras", "")),
+            module_permissions=permissions,
+        )
+    return credentials, profiles
+
+
+def _read_credentials(workbook: bytes) -> dict[str, str]:
+    return _read_user_directory(workbook)[0]
 
 
 def _cache_seconds() -> int:
@@ -111,7 +243,7 @@ def _cache_seconds() -> int:
 
 
 def _load_credentials() -> dict[str, str]:
-    global _cached_credentials, _cache_expires_at
+    global _cached_credentials, _cached_profiles, _cache_expires_at
 
     file_id = os.getenv(USERS_FILE_ID_ENV, "").strip()
     if not file_id:
@@ -122,18 +254,30 @@ def _load_credentials() -> dict[str, str]:
         if _cached_credentials is not None and now < _cache_expires_at:
             return _cached_credentials
 
-        credentials = _read_credentials(_download_users_workbook(file_id))
+        credentials, profiles = _read_user_directory(_download_users_workbook(file_id))
         _cached_credentials = credentials
+        _cached_profiles = profiles
         _cache_expires_at = now + _cache_seconds()
         return credentials
 
 
 def clear_credentials_cache() -> None:
     """Clear the in-memory workbook cache (primarily for tests)."""
-    global _cached_credentials, _cache_expires_at
+    global _cached_credentials, _cached_profiles, _cache_expires_at
     with _cache_lock:
         _cached_credentials = None
+        _cached_profiles = None
         _cache_expires_at = 0.0
+
+
+def get_access_profile(username: str) -> AccessProfile:
+    normalized = str(username).strip().casefold()
+    _load_credentials()
+    with _cache_lock:
+        profile = (_cached_profiles or {}).get(normalized)
+    if profile is None:
+        raise KeyError("El usuario no tiene un perfil de acceso configurado")
+    return profile
 
 
 def verify_credentials(username, password) -> bool:

@@ -3,13 +3,14 @@ import sys
 import unittest
 from datetime import datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from jobs.send_pending_report import configured_recipients, should_send
+from jobs.send_pending_report import configured_recipients, run, should_send
 
 
 class PendingReportJobTests(unittest.TestCase):
@@ -43,6 +44,38 @@ class PendingReportJobTests(unittest.TestCase):
             {"PENDING_REPORT_AUTOMATION_HOUR": "19"},
         ):
             self.assertFalse(should_send(now, None))
+
+    def test_job_sends_restricted_assignment_report_to_central_team(self):
+        with TemporaryDirectory() as directory, patch.dict(
+            os.environ,
+            {"PENDING_REPORT_AUTOMATION_STATE_FILE": f"{directory}/state.json"},
+        ), patch(
+            "jobs.send_pending_report.deliver_pending_report",
+            return_value={
+                "recipients": configured_recipients(),
+                "generated_on": "2026-07-28",
+            },
+        ), patch(
+            "jobs.send_pending_report.deliver_assignment_inconsistency_report",
+            return_value={
+                "recipients": [
+                    "alberto.alfaro@taiico.com",
+                    "pamela.alfaro@taiico.com",
+                    "veronica.alfaro@taiico.com",
+                ],
+                "count": 7,
+            },
+        ) as inconsistency_delivery:
+            self.assertEqual(run(force=True), 0)
+
+        inconsistency_delivery.assert_called_once_with(
+            [
+                "alberto.alfaro@taiico.com",
+                "pamela.alfaro@taiico.com",
+                "veronica.alfaro@taiico.com",
+            ],
+            sender_username="veronica.alfaro@taiico.com",
+        )
 
 
 if __name__ == "__main__":

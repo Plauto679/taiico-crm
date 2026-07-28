@@ -14,9 +14,10 @@ interface PendingHistoryModalProps {
     source: PendingSourceKey;
     onUpdated: (row: PendingRow) => void;
     onClose: () => void;
+    canOperate: boolean;
 }
 
-export function PendingHistoryModal({ row, source, onUpdated, onClose }: PendingHistoryModalProps) {
+export function PendingHistoryModal({ row, source, onUpdated, onClose, canOperate }: PendingHistoryModalProps) {
     const [tab, setTab] = useState<DetailTab>('detalle');
     const [documents, setDocuments] = useState<PendingDocumentsResponse | null>(null);
     const [loading, setLoading] = useState(false);
@@ -138,9 +139,9 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose }: Pending
                         <TabButton active={tab === 'detalle'} onClick={() => setTab('detalle')}>Detalle e historial</TabButton>
                         <TabButton active={tab === 'expediente'} onClick={openExpediente}>Integración del expediente</TabButton>
                     </div>
-                    <button type="button" onClick={() => setShowFollowUp((current) => !current)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+                    {canOperate && <button type="button" onClick={() => setShowFollowUp((current) => !current)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700">
                         <MessageSquarePlus className="h-4 w-4" /> Seguimiento
-                    </button>
+                    </button>}
                 </div>
 
                 <div className="max-h-[calc(92vh-142px)] overflow-y-auto p-6">
@@ -165,6 +166,7 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose }: Pending
                             saving={savingDetails}
                             onChange={(label, value) => setDetailValues((current) => applyDerivedDayValue(current, label, value))}
                             onSave={saveDetails}
+                            canOperate={canOperate}
                         />
                     ) : loading ? (
                         <div className="flex items-center justify-center py-16 text-slate-500"><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Consultando Drive...</div>
@@ -186,9 +188,9 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose }: Pending
                                 <div className="mt-5 rounded-xl border border-dashed border-slate-300 p-8 text-center">
                                     <FolderOpen className="mx-auto h-9 w-9 text-slate-400" />
                                     <p className="mt-2 text-sm text-slate-600">Este registro todavía no tiene carpeta de expediente.</p>
-                                    <button type="button" onClick={createFolder} disabled={creatingFolder} className="mt-4 inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60">
+                                    {canOperate && <button type="button" onClick={createFolder} disabled={creatingFolder} className="mt-4 inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60">
                                         {creatingFolder && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Crear carpeta {row.summary.RFC}
-                                    </button>
+                                    </button>}
                                 </div>
                             ) : documents ? (
                                 <>
@@ -201,11 +203,11 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose }: Pending
                                                     <div key={requirement} className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
                                                         <CheckCircle2 className={`h-5 w-5 shrink-0 ${complete ? 'text-emerald-600' : 'text-slate-300'}`} />
                                                         <span className="min-w-0 flex-1 text-sm font-medium text-slate-800">{requirement}</span>
-                                                        <label className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700">
+                                                        {canOperate && <label className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700">
                                                             {uploadingName === requirement ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                                                             {complete ? 'Cargar nueva versión' : 'Cargar'}
                                                             <input type="file" className="hidden" disabled={Boolean(uploadingName)} onChange={(event) => handleFileSelection(event, requirement, upload)} />
-                                                        </label>
+                                                        </label>}
                                                     </div>
                                                 );
                                             })}
@@ -214,7 +216,7 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose }: Pending
                                         <div className="mt-5 rounded-lg bg-blue-50 p-4 text-sm text-blue-800">Este tipo de pendiente todavía no tiene una lista documental obligatoria; puedes cargar archivos adicionales abajo.</div>
                                     )}
 
-                                    <div className="mt-6 rounded-xl border border-slate-200 p-4">
+                                    {canOperate && <div className="mt-6 rounded-xl border border-slate-200 p-4">
                                         <h4 className="font-semibold text-slate-900">Agregar documento adicional</h4>
                                         <div className="mt-3 flex flex-col gap-3 sm:flex-row">
                                             <input value={additionalName} onChange={(event) => setAdditionalName(event.target.value)} placeholder="Nombre del documento" className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
@@ -223,7 +225,7 @@ export function PendingHistoryModal({ row, source, onUpdated, onClose }: Pending
                                                 <input type="file" className="hidden" disabled={!additionalName.trim() || Boolean(uploadingName)} onChange={(event) => handleFileSelection(event, additionalName, upload)} />
                                             </label>
                                         </div>
-                                    </div>
+                                    </div>}
 
                                     <DocumentList documents={documents.documents} />
                                 </>
@@ -242,12 +244,14 @@ function DetailTabContent({
     saving,
     onChange,
     onSave,
+    canOperate,
 }: {
     row: PendingRow;
     values: Record<string, string>;
     saving: boolean;
     onChange: (label: string, value: string) => void;
     onSave: () => void;
+    canOperate: boolean;
 }) {
     const hasChanges = Object.entries(values).some(
         ([key, value]) => value !== comparableDetailValue(key, row.summary[key] || ''),
@@ -263,12 +267,13 @@ function DetailTabContent({
                             <label key={label} className="block">
                                 <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
                                 {label.toLocaleLowerCase('es-MX').includes('comentario') ? (
-                                    <textarea value={value} onChange={(event) => onChange(label, event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                                    <textarea disabled={!canOperate} value={value} onChange={(event) => onChange(label, event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100" />
                                 ) : (
                                     <input
                                         type={isDateField(label) ? 'date' : 'text'}
                                         value={value}
                                         readOnly={derived}
+                                        disabled={!canOperate}
                                         onChange={(event) => onChange(label, label === 'RFC' ? event.target.value.toUpperCase() : event.target.value)}
                                         className={`mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-gray-900 outline-none ${derived ? 'cursor-not-allowed bg-slate-100' : 'bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100'}`}
                                     />
@@ -277,12 +282,12 @@ function DetailTabContent({
                         );
                     })}
             </div>
-            <div className="mt-4 flex justify-end">
+            {canOperate && <div className="mt-4 flex justify-end">
                 <button type="button" onClick={onSave} disabled={saving || !hasChanges} className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
                     {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                     Guardar cambios
                 </button>
-            </div>
+            </div>}
         </div>
         <h3 className="mb-3 mt-6 text-lg font-semibold text-gray-900">Historial de actualizaciones</h3>
         {row.history.length === 0 ? <p className="rounded-lg border border-dashed p-6 text-center text-sm text-gray-500">No hay actualizaciones registradas.</p> : (

@@ -3,7 +3,7 @@
 import { FormEvent, useState } from 'react';
 import { ClipboardPlus, Loader2, Plus, X } from 'lucide-react';
 
-import { PendingRow } from '@/lib/types/pendientes';
+import { PendingAccess, PendingRow } from '@/lib/types/pendientes';
 import {
     createEmisionServiciosPending,
     createSiniestrosPending,
@@ -16,6 +16,7 @@ interface RegisterPendingModalProps {
     source: PendingSourceKey;
     onClose: () => void;
     onCreated: (row: PendingRow) => void;
+    access: PendingAccess;
 }
 
 const GMM_REQUESTS = [
@@ -65,7 +66,7 @@ const VIDA_REQUESTS = [
     'Aplicación de pagos VIDA',
 ];
 
-export function RegisterPendingModal({ source, onClose, onCreated }: RegisterPendingModalProps) {
+export function RegisterPendingModal({ source, onClose, onCreated, access }: RegisterPendingModalProps) {
     const [asegurado, setAsegurado] = useState('');
     const [rfc, setRfc] = useState('');
     const [poliza, setPoliza] = useState('');
@@ -75,6 +76,10 @@ export function RegisterPendingModal({ source, onClose, onCreated }: RegisterPen
     const [tramite, setTramite] = useState('');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [promotoria, setPromotoria] = useState(
+        access.promotorias.length === 1 ? access.promotorias[0] : '',
+    );
+    const [rfcAgente, setRfcAgente] = useState('');
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
@@ -89,12 +94,16 @@ export function RegisterPendingModal({ source, onClose, onCreated }: RegisterPen
                     casificacion: casificacion as 'Vida' | 'GMM',
                     tipo_tramite: tipoTramite as 'Servicios' | 'Emisión',
                     solicitud_de: solicitudesDe.filter(Boolean).join(', '),
+                    promotoria,
+                    rfc_agente: rfcAgente,
                 })
                 : await createSiniestrosPending({
                     asegurado,
                     rfc,
                     tipo_tramite: tipoTramite as 'Cirugía Progamada' | 'Reembolso' | 'Programación de Medicamentos' | 'Programación de estudios/terapias',
                     tramite: tramite as 'Complemento' | 'Reconsideración' | 'Garantías',
+                    promotoria,
+                    rfc_agente: rfcAgente,
                 });
             onCreated(response.row);
         } catch (submissionError) {
@@ -129,6 +138,18 @@ export function RegisterPendingModal({ source, onClose, onCreated }: RegisterPen
                 <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
                     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 [-webkit-overflow-scrolling:touch] sm:p-5">
                         <div className="grid gap-4 sm:grid-cols-2">
+                            <SelectField
+                                label="Promotoría"
+                                value={promotoria}
+                                onChange={setPromotoria}
+                                options={access.promotorias}
+                                disabled={access.promotorias.length === 1}
+                            />
+                            <TextField
+                                label="RFC Agente"
+                                value={rfcAgente}
+                                onChange={(value) => setRfcAgente(value.toUpperCase())}
+                            />
                             <TextField label="Nombre del Asegurado" value={asegurado} onChange={setAsegurado} />
                             <TextField label="RFC" value={rfc} onChange={(value) => setRfc(value.toUpperCase())} required={false} />
                             {source === 'emision-servicios' ? (

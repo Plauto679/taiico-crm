@@ -17,7 +17,12 @@ REPOSITORY_ROOT = BACKEND_DIR.parent
 sys.path.insert(0, str(BACKEND_DIR))
 load_dotenv(BACKEND_DIR / ".env")
 
-from services.pendientes import deliver_pending_report, normalize_report_recipients
+from services.pendientes import (
+    INCONSISTENCY_RECIPIENTS,
+    deliver_assignment_inconsistency_report,
+    deliver_pending_report,
+    normalize_report_recipients,
+)
 
 
 DEFAULT_RECIPIENTS = (
@@ -109,6 +114,10 @@ def run(*, force: bool = False, dry_run: bool = False) -> int:
             configured_recipients(),
             sender_username=sender_username,
         )
+        inconsistency_result = deliver_assignment_inconsistency_report(
+            list(INCONSISTENCY_RECIPIENTS),
+            sender_username=sender_username,
+        )
         write_state(
             path,
             {
@@ -117,6 +126,8 @@ def run(*, force: bool = False, dry_run: bool = False) -> int:
                 "sender_username": sender_username,
                 "recipients": result["recipients"],
                 "generated_on": result["generated_on"],
+                "assignment_inconsistency_count": inconsistency_result["count"],
+                "assignment_inconsistency_recipients": inconsistency_result["recipients"],
             },
         )
         print(

@@ -21,6 +21,27 @@ export interface PendingSourceData {
     core_headers: string[];
     latest_update_header: string;
     rows: PendingRow[];
+    access: PendingAccess;
+    inconsistencies: PendingAssignmentInconsistency[];
+}
+
+export interface PendingAccess {
+    role: string;
+    can_operate: boolean;
+    promotorias: string[];
+    rfc: string;
+    central_admin: boolean;
+}
+
+export interface PendingAssignmentInconsistency {
+    source: string;
+    source_row: number;
+    asegurado: string;
+    poliza: string;
+    promotoria: string;
+    rfc_agente: string;
+    problems: string[];
+    action: string;
 }
 
 export interface EmisionServiciosPendingInput {
@@ -30,6 +51,8 @@ export interface EmisionServiciosPendingInput {
     casificacion: 'Vida' | 'GMM';
     tipo_tramite: 'Servicios' | 'Emisión';
     solicitud_de: string;
+    promotoria: string;
+    rfc_agente: string;
 }
 
 export interface SiniestrosPendingInput {
@@ -37,6 +60,8 @@ export interface SiniestrosPendingInput {
     rfc: string;
     tipo_tramite: 'Cirugía Progamada' | 'Reembolso' | 'Programación de Medicamentos' | 'Programación de estudios/terapias';
     tramite: 'Complemento' | 'Reconsideración' | 'Garantías';
+    promotoria: string;
+    rfc_agente: string;
 }
 
 export interface PendingCreateResponse {

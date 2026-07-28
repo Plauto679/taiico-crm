@@ -78,6 +78,51 @@ class WorkbookAuthenticationTests(unittest.TestCase):
         ), patch.object(auth, "_download_users_workbook", return_value=workbook):
             self.assertFalse(auth.verify_credentials("person@example.com", "local-secret"))
 
+    def test_profiles_apply_admin_and_agent_scope(self):
+        workbook = workbook_bytes([
+            {
+                "Usuario": "admin@example.com",
+                "Password": "secret",
+                "Rol": "Admin",
+                "Promotoria": "ABBONDANZA, EKILIBRA",
+                "RFC": "",
+                "Aseguradoras": "*",
+                "Permiso_Pendientes": "Operación",
+            },
+            {
+                "Usuario": "agent@example.com",
+                "Password": "secret",
+                "Rol": "Agente",
+                "Promotoria": "TAIICO",
+                "RFC": "AAMA950203I52",
+                "Aseguradoras": "",
+                "Permiso_Pendientes": "Lectura",
+            },
+        ])
+
+        credentials, profiles = auth._read_user_directory(workbook)
+
+        self.assertEqual(len(credentials), 2)
+        self.assertEqual(profiles["admin@example.com"].promotorias, ("ABBONDANZA", "EKILIBRA"))
+        self.assertTrue(profiles["admin@example.com"].can_operate("pendientes"))
+        self.assertEqual(profiles["admin@example.com"].aseguradoras, ("*",))
+        self.assertEqual(profiles["agent@example.com"].rfc, "AAMA950203I52")
+        self.assertTrue(profiles["agent@example.com"].can_read("pendientes"))
+        self.assertFalse(profiles["agent@example.com"].can_operate("pendientes"))
+
+    def test_blank_promotoria_fails_closed_for_every_module(self):
+        workbook = workbook_bytes([{
+            "Usuario": "unassigned@example.com",
+            "Password": "secret",
+            "Rol": "Admin",
+            "Promotoria": "",
+        }])
+
+        _, profiles = auth._read_user_directory(workbook)
+
+        profile = profiles["unassigned@example.com"]
+        self.assertFalse(any(profile.can_read(module) for module in auth.MODULES))
+
     def test_updates_only_registered_users_password_and_preserves_other_sheets(self):
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:

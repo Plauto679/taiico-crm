@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from services import cobranza, renovaciones, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, client_email_directory, whatsapp, pendientes, mail_configuration, recluta, password_management
 from services.login_security import login_rate_limiter, secure_cookie_for
+from services.authorization import current_access_profile, require_module_access
 from services.session_auth import (
     COOKIE_NAME,
     create_session_token,
@@ -133,8 +134,16 @@ async def change_password(
 
 
 @app.get("/session")
-async def session(username: str = Depends(current_username)):
-    return {"authenticated": True, "username": username}
+async def session(profile=Depends(current_access_profile)):
+    return {
+        "authenticated": True,
+        "username": profile.username,
+        "role": profile.role,
+        "promotorias": profile.promotorias,
+        "rfc": profile.rfc,
+        "module_permissions": profile.module_permissions,
+        "central_admin": profile.is_central_admin,
+    }
 
 
 @app.post("/session/refresh")
@@ -174,20 +183,18 @@ async def logout(
 def read_root():
     return {"status": "ok", "message": "TAIICO CRM Backend is running"}
 
-private_dependencies = [Depends(current_username)]
-
-app.include_router(cobranza.router, dependencies=private_dependencies)
-app.include_router(renovaciones.router, dependencies=private_dependencies)
-app.include_router(cartera.router, dependencies=private_dependencies)
-app.include_router(clientes.router, dependencies=private_dependencies)
-app.include_router(ingestion.router, dependencies=private_dependencies)
-app.include_router(drive_sources.router, dependencies=private_dependencies)
-app.include_router(renewal_ingestion.router, dependencies=private_dependencies)
-app.include_router(client_email_directory.router, dependencies=private_dependencies)
-app.include_router(whatsapp.router, dependencies=private_dependencies)
-app.include_router(pendientes.router, dependencies=private_dependencies)
-app.include_router(mail_configuration.router, dependencies=private_dependencies)
-app.include_router(recluta.router, dependencies=private_dependencies)
+app.include_router(cobranza.router, dependencies=[Depends(require_module_access("cobranza"))])
+app.include_router(renovaciones.router, dependencies=[Depends(require_module_access("renovaciones"))])
+app.include_router(cartera.router, dependencies=[Depends(require_module_access("cartera"))])
+app.include_router(clientes.router, dependencies=[Depends(require_module_access("clientes"))])
+app.include_router(ingestion.router, dependencies=[Depends(require_module_access("cobranza", operation=True))])
+app.include_router(drive_sources.router, dependencies=[Depends(require_module_access("cobranza", operation=True))])
+app.include_router(renewal_ingestion.router, dependencies=[Depends(require_module_access("renovaciones", operation=True))])
+app.include_router(client_email_directory.router, dependencies=[Depends(require_module_access("clientes"))])
+app.include_router(whatsapp.router, dependencies=[Depends(require_module_access("renovaciones", operation=True))])
+app.include_router(pendientes.router, dependencies=[Depends(require_module_access("pendientes"))])
+app.include_router(mail_configuration.router, dependencies=[Depends(require_module_access("configuracion_mail"))])
+app.include_router(recluta.router, dependencies=[Depends(require_module_access("recluta"))])
 
 if __name__ == "__main__":
     import uvicorn

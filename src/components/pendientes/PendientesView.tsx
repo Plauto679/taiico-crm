@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Mail, Plus } from 'lucide-react';
+import { AlertTriangle, Mail, Plus } from 'lucide-react';
 import { DataTable } from '@/components/ui/DataTable';
 import { PendingRow, PendingSourceData } from '@/lib/types/pendientes';
 import { formatHistoryDate, PendingHistoryModal } from './PendingHistoryModal';
@@ -21,6 +21,10 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
     const [showRegisterModal, setShowRegisterModal] = useState(false);
     const [showReportModal, setShowReportModal] = useState(false);
     const activeData = activeTab === 'emision-servicios' ? emisionData : siniestrosData;
+    const canOperate = activeData.access.can_operate;
+    const inconsistencyCount = (
+        emisionData.inconsistencies.length + siniestrosData.inconsistencies.length
+    );
 
     const columns = useMemo(() => [
         ...activeData.core_headers.map((header) => ({
@@ -57,6 +61,12 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
     return (
         <>
             <div className="flex h-full min-h-0 max-w-full flex-col gap-4">
+                {activeData.access.central_admin && inconsistencyCount > 0 && (
+                    <div className="flex flex-none items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+                        <AlertTriangle className="h-5 w-5" />
+                        {inconsistencyCount} registros necesitan asignación de promotoría o agente.
+                    </div>
+                )}
                 <div className="flex flex-none flex-wrap items-center justify-between gap-4 border-b border-gray-300">
                     <div className="flex gap-2">
                         <button
@@ -76,12 +86,14 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
                     </div>
                     <div className="flex items-center gap-3">
                         <p className="text-sm text-blue-100">{activeData.rows.length} registros</p>
-                        <button type="button" onClick={() => setShowReportModal(true)} className="inline-flex items-center gap-2 rounded-lg border border-white/60 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10">
-                            <Mail className="h-4 w-4" /> Enviar informe
-                        </button>
-                        <button type="button" onClick={() => setShowRegisterModal(true)} className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-50">
-                            <Plus className="h-4 w-4" /> Registrar Pendiente
-                        </button>
+                        {canOperate && <>
+                            <button type="button" onClick={() => setShowReportModal(true)} className="inline-flex items-center gap-2 rounded-lg border border-white/60 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10">
+                                <Mail className="h-4 w-4" /> Enviar informe
+                            </button>
+                            <button type="button" onClick={() => setShowRegisterModal(true)} className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-50">
+                                <Plus className="h-4 w-4" /> Registrar Pendiente
+                            </button>
+                        </>}
                     </div>
                 </div>
 
@@ -93,12 +105,13 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
                 </p>
             </div>
 
-            {selectedRow && <PendingHistoryModal key={`${activeTab}:${selectedRow.id}`} row={selectedRow} source={activeTab} onUpdated={handleUpdated} onClose={() => setSelectedRow(null)} />}
+            {selectedRow && <PendingHistoryModal key={`${activeTab}:${selectedRow.id}`} row={selectedRow} source={activeTab} canOperate={canOperate} onUpdated={handleUpdated} onClose={() => setSelectedRow(null)} />}
             {showRegisterModal && (
                 <RegisterPendingModal
                     source={activeTab}
                     onClose={() => setShowRegisterModal(false)}
                     onCreated={handleCreated}
+                    access={activeData.access}
                 />
             )}
             {showReportModal && <PendingReportModal onClose={() => setShowReportModal(false)} />}
