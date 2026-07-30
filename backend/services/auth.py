@@ -44,6 +44,8 @@ MODULES = (
     "inicio",
     "cobranza",
     "renovaciones",
+    "cumpleanos",
+    "cumpleanos_agentes",
     "pendientes",
     "cartera",
     "clientes",
@@ -56,6 +58,7 @@ MODULE_COLUMNS = {
     for module in MODULES
 }
 MODULE_COLUMNS["configuracion_mail"] = "Permiso_Configuracion_Mail"
+MODULE_COLUMNS["cumpleanos_agentes"] = "Permiso_Cumpleanos_Agentes"
 
 
 @dataclass(frozen=True)
@@ -171,20 +174,26 @@ def _normalize_permission(value: object) -> str:
 
 def _default_module_permissions(role: str, promotorias: tuple[str, ...]) -> dict[str, str]:
     if not promotorias:
-        return {module: "ninguno" for module in MODULES}
-    if role == "agente":
-        return {
+        permissions = {module: "ninguno" for module in MODULES}
+    elif role == "agente":
+        permissions = {
             module: ("lectura" if module == "pendientes" else "ninguno")
             for module in MODULES
         }
-    if role == "admin" and set(promotorias) == set(PROMOTORIAS):
-        return {module: "operacion" for module in MODULES}
-    if role == "admin":
-        return {
+    elif role == "admin" and set(promotorias) == set(PROMOTORIAS):
+        permissions = {module: "operacion" for module in MODULES}
+    elif role == "admin":
+        permissions = {
             module: ("operacion" if module == "pendientes" else "ninguno")
             for module in MODULES
         }
-    return {module: "ninguno" for module in MODULES}
+    else:
+        permissions = {module: "ninguno" for module in MODULES}
+
+    # New modules must be explicitly enabled in the access workbook.
+    permissions["cumpleanos"] = "ninguno"
+    permissions["cumpleanos_agentes"] = "ninguno"
+    return permissions
 
 
 def _read_user_directory(
@@ -487,6 +496,235 @@ def _replace_password_in_xlsx(
         with zipfile.ZipFile(output, "w") as updated_archive:
             for item in archive.infolist():
                 content = updated_xml if item.filename == updated_path else archive.read(item.filename)
+                updated_archive.writestr(item, content)
+        return output.getvalue()
+
+
+def _column_number(letters: str) -> int:
+    value = 0
+    for letter in letters.upper():
+        value = value * 26 + ord(letter) - 64
+    return value
+
+
+def _column_letter(number: int) -> str:
+    value = ""
+    while number:
+        number, remainder = divmod(number - 1, 26)
+        value = chr(65 + remainder) + value
+    return value
+
+
+def _replace_or_append_inline_cell(
+    worksheet_xml: bytes,
+    *,
+    row_number: str,
+    cell_reference: str,
+    value: str,
+    style_id: str = "",
+) -> bytes:
+    encoded_reference = re.escape(cell_reference.encode("utf-8"))
+    cell_pattern = re.compile(
+        rb"<c\b(?=[^>]*\br=[\"']"
+        + encoded_reference
+        + rb"[\"'])[^>]*>.*?</c>",
+        re.DOTALL,
+    )
+    escaped_value = escape(str(value)).encode("utf-8")
+    style_attribute = (
+        b' s="' + escape(style_id).encode("utf-8") + b'"'
+        if style_id
+        else b""
+    )
+    replacement = (
+        b'<c r="'
+        + cell_reference.encode("utf-8")
+        + b'"'
+        + style_attribute
+        + b' t="inlineStr"><is><t>'
+        + escaped_value
+        + b"</t></is></c>"
+    )
+    match = cell_pattern.search(worksheet_xml)
+    if match is not None:
+        return (
+            worksheet_xml[: match.start()]
+            + replacement
+            + worksheet_xml[match.end() :]
+        )
+
+    row_pattern = re.compile(
+        rb"<row\b(?=[^>]*\br=[\"']"
+        + re.escape(row_number.encode("utf-8"))
+        + rb"[\"'])[^>]*>.*?</row>",
+        re.DOTALL,
+    )
+    row_match = row_pattern.search(worksheet_xml)
+    if row_match is None:
+        raise ValueError(f"Worksheet row {row_number} was not found")
+    row_xml = row_match.group(0)
+    closing_position = row_xml.rfind(b"</row>")
+    updated_row = (
+        row_xml[:closing_position] + replacement + row_xml[closing_position:]
+    )
+    return (
+        worksheet_xml[: row_match.start()]
+        + updated_row
+        + worksheet_xml[row_match.end() :]
+    )
+
+
+def _set_permission_column_in_xlsx(
+    workbook_bytes: bytes,
+    column_name: str,
+    values_by_username: dict[str, str],
+    *,
+    default_value: str = "Ninguno",
+) -> bytes:
+    """Set one access column without reserializing the rest of the workbook."""
+    normalized_values = {
+        str(username).strip().casefold(): str(value)
+        for username, value in values_by_username.items()
+    }
+    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as archive:
+        names = archive.namelist()
+        shared_strings: list[str] = []
+        if "xl/sharedStrings.xml" in names:
+            shared_root = ElementTree.fromstring(archive.read("xl/sharedStrings.xml"))
+            shared_strings = [
+                "".join(
+                    node.text or ""
+                    for node in item.findall(f".//{{{_SPREADSHEET_NS}}}t")
+                )
+                for item in shared_root.findall(f"{{{_SPREADSHEET_NS}}}si")
+            ]
+
+        workbook_root = ElementTree.fromstring(archive.read("xl/workbook.xml"))
+        relationship_root = ElementTree.fromstring(
+            archive.read("xl/_rels/workbook.xml.rels")
+        )
+        targets = {
+            relationship.get("Id"): relationship.get("Target")
+            for relationship in relationship_root.findall(
+                f"{{{_PACKAGE_REL_NS}}}Relationship"
+            )
+        }
+
+        updated_path = ""
+        updated_xml = b""
+        for sheet in workbook_root.findall(f".//{{{_SPREADSHEET_NS}}}sheet"):
+            relationship_id = sheet.get(f"{{{_OFFICE_REL_NS}}}id")
+            target = targets.get(relationship_id)
+            if not target:
+                continue
+            cleaned_target = target.lstrip("/")
+            sheet_path = (
+                posixpath.normpath(cleaned_target)
+                if cleaned_target.startswith("xl/")
+                else posixpath.normpath(posixpath.join("xl", cleaned_target))
+            )
+            worksheet_bytes = archive.read(sheet_path)
+            sheet_root = ElementTree.fromstring(worksheet_bytes)
+            rows = sheet_root.findall(
+                f".//{{{_SPREADSHEET_NS}}}sheetData/{{{_SPREADSHEET_NS}}}row"
+            )
+            if not rows:
+                continue
+
+            headers: dict[str, str] = {}
+            for cell in rows[0].findall(f"{{{_SPREADSHEET_NS}}}c"):
+                reference = cell.get("r", "")
+                column = "".join(character for character in reference if character.isalpha())
+                headers[_xlsx_cell_text(cell, shared_strings).strip()] = column
+            if not REQUIRED_COLUMNS.issubset(headers):
+                continue
+
+            username_column = headers["Usuario"]
+            target_column = headers.get(column_name)
+            is_new_column = not target_column
+            if not target_column:
+                target_column = _column_letter(
+                    max(_column_number(column) for column in headers.values()) + 1
+                )
+
+            header_style = ""
+            header_cells = rows[0].findall(f"{{{_SPREADSHEET_NS}}}c")
+            if header_cells:
+                header_style = header_cells[-1].get("s", "")
+            worksheet_bytes = _replace_or_append_inline_cell(
+                worksheet_bytes,
+                row_number=rows[0].get("r", "1"),
+                cell_reference=f"{target_column}{rows[0].get('r', '1')}",
+                value=column_name,
+                style_id=header_style,
+            )
+
+            for row in rows[1:]:
+                row_number = row.get("r", "")
+                if not row_number:
+                    continue
+                cells = {
+                    "".join(
+                        character
+                        for character in cell.get("r", "")
+                        if character.isalpha()
+                    ): cell
+                    for cell in row.findall(f"{{{_SPREADSHEET_NS}}}c")
+                }
+                username_cell = cells.get(username_column)
+                if username_cell is None:
+                    continue
+                username = (
+                    _xlsx_cell_text(username_cell, shared_strings).strip().casefold()
+                )
+                if not username:
+                    continue
+                row_cells = row.findall(f"{{{_SPREADSHEET_NS}}}c")
+                style_id = row_cells[-1].get("s", "") if row_cells else ""
+                worksheet_bytes = _replace_or_append_inline_cell(
+                    worksheet_bytes,
+                    row_number=row_number,
+                    cell_reference=f"{target_column}{row_number}",
+                    value=normalized_values.get(username, default_value),
+                    style_id=style_id,
+                )
+
+            if is_new_column:
+                target_number = _column_number(target_column)
+
+                def extend_dimension(match: re.Match[bytes]) -> bytes:
+                    start, end_letters, end_row = match.groups()
+                    end_number = max(_column_number(end_letters.decode()), target_number)
+                    return (
+                        b'<dimension ref="'
+                        + start
+                        + b":"
+                        + _column_letter(end_number).encode()
+                        + end_row
+                        + b'"'
+                    )
+
+                worksheet_bytes = re.sub(
+                    rb'<dimension ref="([A-Z]+\d+):([A-Z]+)(\d+)"',
+                    extend_dimension,
+                    worksheet_bytes,
+                    count=1,
+                )
+            updated_path = sheet_path
+            updated_xml = worksheet_bytes
+            break
+
+        if not updated_path:
+            raise ValueError("Users worksheet was not found")
+
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as updated_archive:
+            for item in archive.infolist():
+                content = (
+                    updated_xml
+                    if item.filename == updated_path
+                    else archive.read(item.filename)
+                )
                 updated_archive.writestr(item, content)
         return output.getvalue()
 

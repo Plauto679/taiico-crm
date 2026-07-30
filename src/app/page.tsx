@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { DollarSign, Calendar, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch } from 'lucide-react';
+import { DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch } from 'lucide-react';
 import { fetchFromApi } from '@/lib/api';
 
 export default async function Home() {
@@ -52,6 +52,34 @@ export default async function Home() {
             </div>
           </div>
         </Link>
+
+        {['lectura', 'operacion'].includes(session.module_permissions.cumpleanos || '') && (
+          <Link href="/cumpleanos" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-pink-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className="rounded-full bg-pink-100 p-4 text-pink-600 group-hover:bg-pink-600 group-hover:text-white transition-colors duration-300">
+                <CakeSlice className="h-8 w-8" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Cumpleaños</h2>
+                <p className="text-gray-500 mt-2">Clientes, pólizas y agentes</p>
+              </div>
+            </div>
+          </Link>
+        )}
+
+        {['lectura', 'operacion'].includes(session.module_permissions.cumpleanos_agentes || '') && (
+          <Link href="/cumpleanos-agentes" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-violet-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className="rounded-full bg-violet-100 p-4 text-violet-600 group-hover:bg-violet-600 group-hover:text-white transition-colors duration-300">
+                <PartyPopper className="h-8 w-8" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Cumpleaños de agentes</h2>
+                <p className="text-gray-500 mt-2">Agentes, claves y promotorías</p>
+              </div>
+            </div>
+          </Link>
+        )}
 
         <Link href="/pendientes" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-cyan-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
           <div className="flex flex-col items-center text-center space-y-4">

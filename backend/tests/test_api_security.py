@@ -39,6 +39,8 @@ class ApiSecurityTests(unittest.TestCase):
             if route.path.startswith((
                 "/cobranza",
                 "/renovaciones",
+                "/cumpleanos",
+                "/cumpleanos-agentes",
                 "/cartera",
                 "/clientes",
                 "/ingestion",

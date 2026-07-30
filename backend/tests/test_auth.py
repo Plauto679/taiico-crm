@@ -109,6 +109,136 @@ class WorkbookAuthenticationTests(unittest.TestCase):
         self.assertEqual(profiles["agent@example.com"].rfc, "AAMA950203I52")
         self.assertTrue(profiles["agent@example.com"].can_read("pendientes"))
         self.assertFalse(profiles["agent@example.com"].can_operate("pendientes"))
+        self.assertFalse(profiles["admin@example.com"].can_read("cumpleanos"))
+        self.assertFalse(
+            profiles["admin@example.com"].can_read("cumpleanos_agentes")
+        )
+
+    def test_birthdays_module_uses_explicit_workbook_permissions(self):
+        workbook = workbook_bytes([
+            {
+                "Usuario": "alberto.alfaro@taiico.com",
+                "Password": "secret",
+                "Rol": "Admin",
+                "Promotoria": "*",
+                "Permiso_Cumpleanos": "Lectura",
+            },
+            {
+                "Usuario": "other-admin@taiico.com",
+                "Password": "secret",
+                "Rol": "Admin",
+                "Promotoria": "*",
+                "Permiso_Cumpleanos": "Ninguno",
+            },
+        ])
+
+        _, profiles = auth._read_user_directory(workbook)
+
+        self.assertTrue(
+            profiles["alberto.alfaro@taiico.com"].can_read("cumpleanos")
+        )
+        self.assertFalse(
+            profiles["alberto.alfaro@taiico.com"].can_operate("cumpleanos")
+        )
+        self.assertFalse(
+            profiles["other-admin@taiico.com"].can_read("cumpleanos")
+        )
+
+    def test_birthdays_module_fails_closed_when_column_is_missing(self):
+        workbook = workbook_bytes([{
+            "Usuario": "central-admin@example.com",
+            "Password": "secret",
+            "Rol": "Admin",
+            "Promotoria": "*",
+        }])
+
+        _, profiles = auth._read_user_directory(workbook)
+
+        self.assertFalse(
+            profiles["central-admin@example.com"].can_read("cumpleanos")
+        )
+        self.assertFalse(
+            profiles["central-admin@example.com"].can_read("cumpleanos_agentes")
+        )
+
+    def test_agent_birthdays_module_uses_explicit_workbook_permissions(self):
+        workbook = workbook_bytes([
+            {
+                "Usuario": "alberto.alfaro@taiico.com",
+                "Password": "secret",
+                "Rol": "Admin",
+                "Promotoria": "*",
+                "Permiso_Cumpleanos_Agentes": "Lectura",
+            },
+            {
+                "Usuario": "other-admin@taiico.com",
+                "Password": "secret",
+                "Rol": "Admin",
+                "Promotoria": "*",
+                "Permiso_Cumpleanos_Agentes": "Ninguno",
+            },
+        ])
+
+        _, profiles = auth._read_user_directory(workbook)
+
+        self.assertTrue(
+            profiles["alberto.alfaro@taiico.com"].can_read(
+                "cumpleanos_agentes"
+            )
+        )
+        self.assertFalse(
+            profiles["alberto.alfaro@taiico.com"].can_operate(
+                "cumpleanos_agentes"
+            )
+        )
+        self.assertFalse(
+            profiles["other-admin@taiico.com"].can_read(
+                "cumpleanos_agentes"
+            )
+        )
+
+    def test_adds_permission_column_without_reserializing_other_parts(self):
+        original = workbook_bytes([
+            {"Usuario": "alberto.alfaro@taiico.com", "Password": "secret"},
+            {"Usuario": "other@example.com", "Password": "untouched"},
+        ])
+
+        updated = auth._set_permission_column_in_xlsx(
+            original,
+            "Permiso_Cumpleanos",
+            {"alberto.alfaro@taiico.com": "Lectura"},
+        )
+
+        with zipfile.ZipFile(io.BytesIO(original)) as original_archive, zipfile.ZipFile(
+            io.BytesIO(updated)
+        ) as updated_archive:
+            self.assertIsNone(updated_archive.testzip())
+            for name in original_archive.namelist():
+                if name != "xl/worksheets/sheet1.xml":
+                    self.assertEqual(
+                        original_archive.read(name),
+                        updated_archive.read(name),
+                        name,
+                    )
+        table = pd.read_excel(
+            io.BytesIO(updated),
+            dtype=str,
+            keep_default_na=False,
+        )
+        self.assertEqual(
+            table.loc[
+                table["Usuario"] == "alberto.alfaro@taiico.com",
+                "Permiso_Cumpleanos",
+            ].iloc[0],
+            "Lectura",
+        )
+        self.assertEqual(
+            table.loc[
+                table["Usuario"] == "other@example.com",
+                "Permiso_Cumpleanos",
+            ].iloc[0],
+            "Ninguno",
+        )
 
     def test_blank_promotoria_fails_closed_for_every_module(self):
         workbook = workbook_bytes([{

@@ -3,12 +3,14 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, DollarSign, Calendar, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound } from 'lucide-react';
+import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound } from 'lucide-react';
 
 const NAV_ITEMS = [
     { name: 'Inicio', href: '/', icon: Home, module: 'inicio' },
     { name: 'Cobranza', href: '/cobranza', icon: DollarSign, module: 'cobranza' },
     { name: 'Renovaciones', href: '/renovaciones', icon: Calendar, module: 'renovaciones' },
+    { name: 'Cumpleaños', href: '/cumpleanos', icon: CakeSlice, module: 'cumpleanos' },
+    { name: 'Cumpleaños de agentes', href: '/cumpleanos-agentes', icon: PartyPopper, module: 'cumpleanos_agentes' },
     { name: 'Pendientes', href: '/pendientes', icon: ClipboardList, module: 'pendientes' },
     { name: 'Cartera', href: '/cartera', icon: Briefcase, module: 'cartera' },
     { name: 'Clientes', href: '/clientes', icon: Users, module: 'clientes' },

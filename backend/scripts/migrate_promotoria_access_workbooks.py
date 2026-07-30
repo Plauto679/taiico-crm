@@ -24,6 +24,8 @@ MODULE_COLUMNS = (
     "Permiso_Inicio",
     "Permiso_Cobranza",
     "Permiso_Renovaciones",
+    "Permiso_Cumpleanos",
+    "Permiso_Cumpleanos_Agentes",
     "Permiso_Pendientes",
     "Permiso_Cartera",
     "Permiso_Clientes",
@@ -80,7 +82,16 @@ def migrate_users(path: Path) -> None:
         promotorias = split_values(sheet.cell(row, headers["Promotoria"]).value)
         central_admin = role == "admin" and promotorias == PROMOTORIAS
         for header in MODULE_COLUMNS:
-            if not promotorias:
+            username = str(
+                sheet.cell(row, headers["Usuario"]).value or ""
+            ).strip().casefold()
+            if header in {"Permiso_Cumpleanos", "Permiso_Cumpleanos_Agentes"}:
+                permission = (
+                    "Lectura"
+                    if username == "alberto.alfaro@taiico.com"
+                    else "Ninguno"
+                )
+            elif not promotorias:
                 permission = "Ninguno"
             elif role == "agente":
                 permission = "Lectura" if header == "Permiso_Pendientes" else "Ninguno"
