@@ -255,11 +255,10 @@ def _derived_day_values(summary: dict[str, str], today: date | None = None) -> d
         if not actual_date_header or not actual_days_header:
             continue
         start_date = _parse_pending_date(summary.get(actual_date_header, ""))
-        derived[actual_days_header] = (
-            str(max(0, (current_date - start_date).days))
-            if start_date
-            else ""
-        )
+        # A missing date cannot produce a trustworthy recalculation. In that
+        # case, leave the existing counter untouched instead of erasing it.
+        if start_date:
+            derived[actual_days_header] = str(max(0, (current_date - start_date).days))
     return derived
 
 

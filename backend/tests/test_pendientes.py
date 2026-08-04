@@ -470,13 +470,13 @@ class PendingWorkbookTests(unittest.TestCase):
         self.assertEqual(summary["Dias desde registro del siniestro"], "22")
         self.assertEqual(summary["DIAS CUMPLIDOS EN LA ASEGURADORA"], "3")
 
-    def test_derived_days_are_blank_without_date_and_never_negative(self):
+    def test_derived_days_preserve_existing_counter_without_date_and_never_negative(self):
         self.assertEqual(
             _derived_day_values(
                 {"Fecha Inicio": "", "Días Transcurridos": "99"},
                 date(2026, 7, 23),
             ),
-            {"Días Transcurridos": ""},
+            {},
         )
         self.assertEqual(
             _derived_day_values(
@@ -485,6 +485,29 @@ class PendingWorkbookTests(unittest.TestCase):
             ),
             {"Días Transcurridos": "0"},
         )
+
+    def test_siniestros_preserve_existing_days_when_insurer_date_is_blank(self):
+        source = PendingSource("siniestros", "Test", "TEST_ID", "file", "Base", 12)
+        headers = [
+            "Folio Titán", "ASEGURADO", "RFC", "Tipo de Trámite", "Trámite",
+            "Estatus", "Comentarios", "Notas Especiales",
+            "Fecha de registro de siniestro", "Dias desde registro del siniestro",
+            "Fecha de envío a la aseguradora", "DIAS CUMPLIDOS EN LA ASEGURADORA",
+            "Responsable", "Semaforo", "22/07/2026",
+        ]
+        row = [
+            "1", "Cliente", "RFC1", "Reembolso", "Complemento", "Ingresado",
+            "", "", "", "", "", "55", "Pam", "Rojo", "",
+        ]
+
+        parsed = parse_pending_workbook(
+            workbook_bytes("Base", headers, [row]),
+            source,
+            today=date(2026, 7, 23),
+        )
+
+        summary = parsed["rows"][0]["summary"]
+        self.assertEqual(summary["DIAS CUMPLIDOS EN LA ASEGURADORA"], "55")
 
     def test_report_classifies_each_counter_and_excludes_already_submitted_records(self):
         emision = {
