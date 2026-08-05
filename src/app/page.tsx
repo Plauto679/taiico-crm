@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch } from 'lucide-react';
+import { DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, DatabaseZap } from 'lucide-react';
 import { fetchFromApi } from '@/lib/api';
 
 export default async function Home() {
@@ -151,6 +151,20 @@ export default async function Home() {
             </div>
           </div>
         </Link>
+
+        {session.module_permissions.carga_bases === 'operacion' && (
+          <Link href="/carga-bases" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-emerald-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className="rounded-full bg-emerald-100 p-4 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-colors duration-300">
+                <DatabaseZap className="h-8 w-8" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Carga de bases</h2>
+                <p className="text-gray-500 mt-2">Actualización controlada de pólizas</p>
+              </div>
+            </div>
+          </Link>
+        )}
       </div>
       </div>
     </div>

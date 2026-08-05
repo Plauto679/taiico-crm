@@ -160,6 +160,9 @@ class WorkbookAuthenticationTests(unittest.TestCase):
         self.assertFalse(
             profiles["central-admin@example.com"].can_read("cumpleanos_agentes")
         )
+        self.assertFalse(
+            profiles["central-admin@example.com"].can_read("carga_bases")
+        )
 
     def test_agent_birthdays_module_uses_explicit_workbook_permissions(self):
         workbook = workbook_bytes([

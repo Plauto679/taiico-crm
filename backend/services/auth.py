@@ -52,6 +52,7 @@ MODULES = (
     "recluta",
     "dashboards",
     "configuracion_mail",
+    "carga_bases",
 )
 MODULE_COLUMNS = {
     module: f"Permiso_{module.title()}"
@@ -59,6 +60,7 @@ MODULE_COLUMNS = {
 }
 MODULE_COLUMNS["configuracion_mail"] = "Permiso_Configuracion_Mail"
 MODULE_COLUMNS["cumpleanos_agentes"] = "Permiso_Cumpleanos_Agentes"
+MODULE_COLUMNS["carga_bases"] = "Permiso_Carga_Bases"
 
 
 @dataclass(frozen=True)
@@ -193,6 +195,7 @@ def _default_module_permissions(role: str, promotorias: tuple[str, ...]) -> dict
     # New modules must be explicitly enabled in the access workbook.
     permissions["cumpleanos"] = "ninguno"
     permissions["cumpleanos_agentes"] = "ninguno"
+    permissions["carga_bases"] = "ninguno"
     return permissions
 
 

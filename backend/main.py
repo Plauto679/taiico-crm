@@ -2,7 +2,7 @@ import os
 
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from services import cobranza, renovaciones, cumpleanos, cumpleanos_agentes, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, client_email_directory, whatsapp, pendientes, mail_configuration, recluta, password_management
+from services import cobranza, renovaciones, cumpleanos, cumpleanos_agentes, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, client_email_directory, whatsapp, pendientes, mail_configuration, recluta, password_management, base_loads
 from services.login_security import login_rate_limiter, secure_cookie_for
 from services.authorization import current_access_profile, require_module_access
 from services.session_auth import (
@@ -197,6 +197,7 @@ app.include_router(whatsapp.router, dependencies=[Depends(require_module_access(
 app.include_router(pendientes.router, dependencies=[Depends(require_module_access("pendientes"))])
 app.include_router(mail_configuration.router, dependencies=[Depends(require_module_access("configuracion_mail"))])
 app.include_router(recluta.router, dependencies=[Depends(require_module_access("recluta"))])
+app.include_router(base_loads.router, dependencies=[Depends(require_module_access("carga_bases", operation=True))])
 
 if __name__ == "__main__":
     import uvicorn
