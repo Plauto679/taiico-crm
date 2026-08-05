@@ -6,6 +6,7 @@ import type { BaseLoadApplyResult, BaseLoadPreview } from '@/lib/types/baseLoads
 import { applyMetlifeGmmBase, previewMetlifeGmmBase } from '@/modules/base-loads/service';
 
 const number = new Intl.NumberFormat('es-MX');
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 function Metric({ label, value, tone = 'default' }: { label: string; value: number; tone?: 'default' | 'warning' | 'success' }) {
     const styles = tone === 'warning'
@@ -30,7 +31,16 @@ export function BaseLoadsView() {
     const [error, setError] = useState('');
 
     function selectFile(event: ChangeEvent<HTMLInputElement>) {
-        setFile(event.target.files?.[0] || null);
+        const selected = event.target.files?.[0] || null;
+        if (selected && selected.size > MAX_UPLOAD_BYTES) {
+            setFile(null);
+            setPreview(null);
+            setResult(null);
+            setError('El archivo supera el límite de 100 MB');
+            event.target.value = '';
+            return;
+        }
+        setFile(selected);
         setPreview(null);
         setResult(null);
         setError('');

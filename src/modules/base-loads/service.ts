@@ -4,10 +4,17 @@ async function responseJson<T>(response: Response): Promise<T> {
     if (!response.ok) {
         let detail = response.statusText || `HTTP ${response.status}`;
         try {
-            const payload = await response.json();
-            detail = payload.detail || detail;
+            const text = await response.text();
+            if (text) {
+                try {
+                    const payload = JSON.parse(text);
+                    detail = payload.detail || detail;
+                } catch {
+                    detail = text;
+                }
+            }
         } catch {
-            // Preserve the HTTP status text when the backend did not return JSON.
+            // Preserve the HTTP status text when the response body is unavailable.
         }
         throw new Error(detail);
     }

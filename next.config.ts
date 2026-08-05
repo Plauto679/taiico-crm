@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  experimental: {
+    // MetLife workbooks can be up to 100 MB. Leave room for multipart framing
+    // before the same-origin rewrite streams the request to FastAPI.
+    proxyClientMaxBodySize: "110mb",
+  },
   async headers() {
     return [
       {
