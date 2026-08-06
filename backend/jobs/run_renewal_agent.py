@@ -44,7 +44,7 @@ from services.renovaciones import (  # noqa: E402
 DEFAULT_TIMEZONE = "America/Mexico_City"
 DEFAULT_HOUR = 9
 DEFAULT_WINDOW_DAYS = 30
-DEFAULT_MAX_CONSECUTIVE_PORTAL_FAILURES = 2
+DEFAULT_MAX_CONSECUTIVE_PORTAL_FAILURES = 7
 DEFAULT_TARGET_DRIVE_FOLDER_ID = "1UthkPpr5_pvX5SszrCuIm546XKZh4Z_R"
 DEFAULT_INTERNAL_RECIPIENTS = (
     "alberto.alfaro@taiico.com,"
@@ -259,7 +259,26 @@ def record_action(
         db.close()
 
 
-def selected_tasks(cutoff: date) -> list[PolicyDocumentRetrievalTask]:
+def task_processing_order(
+    task: PolicyDocumentRetrievalTask,
+    process_date: date,
+) -> tuple:
+    """Prioritize the active renewal window and leave overdue tasks last."""
+    deadline = task.renewal_deadline or date.max
+    is_overdue = deadline < process_date
+    return (
+        is_overdue,
+        deadline,
+        task.attempt_count or 0,
+        task.policy_number or "",
+    )
+
+
+def selected_tasks(
+    cutoff: date,
+    *,
+    process_date: date | None = None,
+) -> list[PolicyDocumentRetrievalTask]:
     db = SessionLocal()
     try:
         tasks = (
@@ -289,7 +308,17 @@ def selected_tasks(cutoff: date) -> list[PolicyDocumentRetrievalTask]:
         }
         for task in tasks:
             db.expunge(task)
-        return [task for task in tasks if task.id not in protected_task_ids]
+        eligible_tasks = [
+            task for task in tasks if task.id not in protected_task_ids
+        ]
+        effective_process_date = process_date or local_now().date()
+        return sorted(
+            eligible_tasks,
+            key=lambda task: task_processing_order(
+                task,
+                effective_process_date,
+            ),
+        )
     finally:
         db.close()
 
@@ -714,7 +743,7 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
 
 def execute_batch(now: datetime) -> dict:
     cutoff = renewal_cutoff(now)
-    tasks = selected_tasks(cutoff)
+    tasks = selected_tasks(cutoff, process_date=now.date())
     run_id = create_run(tasks, cutoff)
     send_email_smtp(
         subject=f"Inicio renovaciones MetLife GMM - {now.date().isoformat()}",
@@ -781,7 +810,10 @@ def run(*, force: bool = False, dry_run: bool = False) -> int:
         state = read_state(path)
         due = force or should_run(now, state.get("last_started_date"))
         if dry_run:
-            tasks = selected_tasks(renewal_cutoff(now))
+            tasks = selected_tasks(
+                renewal_cutoff(now),
+                process_date=now.date(),
+            )
             print(
                 json.dumps(
                     {
