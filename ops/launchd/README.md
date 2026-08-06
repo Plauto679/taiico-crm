@@ -53,6 +53,28 @@ launchctl kickstart -k gui/$(id -u)/com.taiico.crm.renewal-agent
 
 Los logs se escriben en `.runtime/logs/` y no se versionan.
 
+## API supervisada de renovaciones
+
+La API de operación remota usa un token de servicio independiente de la sesión
+web. Antes de reiniciar el backend, configura en `backend/.env` un valor aleatorio
+largo para `RENEWAL_AGENT_API_TOKEN`. El token se envía exclusivamente mediante
+el encabezado `Authorization: Bearer ...`; nunca debe incluirse en la URL ni
+confirmarse en Git.
+
+La ruta pública pasa por el rewrite existente de Next.js:
+
+```text
+GET  /api/renewal-agent/candidates
+POST /api/renewal-agent/tasks/{task_id}/claim
+POST /api/renewal-agent/tasks/{task_id}/collection-check
+POST /api/renewal-agent/tasks/{task_id}/approve
+```
+
+Esta primera versión no ejecuta descargas ni envíos. Reserva una tarea, registra
+la consulta de cobranza y exige que `Pagado Hasta` sea igual o posterior a
+`FFINVIG` antes de permitir la aprobación humana. El alcance está fijado en el
+servidor a MetLife GMM y a los agentes TAIICO `16200`, `18412` y `73640`.
+
 ## Alcance
 
 Estos agentes mantienen disponibles la interfaz web y la API. El agente
