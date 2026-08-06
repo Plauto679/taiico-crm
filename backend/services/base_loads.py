@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -15,11 +15,14 @@ from typing import Iterable
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from openpyxl import load_workbook
+from starlette.concurrency import run_in_threadpool
 
-from config import BASE_DIR, METLIFE_PATHS
+from config import GOOGLE_DRIVE_SOURCE_FOLDERS, METLIFE_PATHS
+from drive.client import download_drive_file_bytes
 
 
 router = APIRouter(prefix="/base-loads", tags=["base-loads"])
+logger = logging.getLogger(__name__)
 
 BUSINESS_COLUMN_COUNT = 24  # A:X
 POLICY_COLUMN_INDEX = 4  # E / NPOLIZA
@@ -56,6 +59,9 @@ MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 PREVIEW_TTL_HOURS = 24
 DEFAULT_HISTORY_FOLDER_ID = "1VRzdS1Oqpf1XXnT1hHrzz024ocjhLQzM"
 HISTORY_FOLDER_ID_ENV = "BASE_LOAD_HISTORY_FOLDER_ID"
+DEFAULT_AGENTS_METLIFE_FILE_ID = "1IoeLDCQe4T3DofStiBSaI09xjX2-RSby"
+AGENTS_METLIFE_FILE_ID_ENV = "GOOGLE_DRIVE_AGENTS_METLIFE_FILE_ID"
+DEFAULT_METLIFE_GMM_FILE_ID = "1e1fL1qH4jBJLSNdSO-izTg2eDjYV6VNn"
 
 
 def staging_root() -> Path:
@@ -69,17 +75,32 @@ def staging_root() -> Path:
     return root
 
 
-def agents_workbook_path() -> Path:
-    configured = os.getenv("METLIFE_AGENTS_WORKBOOK_PATH", "").strip()
-    return (
-        Path(configured).expanduser()
-        if configured
-        else BASE_DIR / "Agentes" / "Agentes Metlife.xlsx"
-    )
+def stage_agents_workbook(destination: Path) -> Path:
+    """Download the canonical MetLife agent catalog from Google Drive."""
+    file_id = os.getenv(
+        AGENTS_METLIFE_FILE_ID_ENV,
+        DEFAULT_AGENTS_METLIFE_FILE_ID,
+    ).strip()
+    if not file_id:
+        raise ValueError("No está configurado el archivo de Agentes MetLife en Drive")
+
+    destination.write_bytes(download_drive_file_bytes(file_id))
+    return destination
 
 
 def history_folder_id() -> str:
     return os.getenv(HISTORY_FOLDER_ID_ENV, DEFAULT_HISTORY_FOLDER_ID).strip()
+
+
+def canonical_drive_file_id() -> str:
+    configured = (
+        GOOGLE_DRIVE_SOURCE_FOLDERS.get("renovaciones.metlife_gmm", {}).get("file_id")
+        or DEFAULT_METLIFE_GMM_FILE_ID
+    )
+    file_id = str(configured).strip()
+    if not file_id:
+        raise ValueError("No está configurado el archivo canónico MetLife GMM en Drive")
+    return file_id
 
 
 def upload_history_backup(source_path: Path, backup_name: str) -> dict[str, str]:
@@ -88,15 +109,15 @@ def upload_history_backup(source_path: Path, backup_name: str) -> dict[str, str]
     if not folder_id:
         raise ValueError("No está configurada la carpeta histórica de Carga de bases")
     try:
-        from googleapiclient.http import MediaIoBaseUpload
+        from googleapiclient.http import MediaFileUpload
         from services.auth import _build_writable_drive_service
     except ImportError as exc:
         raise RuntimeError(
             "No están instaladas las dependencias de escritura de Google Drive"
         ) from exc
 
-    media = MediaIoBaseUpload(
-        io.BytesIO(source_path.read_bytes()),
+    media = MediaFileUpload(
+        str(source_path),
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         resumable=False,
     )
@@ -120,6 +141,91 @@ def upload_history_backup(source_path: Path, backup_name: str) -> dict[str, str]
             or f"https://drive.google.com/file/d/{file_id}/view"
         ),
         "backup_folder_id": folder_id,
+    }
+
+
+def drive_file_metadata(file_id: str) -> dict:
+    from services.auth import _build_writable_drive_service
+
+    return (
+        _build_writable_drive_service()
+        .files()
+        .get(
+            fileId=file_id,
+            fields="id,name,webViewLink,md5Checksum,size,modifiedTime,version",
+            supportsAllDrives=True,
+        )
+        .execute()
+    )
+
+
+def backup_drive_workbook(file_id: str, backup_name: str) -> dict[str, str]:
+    """Copy the exact Drive version that will be replaced into history."""
+    folder_id = history_folder_id()
+    if not folder_id:
+        raise ValueError("No está configurada la carpeta histórica de Carga de bases")
+    from services.auth import _build_writable_drive_service
+
+    created = (
+        _build_writable_drive_service()
+        .files()
+        .copy(
+            fileId=file_id,
+            body={"name": backup_name, "parents": [folder_id]},
+            fields="id,name,webViewLink",
+            supportsAllDrives=True,
+        )
+        .execute()
+    )
+    backup_file_id = str(created["id"])
+    return {
+        "backup_file_id": backup_file_id,
+        "backup_name": str(created.get("name") or backup_name),
+        "backup_url": str(
+            created.get("webViewLink")
+            or f"https://drive.google.com/file/d/{backup_file_id}/view"
+        ),
+        "backup_folder_id": folder_id,
+    }
+
+
+def update_drive_workbook(file_id: str, source_path: Path) -> dict[str, str]:
+    """Replace Drive bytes in place, preserving the canonical ID and sharing URL."""
+    try:
+        from googleapiclient.http import MediaFileUpload
+        from services.auth import _build_writable_drive_service
+    except ImportError as exc:
+        raise RuntimeError(
+            "No están instaladas las dependencias de escritura de Google Drive"
+        ) from exc
+
+    media = MediaFileUpload(
+        str(source_path),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        resumable=False,
+    )
+    updated = (
+        _build_writable_drive_service()
+        .files()
+        .update(
+            fileId=file_id,
+            media_body=media,
+            fields="id,name,webViewLink,md5Checksum,size,modifiedTime,version",
+            supportsAllDrives=True,
+        )
+        .execute()
+    )
+    return {
+        "drive_file_id": str(updated["id"]),
+        "drive_name": str(updated.get("name") or "Metlife GMM.xlsx"),
+        "drive_url": str(
+            updated.get("webViewLink")
+            or f"https://drive.google.com/file/d/{file_id}/view"
+        ),
+        "drive_md5": str(updated.get("md5Checksum") or ""),
+        "drive_size": str(updated.get("size") or ""),
+        "drive_modified_time": str(updated.get("modifiedTime") or ""),
+        "drive_version": str(updated.get("version") or ""),
     }
 
 
@@ -268,10 +374,7 @@ def load_current_policies(path: Path) -> dict:
         workbook.close()
 
 
-def build_preview(upload_path: Path, canonical_path: Path, agent_path: Path) -> dict:
-    allowed_keys = load_allowed_agent_keys(agent_path)
-    incoming = select_incoming_rows(upload_path, allowed_keys)
-    current = load_current_policies(canonical_path)
+def preview_from_loaded_data(allowed_keys: set[str], incoming: dict, current: dict) -> dict:
     incoming_policies = {
         normalize_cell(row[POLICY_COLUMN_INDEX]) for row in incoming["rows"]
     }
@@ -304,54 +407,90 @@ def build_preview(upload_path: Path, canonical_path: Path, agent_path: Path) -> 
     }
 
 
-def replace_canonical_workbook(
-    upload_path: Path,
-    canonical_path: Path,
-    agent_path: Path,
-) -> dict:
+def build_preview(upload_path: Path, canonical_path: Path, agent_path: Path) -> dict:
     allowed_keys = load_allowed_agent_keys(agent_path)
     incoming = select_incoming_rows(upload_path, allowed_keys)
     current = load_current_policies(canonical_path)
-    preview = build_preview(upload_path, canonical_path, agent_path)
-    width = current["width"]
-    incoming_rows = incoming["rows"]
-    current_rows = current["rows"]
+    return preview_from_loaded_data(allowed_keys, incoming, current)
 
-    exact_indexes = {
-        business_key(row): index for index, row in enumerate(incoming_rows)
+
+def current_policies_from_sheet(sheet) -> dict:
+    rows = sheet.iter_rows(values_only=True)
+    try:
+        header = tuple(next(rows))
+    except StopIteration as exc:
+        raise ValueError("La hoja GMM está vacía") from exc
+    if len(header) < BUSINESS_COLUMN_COUNT:
+        raise ValueError("La hoja GMM no contiene las columnas A:X")
+    width = len(header)
+    rows_by_business: dict[tuple[str, ...], tuple[object, ...]] = {}
+    policies: set[str] = set()
+    for raw_row in rows:
+        values = row_values(raw_row, width)
+        policy_number = normalize_cell(values[POLICY_COLUMN_INDEX])
+        if policy_number:
+            policies.add(policy_number)
+            rows_by_business[business_key(values)] = values
+    return {
+        "header": header,
+        "width": width,
+        "rows": list(rows_by_business.values()),
+        "policies": policies,
     }
-    period_indexes: dict[tuple[str, str, str], list[int]] = defaultdict(list)
-    for index, row in enumerate(incoming_rows):
-        period_indexes[period_key(row)].append(index)
 
-    preserved_by_index: dict[int, tuple[object, ...]] = {}
-    exceptions: list[tuple[object, ...]] = []
-    for old_row in current_rows:
-        matched_index = exact_indexes.get(business_key(old_row))
-        if matched_index is None:
-            candidates = period_indexes.get(period_key(old_row), [])
-            matched_index = candidates[-1] if candidates else None
-        if matched_index is None:
-            exceptions.append(old_row)
-            continue
-        if matched_index not in preserved_by_index:
-            preserved_by_index[matched_index] = row_values(
-                old_row[BUSINESS_COLUMN_COUNT:],
-                width - BUSINESS_COLUMN_COUNT,
-            )
 
-    merged_rows = [
-        row_values(business, BUSINESS_COLUMN_COUNT)
-        + preserved_by_index.get(
-            index,
-            (None,) * (width - BUSINESS_COLUMN_COUNT),
-        )
-        for index, business in enumerate(incoming_rows)
-    ] + exceptions
-
+def prepare_candidate_workbook(
+    upload_path: Path,
+    canonical_path: Path,
+    agent_path: Path,
+    destination: Path,
+) -> dict:
+    """Build the exact workbook represented by the preview."""
+    allowed_keys = load_allowed_agent_keys(agent_path)
+    incoming = select_incoming_rows(upload_path, allowed_keys)
     workbook = load_workbook(canonical_path)
     try:
+        if "GMM" not in workbook.sheetnames:
+            raise ValueError("La base canónica no contiene la hoja GMM")
         sheet = workbook["GMM"]
+        current = current_policies_from_sheet(sheet)
+        preview = preview_from_loaded_data(allowed_keys, incoming, current)
+        width = current["width"]
+        incoming_rows = incoming["rows"]
+        current_rows = current["rows"]
+
+        exact_indexes = {
+            business_key(row): index for index, row in enumerate(incoming_rows)
+        }
+        period_indexes: dict[tuple[str, str, str], list[int]] = defaultdict(list)
+        for index, row in enumerate(incoming_rows):
+            period_indexes[period_key(row)].append(index)
+
+        preserved_by_index: dict[int, tuple[object, ...]] = {}
+        exceptions: list[tuple[object, ...]] = []
+        for old_row in current_rows:
+            matched_index = exact_indexes.get(business_key(old_row))
+            if matched_index is None:
+                candidates = period_indexes.get(period_key(old_row), [])
+                matched_index = candidates[-1] if candidates else None
+            if matched_index is None:
+                exceptions.append(old_row)
+                continue
+            if matched_index not in preserved_by_index:
+                preserved_by_index[matched_index] = row_values(
+                    old_row[BUSINESS_COLUMN_COUNT:],
+                    width - BUSINESS_COLUMN_COUNT,
+                )
+
+        merged_rows = [
+            row_values(business, BUSINESS_COLUMN_COUNT)
+            + preserved_by_index.get(
+                index,
+                (None,) * (width - BUSINESS_COLUMN_COUNT),
+            )
+            for index, business in enumerate(incoming_rows)
+        ] + exceptions
+
         if sheet.max_row > 1:
             sheet.delete_rows(2, sheet.max_row - 1)
         for merged_row in merged_rows:
@@ -360,27 +499,104 @@ def replace_canonical_workbook(
         for table in sheet.tables.values():
             table.ref = f"A1:{sheet.cell(1, width).column_letter}{final_row}"
 
-        canonical_path.parent.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        backup_name = f"{canonical_path.stem} antes de carga {timestamp}.xlsx"
-        backup = upload_history_backup(canonical_path, backup_name)
-        with tempfile.NamedTemporaryFile(
-            prefix="taiico-base-load-",
-            suffix=".xlsx",
-            dir=canonical_path.parent,
-            delete=False,
-        ) as temporary:
-            temporary_path = Path(temporary.name)
-        workbook.save(temporary_path)
-        temporary_path.replace(canonical_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        workbook.save(destination)
+        return preview
     finally:
         workbook.close()
 
-    return {
-        **preview,
-        **backup,
-        "canonical_path": str(canonical_path),
-    }
+
+def file_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def file_md5(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.md5(usedforsecurity=False)
+    with path.open("rb") as source:
+        while chunk := source.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def apply_prepared_workbook(
+    candidate_path: Path,
+    canonical_path: Path,
+    expected_candidate_sha256: str,
+    expected_canonical_sha256: str,
+) -> dict:
+    """Back up and atomically install a previously prepared workbook."""
+    if file_sha256(candidate_path) != expected_candidate_sha256:
+        raise ValueError("El libro preparado cambió después de la vista previa")
+    if file_sha256(canonical_path) != expected_canonical_sha256:
+        raise RuntimeError(
+            "La base canónica cambió después de la vista previa. Genera una nueva vista previa."
+        )
+
+    drive_file_id = canonical_drive_file_id()
+    local_md5 = file_md5(canonical_path)
+    drive_before = drive_file_metadata(drive_file_id)
+    drive_before_md5 = str(drive_before.get("md5Checksum") or "")
+    if drive_before_md5 and drive_before_md5 != local_md5:
+        raise RuntimeError(
+            "El archivo de Drive cambió o no coincide con la copia local. "
+            "Sincronízalos antes de aplicar una nueva carga."
+        )
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_name = f"{canonical_path.stem} antes de carga {timestamp}.xlsx"
+    backup = backup_drive_workbook(drive_file_id, backup_name)
+    drive = update_drive_workbook(drive_file_id, candidate_path)
+    candidate_md5 = file_md5(candidate_path)
+    if drive.get("drive_md5") and drive["drive_md5"] != candidate_md5:
+        raise RuntimeError(
+            "Drive recibió el archivo pero su checksum no coincide con el libro preparado"
+        )
+    canonical_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        prefix="taiico-base-load-",
+        suffix=".xlsx",
+        dir=canonical_path.parent,
+        delete=False,
+    ) as temporary:
+        temporary_path = Path(temporary.name)
+    try:
+        shutil.copyfile(candidate_path, temporary_path)
+        temporary_path.replace(canonical_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return {**backup, **drive, "canonical_path": str(canonical_path)}
+
+
+def replace_canonical_workbook(
+    upload_path: Path,
+    canonical_path: Path,
+    agent_path: Path,
+) -> dict:
+    """Compatibility helper for prepare-and-apply callers."""
+    canonical_sha256 = file_sha256(canonical_path)
+    with tempfile.NamedTemporaryFile(
+        prefix="taiico-base-load-prepared-",
+        suffix=".xlsx",
+        delete=False,
+    ) as temporary:
+        candidate_path = Path(temporary.name)
+    try:
+        preview = prepare_candidate_workbook(
+            upload_path, canonical_path, agent_path, candidate_path
+        )
+        applied = apply_prepared_workbook(
+            candidate_path,
+            canonical_path,
+            file_sha256(candidate_path),
+            canonical_sha256,
+        )
+        return {**preview, **applied}
+    finally:
+        candidate_path.unlink(missing_ok=True)
 
 
 def cleanup_expired_previews() -> None:
@@ -425,18 +641,27 @@ async def preview_metlife_gmm_base(file: UploadFile = File(...)):
     token_dir = staging_root() / token
     token_dir.mkdir(parents=True)
     upload_path = token_dir / "source.xlsx"
+    agents_path = token_dir / "agents.xlsx"
+    candidate_path = token_dir / "prepared.xlsx"
     try:
         size, sha256 = await save_upload(file, upload_path)
-        preview = build_preview(
+        canonical_path = Path(METLIFE_PATHS["RENOVACIONES_GMM"])
+        canonical_sha256 = await run_in_threadpool(file_sha256, canonical_path)
+        await run_in_threadpool(stage_agents_workbook, agents_path)
+        preview = await run_in_threadpool(
+            prepare_candidate_workbook,
             upload_path,
-            Path(METLIFE_PATHS["RENOVACIONES_GMM"]),
-            agents_workbook_path(),
+            canonical_path,
+            agents_path,
+            candidate_path,
         )
         manifest = {
             "token": token,
             "filename": filename,
             "size": size,
             "sha256": sha256,
+            "canonical_sha256": canonical_sha256,
+            "candidate_sha256": await run_in_threadpool(file_sha256, candidate_path),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "preview": preview,
         }
@@ -460,21 +685,33 @@ async def apply_metlife_gmm_base(token: str):
         raise HTTPException(status_code=400, detail="Token de carga inválido")
     token_dir = staging_root() / token
     upload_path = token_dir / "source.xlsx"
+    candidate_path = token_dir / "prepared.xlsx"
     manifest_path = token_dir / "manifest.json"
-    if not upload_path.exists() or not manifest_path.exists():
+    if not upload_path.exists() or not candidate_path.exists() or not manifest_path.exists():
         raise HTTPException(status_code=404, detail="La vista previa expiró o no existe")
     manifest = json.loads(manifest_path.read_text())
-    digest = hashlib.sha256(upload_path.read_bytes()).hexdigest()
+    digest = await run_in_threadpool(file_sha256, upload_path)
     if digest != manifest.get("sha256"):
         raise HTTPException(status_code=409, detail="El archivo cambió después de la vista previa")
     try:
-        result = replace_canonical_workbook(
-            upload_path,
+        result = await run_in_threadpool(
+            apply_prepared_workbook,
+            candidate_path,
             Path(METLIFE_PATHS["RENOVACIONES_GMM"]),
-            agents_workbook_path(),
+            manifest["candidate_sha256"],
+            manifest["canonical_sha256"],
         )
-        return {"applied": True, "filename": manifest["filename"], **result}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    finally:
         shutil.rmtree(token_dir, ignore_errors=True)
+        return {
+            "applied": True,
+            "filename": manifest["filename"],
+            **manifest["preview"],
+            **result,
+        }
+    except Exception as exc:
+        logger.exception(
+            "MetLife GMM base apply failed; token=%s staging=%s",
+            token,
+            token_dir,
+        )
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

@@ -16,7 +16,7 @@ from xml.sax.saxutils import escape
 import pandas as pd
 from dotenv import load_dotenv
 
-from drive.client import build_drive_service
+from drive.client import download_drive_file_bytes
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -24,8 +24,16 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 USERS_FILE_ID_ENV = "GOOGLE_DRIVE_USERS_FILE_ID"
 USERS_CACHE_SECONDS_ENV = "AUTH_USERS_CACHE_SECONDS"
+USERS_SNAPSHOT_PATH_ENV = "AUTH_USERS_SNAPSHOT_PATH"
 DEFAULT_CACHE_SECONDS = 300
+STALE_CACHE_RETRY_SECONDS = 30
 REQUIRED_COLUMNS = {"Usuario", "Password"}
+DEFAULT_USERS_SNAPSHOT_PATH = (
+    Path(__file__).resolve().parents[2]
+    / ".runtime"
+    / "auth"
+    / "users-directory.xlsx"
+)
 
 _cache_lock = threading.RLock()
 _cached_credentials: dict[str, str] | None = None
@@ -95,24 +103,11 @@ class AccessProfile:
 
 
 def _download_users_workbook(file_id: str) -> bytes:
-    try:
-        from googleapiclient.http import MediaIoBaseDownload
-    except ImportError as exc:
-        raise RuntimeError(
-            "Google Drive dependencies are not installed. "
-            "Run `pip install -r backend/requirements.txt`."
-        ) from exc
-
-    output = io.BytesIO()
-    request = build_drive_service().files().get_media(
-        fileId=file_id,
-        supportsAllDrives=True,
-    )
-    downloader = MediaIoBaseDownload(output, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    return output.getvalue()
+    # Authorization is evaluated for every protected request. Reuse the
+    # requests-based Drive downloader so concurrent FastAPI requests do not
+    # share googleapiclient/httplib2 sockets on macOS (which intermittently
+    # fails with Errno 49 and turns an otherwise valid upload into HTTP 500).
+    return download_drive_file_bytes(file_id)
 
 
 def _build_writable_drive_service():
@@ -254,6 +249,26 @@ def _cache_seconds() -> int:
     return max(0, value)
 
 
+def _users_snapshot_path() -> Path:
+    configured = os.getenv(USERS_SNAPSHOT_PATH_ENV, "").strip()
+    return Path(configured).expanduser() if configured else DEFAULT_USERS_SNAPSHOT_PATH
+
+
+def _read_users_snapshot() -> bytes:
+    return _users_snapshot_path().read_bytes()
+
+
+def _write_users_snapshot(workbook: bytes) -> None:
+    """Atomically persist the last valid directory with owner-only access."""
+    destination = _users_snapshot_path()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    temporary.write_bytes(workbook)
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, destination)
+    os.chmod(destination, 0o600)
+
+
 def _load_credentials() -> dict[str, str]:
     global _cached_credentials, _cached_profiles, _cache_expires_at
 
@@ -266,7 +281,40 @@ def _load_credentials() -> dict[str, str]:
         if _cached_credentials is not None and now < _cache_expires_at:
             return _cached_credentials
 
-        credentials, profiles = _read_user_directory(_download_users_workbook(file_id))
+        # A valid local snapshot keeps authorization available after a process
+        # restart even when Google Drive is temporarily slow or unavailable.
+        # It is short-lived in memory so the canonical Drive source is retried.
+        if _cached_credentials is None:
+            try:
+                credentials, profiles = _read_user_directory(
+                    _read_users_snapshot()
+                )
+            except (FileNotFoundError, OSError, ValueError):
+                pass
+            else:
+                _cached_credentials = credentials
+                _cached_profiles = profiles
+                _cache_expires_at = now + STALE_CACHE_RETRY_SECONDS
+                return credentials
+
+        try:
+            workbook = _download_users_workbook(file_id)
+            credentials, profiles = _read_user_directory(workbook)
+        except Exception:
+            # A transient Drive outage must not invalidate a directory that was
+            # already downloaded and parsed successfully. Keep the last known
+            # access profile briefly, then retry the canonical Drive source.
+            # With no prior valid snapshot we still fail closed.
+            if _cached_credentials is None or _cached_profiles is None:
+                raise
+            _cache_expires_at = now + STALE_CACHE_RETRY_SECONDS
+            return _cached_credentials
+        try:
+            _write_users_snapshot(workbook)
+        except OSError as exc:
+            # A local persistence failure must not reject a valid directory
+            # that was just read from the canonical Drive source.
+            print(f"Authentication snapshot unavailable: {type(exc).__name__}: {exc}")
         _cached_credentials = credentials
         _cached_profiles = profiles
         _cache_expires_at = now + _cache_seconds()
@@ -734,7 +782,7 @@ def _set_permission_column_in_xlsx(
 
 def update_password(username: str, new_password: str) -> None:
     """Update one password cell while preserving the existing workbook."""
-    global _cached_credentials, _cache_expires_at
+    global _cached_credentials, _cached_profiles, _cache_expires_at
 
     normalized_username = str(username).strip().casefold()
     file_id = os.getenv(USERS_FILE_ID_ENV, "").strip()
@@ -749,5 +797,7 @@ def update_password(username: str, new_password: str) -> None:
             new_password,
         )
         _upload_users_workbook(file_id, updated_workbook)
+        _write_users_snapshot(updated_workbook)
         _cached_credentials = None
+        _cached_profiles = None
         _cache_expires_at = 0.0

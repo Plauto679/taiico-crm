@@ -9,6 +9,8 @@ export interface RenovacionGMM {
     DEDUCIBLE: number;
     PAGADOHASTA: string; // Date YYYY-MM-DD
     COASEGURO?: number; // Optional as it wasn't strictly in the display list but is useful
+    AGENTE: string;
+    NOMBRE: string;
     ESTATUS_DE_RENOVACION?: string;
     EXPEDIENTE?: string;
     Email?: string;

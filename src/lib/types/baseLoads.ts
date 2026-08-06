@@ -28,6 +28,16 @@ export interface BaseLoadPreview {
 export interface BaseLoadApplyResult extends BaseLoadPreviewStats {
     applied: true;
     filename: string;
-    backup_path: string;
+    backup_file_id: string;
+    backup_name: string;
+    backup_url: string;
+    backup_folder_id: string;
     canonical_path: string;
+    drive_file_id: string;
+    drive_name: string;
+    drive_url: string;
+    drive_md5: string;
+    drive_size: string;
+    drive_modified_time: string;
+    drive_version: string;
 }

@@ -1,6 +1,7 @@
 import io
 import os
 import sys
+import tempfile
 import unittest
 import zipfile
 from pathlib import Path
@@ -22,10 +23,19 @@ def workbook_bytes(rows):
 
 class WorkbookAuthenticationTests(unittest.TestCase):
     def setUp(self):
+        self.snapshot_directory = tempfile.TemporaryDirectory()
+        self.snapshot_patch = patch.object(
+            auth,
+            "DEFAULT_USERS_SNAPSHOT_PATH",
+            Path(self.snapshot_directory.name) / "users-directory.xlsx",
+        )
+        self.snapshot_patch.start()
         auth.clear_credentials_cache()
 
     def tearDown(self):
         auth.clear_credentials_cache()
+        self.snapshot_patch.stop()
+        self.snapshot_directory.cleanup()
 
     def test_validates_user_and_password_from_workbook(self):
         workbook = workbook_bytes([
@@ -63,6 +73,38 @@ class WorkbookAuthenticationTests(unittest.TestCase):
             auth.verify_credentials("person@example.com", "local-secret")
             download.assert_called_once_with("users-file-id")
 
+    def test_valid_directory_is_persisted_for_cold_start(self):
+        workbook = workbook_bytes([
+            {
+                "Usuario": "person@example.com",
+                "Password": "local-secret",
+                "Rol": "Admin",
+                "Promotoria": "*",
+            },
+        ])
+        environment = {auth.USERS_FILE_ID_ENV: "users-file-id"}
+        with patch.dict(os.environ, environment, clear=True), patch.object(
+            auth, "_download_users_workbook", return_value=workbook
+        ):
+            self.assertTrue(
+                auth.verify_credentials("person@example.com", "local-secret")
+            )
+
+        snapshot = auth.DEFAULT_USERS_SNAPSHOT_PATH
+        self.assertEqual(snapshot.read_bytes(), workbook)
+        self.assertEqual(snapshot.stat().st_mode & 0o777, 0o600)
+
+        auth.clear_credentials_cache()
+        with patch.dict(os.environ, environment, clear=True), patch.object(
+            auth,
+            "_download_users_workbook",
+            side_effect=OSError("Drive unavailable"),
+        ) as download:
+            self.assertTrue(
+                auth.verify_credentials("person@example.com", "local-secret")
+            )
+            download.assert_not_called()
+
     def test_fails_closed_when_drive_is_unavailable(self):
         with patch.dict(
             os.environ, {auth.USERS_FILE_ID_ENV: "users-file-id"}, clear=True
@@ -70,6 +112,33 @@ class WorkbookAuthenticationTests(unittest.TestCase):
             auth, "_download_users_workbook", side_effect=RuntimeError("offline")
         ):
             self.assertFalse(auth.verify_credentials("person@example.com", "local-secret"))
+
+    def test_expired_cache_survives_transient_drive_failure(self):
+        workbook = workbook_bytes([
+            {
+                "Usuario": "person@example.com",
+                "Password": "local-secret",
+                "Rol": "Admin",
+                "Promotoria": "*",
+            },
+        ])
+        environment = {
+            auth.USERS_FILE_ID_ENV: "users-file-id",
+            auth.USERS_CACHE_SECONDS_ENV: "0",
+        }
+        with patch.dict(os.environ, environment, clear=True), patch.object(
+            auth,
+            "_download_users_workbook",
+            side_effect=[workbook, OSError("temporary Drive failure")],
+        ) as download:
+            self.assertTrue(
+                auth.verify_credentials("person@example.com", "local-secret")
+            )
+            profile = auth.get_access_profile("person@example.com")
+
+        self.assertEqual(download.call_count, 2)
+        self.assertEqual(profile.username, "person@example.com")
+        self.assertGreater(auth._cache_expires_at, 0)
 
     def test_fails_closed_when_required_columns_are_missing(self):
         workbook = workbook_bytes([{"Email": "person@example.com"}])

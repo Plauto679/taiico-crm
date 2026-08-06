@@ -77,7 +77,8 @@ export function BaseLoadsView() {
     const stats = preview?.preview;
 
     return (
-        <div className="mx-auto max-w-6xl space-y-6 p-8">
+        <div className="h-full overflow-y-auto overscroll-contain">
+            <div className="mx-auto max-w-6xl space-y-6 p-4 pb-24 sm:p-8 sm:pb-24">
             <div>
                 <h1 className="text-3xl font-bold text-white">Carga de bases</h1>
                 <p className="mt-2 text-blue-100">Actualiza fuentes canónicas con conciliación, deduplicación y respaldo.</p>
@@ -139,15 +140,17 @@ export function BaseLoadsView() {
                     <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
                         Se preservarán datos de Y en adelante en <strong>{number.format(stats.rows_with_preserved_y_plus_data)}</strong> filas. El resultado tendrá <strong>{number.format(stats.final_policy_count)}</strong> pólizas y <strong>{number.format(stats.final_row_count)}</strong> vigencias/variantes A–X. Se creará un respaldo antes de reemplazar la base.
                     </div>
-                    <button
-                        type="button"
-                        onClick={applyLoad}
-                        disabled={applying}
-                        className="inline-flex items-center rounded-lg bg-emerald-600 px-5 py-2.5 font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                        {applying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-                        {applying ? 'Actualizando…' : 'Aplicar actualización y crear respaldo'}
-                    </button>
+                    <div className="sticky bottom-0 z-10 -mx-2 border-t border-slate-200 bg-slate-50/95 px-2 py-4 backdrop-blur">
+                        <button
+                            type="button"
+                            onClick={applyLoad}
+                            disabled={applying}
+                            className="inline-flex w-full items-center justify-center rounded-lg bg-emerald-600 px-5 py-3 font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                        >
+                            {applying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                            {applying ? 'Actualizando…' : 'Aplicar actualización y crear respaldo'}
+                        </button>
+                    </div>
                 </section>
             )}
 
@@ -157,11 +160,20 @@ export function BaseLoadsView() {
                         <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0" />
                         <div>
                             <h2 className="text-xl font-semibold">Base actualizada</h2>
-                            <p className="mt-1 text-sm">Se consolidaron {number.format(result.final_policy_count)} pólizas en {number.format(result.final_row_count)} filas de vigencia. El respaldo quedó en Archivo histórico.</p>
+                            <p className="mt-1 text-sm">Se consolidaron {number.format(result.final_policy_count)} pólizas en {number.format(result.final_row_count)} filas de vigencia. La copia local y Drive quedaron sincronizados.</p>
+                            <div className="mt-3 flex flex-wrap gap-4 text-sm font-semibold">
+                                <a href={result.drive_url} target="_blank" rel="noopener noreferrer" className="underline hover:text-emerald-700">
+                                    Abrir base en Drive
+                                </a>
+                                <a href={result.backup_url} target="_blank" rel="noopener noreferrer" className="underline hover:text-emerald-700">
+                                    Abrir respaldo histórico
+                                </a>
+                            </div>
                         </div>
                     </div>
                 </section>
             )}
+            </div>
         </div>
     );
 }

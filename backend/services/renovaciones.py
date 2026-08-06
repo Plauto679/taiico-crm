@@ -9,6 +9,7 @@ import mimetypes
 import os
 import re
 import smtplib
+from functools import lru_cache
 from email.message import EmailMessage
 from pathlib import Path
 from decimal import Decimal
@@ -89,6 +90,42 @@ def normalize_name(value: str) -> str:
     if not value:
         return ""
     return " ".join(str(value).strip().upper().split())
+
+
+@lru_cache(maxsize=4)
+def _cached_metlife_gmm_agents(
+    workbook_path: str,
+    modified_time_ns: int,
+    size: int,
+) -> dict[tuple[str, str], dict[str, str]]:
+    """Index agent fields from the current canonical workbook version."""
+    del modified_time_ns, size  # Values intentionally participate in the cache key.
+    parsed_rows, _issues = parse_metlife_gmm_renewal_workbook(Path(workbook_path))
+    indexed: dict[tuple[str, str], dict[str, str]] = {}
+    for row in parsed_rows:
+        payload = row.normalized_payload
+        policy_number = str(payload.get("policy_number") or "").strip()
+        if not policy_number:
+            continue
+        renewal_deadline = payload.get("renewal_deadline")
+        deadline_key = renewal_deadline.isoformat() if renewal_deadline else ""
+        agent = {
+            "AGENTE": str(payload.get("agent_code") or ""),
+            "NOMBRE": str(payload.get("agent_name") or ""),
+        }
+        indexed[(policy_number, deadline_key)] = agent
+        indexed[(policy_number, "")] = agent
+    return indexed
+
+
+def metlife_gmm_agents() -> dict[tuple[str, str], dict[str, str]]:
+    workbook_path = Path(METLIFE_PATHS["RENOVACIONES_GMM"])
+    stat = workbook_path.stat()
+    return _cached_metlife_gmm_agents(
+        str(workbook_path),
+        stat.st_mtime_ns,
+        stat.st_size,
+    )
 
 def parse_window(start_date: Optional[str], end_date: Optional[str], days: Optional[int]):
     today = datetime.now().date()
@@ -1369,6 +1406,9 @@ async def get_upcoming_renewals(
     db = SessionLocal()
     try:
         results = []
+        gmm_agents: dict[tuple[str, str], dict[str, str]] = {}
+        if insurer.lower() == "metlife" and type.upper() in {"ALL", "GMM"}:
+            gmm_agents = await run_in_threadpool(metlife_gmm_agents)
         
         # Build base date range
         today = datetime.now().date()
@@ -1418,6 +1458,10 @@ async def get_upcoming_renewals(
                         "Email": pol.client.email if pol.client else None
                     })
                 else:
+                    agent = gmm_agents.get(
+                        (str(pol.policy_number).strip(), format_date(ren.renewal_deadline)),
+                        gmm_agents.get((str(pol.policy_number).strip(), ""), {}),
+                    )
                     results.append({
                         "NPOLIZA": pol.policy_number,
                         "POLORIG": pol.policy_number,
@@ -1429,6 +1473,8 @@ async def get_upcoming_renewals(
                         "DEDUCIBLE": 0.0,
                         "PAGADOHASTA": format_date(pol.effective_end_date),
                         "COASEGURO": 0.0,
+                        "AGENTE": agent.get("AGENTE", ""),
+                        "NOMBRE": agent.get("NOMBRE", ""),
                         "ESTATUS_DE_RENOVACION": ren.insurer_response,
                         "EXPEDIENTE": pol.document_link,
                         "Email": pol.client.email if pol.client else None

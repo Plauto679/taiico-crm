@@ -144,21 +144,9 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
             }
         },
 
-        {
-            header: 'Deducible',
-            accessorKey: (row: RenovacionGMM) => {
-                if (row.DEDUCIBLE === undefined || row.DEDUCIBLE === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row.DEDUCIBLE);
-            }
-        },
         { header: 'Pagado Hasta', accessorKey: 'PAGADOHASTA' as keyof RenovacionGMM },
-        {
-            header: 'Coaseguro',
-            accessorKey: (row: RenovacionGMM) => {
-                if (row.COASEGURO === undefined || row.COASEGURO === null) return '-';
-                return `${(row.COASEGURO * 100).toFixed(0)}%`;
-            }
-        },
+        { header: 'Agente', accessorKey: 'AGENTE' as keyof RenovacionGMM },
+        { header: 'Nombre', accessorKey: 'NOMBRE' as keyof RenovacionGMM },
         { header: 'Estatus Renovación', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionGMM },
         {
             header: 'Expediente',
