@@ -38,6 +38,10 @@ class ApprovalRequest(BaseModel):
     note: str | None = Field(default=None, max_length=1000)
 
 
+class ReviewRequiredRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)
+
+
 def require_service_token(
     authorization: str | None = Header(default=None),
 ) -> str:
@@ -285,5 +289,39 @@ def approve_task(task_id: str, payload: ApprovalRequest):
         )
         db.commit()
         return {"task": _task_payload(task), "action_id": action.id}
+    finally:
+        db.close()
+
+
+@router.post(
+    "/tasks/{task_id}/review-required",
+    dependencies=[Depends(require_service_token)],
+)
+def mark_review_required(task_id: str, payload: ReviewRequiredRequest):
+    db = SessionLocal()
+    try:
+        task = _get_taiico_task(db, task_id)
+        if task.status not in {"claimed", "collection_blocked"}:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Task cannot require review from status {task.status}",
+            )
+        task.status = "review_required"
+        task.last_error = payload.reason.strip()
+        task.updated_at = datetime.utcnow()
+        action = _record_action(
+            db,
+            task=task,
+            action_type="renewal_review_required",
+            action_status="completed",
+            input_payload={"reason": payload.reason.strip()},
+            output_payload={"status": "review_required"},
+        )
+        db.commit()
+        return {
+            "task": _task_payload(task),
+            "reason": task.last_error,
+            "action_id": action.id,
+        }
     finally:
         db.close()

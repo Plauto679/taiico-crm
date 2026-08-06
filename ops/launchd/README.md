@@ -68,6 +68,7 @@ GET  /api/renewal-agent/candidates
 POST /api/renewal-agent/tasks/{task_id}/claim
 POST /api/renewal-agent/tasks/{task_id}/collection-check
 POST /api/renewal-agent/tasks/{task_id}/approve
+POST /api/renewal-agent/tasks/{task_id}/review-required
 ```
 
 Esta primera versión no ejecuta descargas ni envíos. Reserva una tarea, registra

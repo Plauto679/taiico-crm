@@ -177,6 +177,34 @@ class RenewalAgentApiTests(unittest.TestCase):
         )
         self.assertEqual(approved.status_code, 409)
 
+    def test_portal_failure_marks_task_for_personal_review_with_reason(self):
+        task_id = self.add_task(agent_code="16200", policy_number="TAIICO-4")
+        self.client.post(
+            f"/renewal-agent/tasks/{task_id}/claim",
+            headers=self.headers,
+            json={"worker_id": "codex-mac"},
+        )
+
+        review = self.client.post(
+            f"/renewal-agent/tasks/{task_id}/review-required",
+            headers=self.headers,
+            json={
+                "reason": "Portal de MetLife no funciona: Inténtalo de nuevo",
+            },
+        )
+
+        self.assertEqual(review.status_code, 200)
+        self.assertEqual(review.json()["task"]["status"], "review_required")
+        self.assertEqual(
+            review.json()["reason"],
+            "Portal de MetLife no funciona: Inténtalo de nuevo",
+        )
+        db = self.Session()
+        task = db.get(PolicyDocumentRetrievalTask, task_id)
+        self.assertEqual(task.status, "review_required")
+        self.assertEqual(task.last_error, review.json()["reason"])
+        db.close()
+
 
 if __name__ == "__main__":
     unittest.main()
