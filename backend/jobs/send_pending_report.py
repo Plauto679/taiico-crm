@@ -34,7 +34,7 @@ DEFAULT_RECIPIENTS = (
 )
 DEFAULT_TIMEZONE = "America/Mexico_City"
 DEFAULT_HOUR = 19
-DEFAULT_SENDER_USERNAME = "veronica.alfaro@taiico.com"
+DEFAULT_SENDER_USERNAME = "alberto.alfaro@taiico.com"
 
 
 def configured_recipients() -> list[str]:

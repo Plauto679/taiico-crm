@@ -74,7 +74,7 @@ class PendingReportJobTests(unittest.TestCase):
                 "pamela.alfaro@taiico.com",
                 "veronica.alfaro@taiico.com",
             ],
-            sender_username="veronica.alfaro@taiico.com",
+            sender_username="alberto.alfaro@taiico.com",
         )
 
 

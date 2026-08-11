@@ -12,12 +12,67 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from services.cumpleanos import (
     AgentRecord,
     build_birthday_directory,
+    filter_future_policy_records,
     parse_agent_lookup,
     parse_birth_date_from_rfc,
 )
 
 
 class BirthdayDirectoryTests(unittest.TestCase):
+    def test_filters_policies_to_strictly_future_end_dates(self):
+        today = datetime.date(2026, 8, 11)
+        records = [
+            {"policy_number": "future", "renewal_deadline": datetime.date(2026, 8, 12)},
+            {"policy_number": "today", "renewal_deadline": "2026-08-11"},
+            {"policy_number": "expired", "renewal_deadline": datetime.datetime(2026, 8, 10, 23, 59)},
+            {"policy_number": "missing", "renewal_deadline": None},
+            {"policy_number": "invalid", "renewal_deadline": "sin fecha"},
+        ]
+
+        future, summary = filter_future_policy_records(records, today=today)
+
+        self.assertEqual([record["policy_number"] for record in future], ["future"])
+        self.assertEqual(summary["policy_rows_total"], 5)
+        self.assertEqual(summary["policy_rows_future"], 1)
+        self.assertEqual(summary["policy_rows_expired_or_today"], 2)
+        self.assertEqual(summary["policy_rows_missing_or_invalid_end_date"], 2)
+
+    def test_birthday_directory_keeps_only_future_policies_and_clients(self):
+        today = datetime.date(2026, 8, 11)
+        records = [
+            {
+                "client_name": "Cliente Mixto",
+                "rfc": "AAMA950203I52",
+                "policy_number": "vigente",
+                "product_branch": "GMM",
+                "renewal_deadline": datetime.date(2027, 1, 1),
+            },
+            {
+                "client_name": "Cliente Mixto",
+                "rfc": "AAMA950203I52",
+                "policy_number": "vencida",
+                "product_branch": "VIDA",
+                "renewal_deadline": datetime.date(2026, 1, 1),
+            },
+            {
+                "client_name": "Cliente Vencido",
+                "rfc": "GARC900101AA1",
+                "policy_number": "expirada",
+                "product_branch": "GMM",
+                "renewal_deadline": datetime.date(2025, 1, 1),
+            },
+        ]
+
+        future, _ = filter_future_policy_records(records, today=today)
+        result = build_birthday_directory(future, {}, today=today)
+
+        self.assertEqual(result["summary"]["total_clients"], 1)
+        self.assertEqual(result["clients"][0]["client_name"], "Cliente Mixto")
+        self.assertEqual(
+            result["clients"][0]["policies"],
+            [{"branch": "GMM", "policy_number": "vigente"}],
+        )
+
     def test_derives_birth_date_from_person_rfc(self):
         self.assertEqual(
             parse_birth_date_from_rfc(
@@ -51,6 +106,7 @@ class BirthdayDirectoryTests(unittest.TestCase):
                 "Apellido_Paterno": "Alfaro",
                 "Apellido_Materno": "Mendoza",
                 "Promotoria": "TAIICO",
+                "Correo_Personal": "ALBERTO.ALFARO@TAIICO.COM",
             }
         ]).to_excel(output, sheet_name="Datos", index=False)
 
@@ -60,6 +116,7 @@ class BirthdayDirectoryTests(unittest.TestCase):
             agents["00123"].label,
             "AAMA950203I52 - Alberto Alfaro Mendoza",
         )
+        self.assertEqual(agents["00123"].email, "alberto.alfaro@taiico.com")
 
     def test_groups_policies_and_crosses_canonical_agent(self):
         records = [

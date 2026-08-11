@@ -7,6 +7,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException
@@ -31,6 +32,7 @@ class AgentRecord:
     rfc: str
     name: str
     promotoria: str
+    email: str = ""
 
     @property
     def label(self) -> str:
@@ -100,6 +102,46 @@ def next_birthday_for(
     return upcoming if upcoming >= today else birthday_in(today.year + 1)
 
 
+def _renewal_deadline_date(value: object) -> datetime.date | None:
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    if isinstance(value, datetime.date):
+        return value
+    text = clean_text(value)
+    if not text:
+        return None
+    try:
+        return datetime.date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def filter_future_policy_records(
+    records: Iterable[dict],
+    *,
+    today: datetime.date,
+) -> tuple[list[dict], dict[str, int]]:
+    future: list[dict] = []
+    expired_or_today = 0
+    missing_or_invalid = 0
+    total = 0
+    for record in records:
+        total += 1
+        renewal_deadline = _renewal_deadline_date(record.get("renewal_deadline"))
+        if renewal_deadline is None:
+            missing_or_invalid += 1
+        elif renewal_deadline > today:
+            future.append(record)
+        else:
+            expired_or_today += 1
+    return future, {
+        "policy_rows_total": total,
+        "policy_rows_future": len(future),
+        "policy_rows_expired_or_today": expired_or_today,
+        "policy_rows_missing_or_invalid_end_date": missing_or_invalid,
+    }
+
+
 def parse_agent_lookup(workbook: bytes) -> dict[str, AgentRecord]:
     excel = pd.ExcelFile(io.BytesIO(workbook))
     sheet_name = "Datos" if "Datos" in excel.sheet_names else excel.sheet_names[0]
@@ -134,6 +176,7 @@ def parse_agent_lookup(workbook: bytes) -> dict[str, AgentRecord]:
             rfc=normalize_code(row.get("RFC")),
             name=name.title(),
             promotoria=normalize_code(row.get("Promotoria")),
+            email=clean_text(row.get("Correo_Personal")).casefold(),
         )
     return agents
 
@@ -184,6 +227,7 @@ def build_birthday_directory(
                     if agent
                     else normalize_code(record.get("promotoria"))
                 ),
+                "agent_email": agent.email if agent else "",
                 "policies": [],
             },
         )
@@ -195,6 +239,7 @@ def build_birthday_directory(
             client["agent_name"] = agent.name
             client["agent_label"] = agent.label
             client["promotoria"] = agent.promotoria
+            client["agent_email"] = agent.email
 
         policy_number = clean_text(record.get("policy_number"))
         branch = normalize_code(record.get("product_branch"))
@@ -259,11 +304,14 @@ def _source_signature() -> tuple:
 
 
 def _load_directory_uncached() -> dict:
+    today = datetime.datetime.now(ZoneInfo("America/Mexico_City")).date()
     gmm_rows, gmm_issues = parse_metlife_gmm_renewal_workbook(
-        METLIFE_PATHS["RENOVACIONES_GMM"]
+        METLIFE_PATHS["RENOVACIONES_GMM"],
+        today=today,
     )
     vida_rows, vida_issues = parse_metlife_vida_renewal_workbook(
-        METLIFE_PATHS["RENOVACIONES_VIDA"]
+        METLIFE_PATHS["RENOVACIONES_VIDA"],
+        today=today,
     )
     critical_issues = [
         issue
@@ -277,11 +325,16 @@ def _load_directory_uncached() -> dict:
 
     agent_workbook = _download_workbook(DEFAULT_AGENTS_METLIFE_FILE_ID)
     agents = parse_agent_lookup(agent_workbook)
-    records = [
+    all_records = [
         candidate.normalized_payload
         for candidate in (*gmm_rows, *vida_rows)
     ]
-    result = build_birthday_directory(records, agents)
+    records, policy_summary = filter_future_policy_records(
+        all_records,
+        today=today,
+    )
+    result = build_birthday_directory(records, agents, today=today)
+    result["summary"].update(policy_summary)
     result["sources"] = {
         "renewal_files": ["Metlife GMM.xlsx", "Metlife Vida.xlsx"],
         "agent_directory": "Agentes MetLife",
