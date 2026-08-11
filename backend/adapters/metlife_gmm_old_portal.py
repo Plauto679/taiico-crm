@@ -112,6 +112,43 @@ def find_or_create_client_folder(service, task: MetLifeGmmPortalTask) -> dict[st
     ).execute()
 
 
+def renewal_folder_name(task: MetLifeGmmPortalTask) -> str:
+    deadline = task.renewal_deadline
+    year = deadline.year if hasattr(deadline, "year") else int(str(deadline)[:4])
+    return f"Renovacion póliza {task.policy_number} {year} - {year + 1}"
+
+
+def find_or_create_renewal_folder(
+    service,
+    client_folder_id: str,
+    task: MetLifeGmmPortalTask,
+) -> dict[str, Any]:
+    name = renewal_folder_name(task)
+    response = service.files().list(
+        q=(
+            f"'{_drive_literal(client_folder_id)}' in parents and "
+            f"mimeType = '{FOLDER_MIME_TYPE}' and "
+            f"name = '{_drive_literal(name)}' and trashed = false"
+        ),
+        fields="files(id,name,webViewLink)",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+        pageSize=10,
+    ).execute()
+    matches = response.get("files", [])
+    if matches:
+        return matches[0]
+    return service.files().create(
+        body={
+            "name": name,
+            "mimeType": FOLDER_MIME_TYPE,
+            "parents": [client_folder_id],
+        },
+        fields="id,name,webViewLink",
+        supportsAllDrives=True,
+    ).execute()
+
+
 def upload_files_idempotently(service, local_folder: Path, drive_folder_id: str) -> list[dict[str, Any]]:
     from googleapiclient.http import MediaFileUpload
 
@@ -151,7 +188,7 @@ class MetLifeGmmOldPortalAdapter(MetLifeGmmPortalAdapter):
         self,
         task: MetLifeGmmPortalTask,
         *,
-        stop_after: OldPortalStopAfter = "confirm_policy_match",
+        stop_after: OldPortalStopAfter | None = "confirm_policy_match",
         upload_to_drive: bool = False,
     ) -> MetLifeGmmPortalResult:
         try:
@@ -218,9 +255,19 @@ class MetLifeGmmOldPortalAdapter(MetLifeGmmPortalAdapter):
                 if upload_to_drive:
                     step = self.record_step("upload_to_client_folder")
                     service = build_drive_service()
-                    drive_folder = find_or_create_client_folder(service, task)
+                    client_folder = find_or_create_client_folder(service, task)
+                    drive_folder = find_or_create_renewal_folder(
+                        service,
+                        client_folder["id"],
+                        task,
+                    )
                     uploads = upload_files_idempotently(service, extracted, drive_folder["id"])
-                    self.complete_step(step, drive_folder=drive_folder, uploaded_files=uploads)
+                    self.complete_step(
+                        step,
+                        client_folder=client_folder,
+                        drive_folder=drive_folder,
+                        uploaded_files=uploads,
+                    )
                     if stop_after == "upload_to_client_folder":
                         raise StopIteration(stop_after)
 
@@ -298,7 +345,10 @@ class MetLifeGmmOldPortalAdapter(MetLifeGmmPortalAdapter):
         page.get_by_text(normalized, exact=True).first.wait_for(state="visible", timeout=90_000)
 
     def open_policy_documents(self, page, task: MetLifeGmmPortalTask) -> None:
-        rows = page.locator("table tbody tr")
+        # DataTables nests the result table inside layout tables whose parent
+        # rows repeat the complete result text. Only role="row" entries are
+        # actual policy records and may be used for an exact match.
+        rows = page.locator("table tbody tr[role='row']")
         matches = []
         for index in range(rows.count()):
             row = rows.nth(index)

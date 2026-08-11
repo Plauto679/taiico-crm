@@ -10,6 +10,7 @@ from adapters.metlife_gmm_old_portal import (
     client_folder_name,
     policy_row_matches,
     portal_policy_number,
+    renewal_folder_name,
 )
 from adapters.metlife_gmm_portal import MetLifeGmmPortalTask
 
@@ -51,6 +52,12 @@ class MetLifeGmmOldPortalTests(unittest.TestCase):
         self.assertEqual(
             client_folder_name(self.task()),
             "SABM7809274J4 - Jose Miguel Sanchez Bautista",
+        )
+
+    def test_builds_renewal_folder_name_under_client_folder(self):
+        self.assertEqual(
+            renewal_folder_name(self.task(policy_number="1344950")),
+            "Renovacion póliza 1344950 2026 - 2027",
         )
 
 

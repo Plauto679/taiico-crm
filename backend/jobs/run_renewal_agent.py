@@ -29,8 +29,10 @@ from adapters.metlife_gmm_old_portal import (  # noqa: E402
 )
 from database import (  # noqa: E402
     AgentAction,
+    Policy,
     PolicyDocumentRetrievalRun,
     PolicyDocumentRetrievalTask,
+    Renewal,
     SessionLocal,
 )
 from services.client_email_directory import lookup_client_email  # noqa: E402
@@ -232,6 +234,50 @@ def summary_body(
     return "\n".join(lines)
 
 
+def missing_client_email_body(
+    *,
+    client_name: str,
+    policy_number: str,
+    renewal_deadline: date,
+) -> str:
+    client_body = build_metlife_gmm_renewal_email_body(
+        client_name,
+        "",
+        policy_number,
+        renewal_deadline.isoformat(),
+    )
+    return "No tenemos un correo de cliente registrado.\n\n" + client_body
+
+
+def update_crm_renewal_fields(
+    db,
+    task: PolicyDocumentRetrievalTask,
+    expediente_link: str | None,
+) -> None:
+    if not expediente_link:
+        return
+    policy = db.query(Policy).filter(
+        Policy.policy_number == str(task.policy_number).strip()
+    ).first()
+    if policy is None:
+        return
+    policy.document_link = expediente_link
+    renewal = db.query(Renewal).filter(
+        Renewal.original_policy_id == policy.id
+    ).first()
+    if renewal is None:
+        renewal = Renewal(
+            original_policy_id=policy.id,
+            client_id=policy.client_id,
+            renewal_deadline=policy.effective_end_date,
+            status="in_progress",
+        )
+        db.add(renewal)
+        db.flush()
+    renewal.insurer_response = "Pendiente de envío"
+    renewal.updated_at = datetime.utcnow()
+
+
 def record_action(
     *,
     task: PolicyDocumentRetrievalTask,
@@ -299,7 +345,7 @@ def selected_tasks(
             .filter(
                 PolicyDocumentRetrievalTask.insurer_id == "metlife",
                 PolicyDocumentRetrievalTask.product_branch == "GMM",
-                PolicyDocumentRetrievalTask.status == "queued",
+                PolicyDocumentRetrievalTask.status == "approved",
                 PolicyDocumentRetrievalTask.renewal_deadline <= cutoff,
             )
             .order_by(
@@ -415,14 +461,16 @@ def persist_result(
             run.failed_count += 1
 
         if retrieval_succeeded:
+            expediente_link = result_data.get("drive_folder_link")
             task.status = "retrieved"
             task.document_status = "retrieved"
-            task.expediente_link = result_data.get("drive_folder_link")
+            task.expediente_link = expediente_link
             task.target_drive_folder_id = result_data.get("drive_folder_id")
-            task.target_drive_folder_path = result_data.get("drive_folder_link")
+            task.target_drive_folder_path = expediente_link
             task.retrieval_adapter = OLD_PORTAL_ADAPTER_NAME
             task.completed_at = datetime.utcnow()
             task.last_error = error
+            update_crm_renewal_fields(db, task, expediente_link)
         else:
             task.status = "queued"
             task.last_error = (
@@ -552,7 +600,7 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
             renewal_deadline=task.renewal_deadline,
             original_policy_number=task.original_policy_number,
         ),
-        stop_after="upload_to_client_folder",
+        stop_after=None,
         upload_to_drive=True,
     )
     data = result_to_dict(result)
@@ -595,38 +643,55 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
 
         step_started = datetime.utcnow()
         client_email = lookup_client_email(task.client_name)
-        if not client_email:
-            raise RuntimeError(
-                "No se encontró un correo único del cliente en la base canónica"
+        missing_client_email = not client_email
+        if missing_client_email:
+            recipients = internal_recipients()
+            cc_recipients = []
+            email_body = missing_client_email_body(
+                client_name=task.client_name or "Cliente",
+                policy_number=task.policy_number,
+                renewal_deadline=task.renewal_deadline,
             )
-        recipients = renewal_email_recipients(client_email)
-        if recipients != [client_email]:
-            raise RuntimeError(
-                "La configuración de correo no está habilitada para el cliente real"
+            subject = (
+                "ACCIÓN REQUERIDA: Sin correo de cliente - "
+                f"Renovación MetLife GMM - {task.client_name}"
             )
+            delivery_mode = "internal_missing_client_email"
+        else:
+            recipients = renewal_email_recipients(client_email)
+            if recipients != [client_email]:
+                raise RuntimeError(
+                    "La configuración de correo no está habilitada para el cliente real"
+                )
+            cc_recipients = renewal_email_cc_recipients(recipients)
+            email_body = build_metlife_gmm_renewal_email_body(
+                task.client_name or "Cliente",
+                client_email,
+                task.policy_number,
+                task.renewal_deadline.isoformat(),
+            )
+            period_start = task.renewal_deadline.year
+            subject = (
+                f"Renovación MetLife GMM - {task.client_name} - "
+                f"{period_start} - {period_start + 1}"
+            )
+            delivery_mode = "client"
         delivery_steps.append(
             step(
                 "resolve_client_email",
                 "completed",
                 started_at=step_started,
-                metadata={"client_email": client_email},
+                metadata={
+                    "client_email": client_email,
+                    "delivery_mode": delivery_mode,
+                    "recipients": recipients,
+                },
             )
         )
 
-        email_body = build_metlife_gmm_renewal_email_body(
-            task.client_name or "Cliente",
-            client_email,
-            task.policy_number,
-            task.renewal_deadline.isoformat(),
-        )
-        period_start = task.renewal_deadline.year
         step_started = datetime.utcnow()
-        cc_recipients = renewal_email_cc_recipients(recipients)
         send_email_smtp(
-            subject=(
-                f"Renovación MetLife GMM - {task.client_name} - "
-                f"{period_start} - {period_start + 1}"
-            ),
+            subject=subject,
             body=email_body,
             recipients=recipients,
             attachments=attachments,
@@ -638,8 +703,9 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
                 "completed",
                 started_at=step_started,
                 metadata={
-                    "recipient": client_email,
+                    "recipient": client_email or ", ".join(recipients),
                     "cc_recipients": cc_recipients,
+                    "delivery_mode": delivery_mode,
                 },
             )
         )
@@ -663,6 +729,8 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
             "drive_folder_id": result.drive_folder_id,
             "drive_folder_link": result.drive_folder_link,
             "client_email": client_email,
+            "delivery_mode": delivery_mode,
+            "recipients": recipients,
             "cc": cc_recipients,
             "attachments": len(attachments),
             "adapter_result": result.status,
@@ -678,8 +746,15 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
             duration_ms=int((time.monotonic() - started) * 1000),
         )
         detail = (
-            f"Correo a {client_email}; {len(attachments)} adjuntos; "
-            "WhatsApp omitido"
+            (
+                f"Sin correo cliente; expediente a equipo interno; "
+                f"{len(attachments)} adjuntos; WhatsApp omitido"
+            )
+            if missing_client_email
+            else (
+                f"Correo a {client_email}; {len(attachments)} adjuntos; "
+                "WhatsApp omitido"
+            )
         )
         emit("task_completed", policy=task.policy_number, detail=detail)
         return {
@@ -762,9 +837,11 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
         }, False
 
 
-def execute_batch(now: datetime) -> dict:
+def execute_batch(now: datetime, *, limit: int | None = None) -> dict:
     cutoff = renewal_cutoff(now)
     tasks = selected_tasks(cutoff, process_date=now.date())
+    if limit is not None:
+        tasks = tasks[:limit]
     run_id = create_run(tasks, cutoff)
     send_email_smtp(
         subject=f"Inicio renovaciones MetLife GMM - {now.date().isoformat()}",
@@ -821,7 +898,14 @@ def execute_batch(now: datetime) -> dict:
     )
 
 
-def run(*, force: bool = False, dry_run: bool = False) -> int:
+def run(
+    *,
+    force: bool = False,
+    dry_run: bool = False,
+    limit: int | None = None,
+) -> int:
+    if limit is not None and limit < 1:
+        raise ValueError("El límite debe ser mayor a cero")
     now = local_now()
     path = state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -835,6 +919,8 @@ def run(*, force: bool = False, dry_run: bool = False) -> int:
                 renewal_cutoff(now),
                 process_date=now.date(),
             )
+            if limit is not None:
+                tasks = tasks[:limit]
             print(
                 json.dumps(
                     {
@@ -864,7 +950,7 @@ def run(*, force: bool = False, dry_run: bool = False) -> int:
         }
         write_state(path, started_state)
         try:
-            result = execute_batch(now)
+            result = execute_batch(now, limit=limit)
         except Exception as exc:
             failed_state = {
                 **started_state,
@@ -918,8 +1004,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--limit", type=int)
     arguments = parser.parse_args()
-    return run(force=arguments.force, dry_run=arguments.dry_run)
+    return run(
+        force=arguments.force,
+        dry_run=arguments.dry_run,
+        limit=arguments.limit,
+    )
 
 
 if __name__ == "__main__":

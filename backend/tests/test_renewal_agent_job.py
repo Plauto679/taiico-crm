@@ -16,6 +16,7 @@ from jobs.run_renewal_agent import (
     WHATSAPP_ENABLED,
     execute_batch,
     max_consecutive_portal_failures,
+    missing_client_email_body,
     renewal_cutoff,
     run,
     should_run,
@@ -72,6 +73,19 @@ class RenewalAgentJobTests(unittest.TestCase):
 
     def test_whatsapp_is_disabled_in_daily_job(self):
         self.assertFalse(WHATSAPP_ENABLED)
+
+    def test_missing_client_email_message_is_explicit(self):
+        body = missing_client_email_body(
+            client_name="Cliente Sin Correo",
+            policy_number="12345",
+            renewal_deadline=date(2026, 9, 5),
+        )
+
+        self.assertIn("No tenemos un correo de cliente registrado", body)
+        self.assertIn("Hola Cliente Sin Correo", body)
+        self.assertIn("periodo 2026 - 2027", body)
+        self.assertIn("Póliza de referencia: 12345", body)
+        self.assertIn("Saludos,\nTAIICO", body)
 
     def test_default_abort_threshold_is_seven_consecutive_failures(self):
         with patch.dict(os.environ):
@@ -168,6 +182,55 @@ class RenewalAgentJobTests(unittest.TestCase):
             process_date=now.date(),
         )
         self.assertEqual(result, completed)
+
+    def test_batch_honors_explicit_limit(self):
+        now = datetime(
+            2026,
+            7,
+            31,
+            9,
+            0,
+            tzinfo=ZoneInfo("America/Mexico_City"),
+        )
+        tasks = [
+            SimpleNamespace(
+                id=f"task-{index}",
+                policy_number=f"policy-{index}",
+                renewal_deadline=date(2026, 8, 1),
+                client_name=f"Cliente {index}",
+                rfc=f"RFC{index}",
+            )
+            for index in range(8)
+        ]
+        completed = {
+            "run_id": "run-1",
+            "status": "completed",
+            "selected": 5,
+            "succeeded": 5,
+            "failed": 0,
+            "aborted": False,
+        }
+
+        with patch(
+            "jobs.run_renewal_agent.selected_tasks",
+            return_value=tasks,
+        ), patch(
+            "jobs.run_renewal_agent.create_run",
+            return_value="run-1",
+        ) as create_run, patch(
+            "jobs.run_renewal_agent.send_email_smtp",
+        ), patch(
+            "jobs.run_renewal_agent.process_one",
+            return_value=({"status": "completed"}, False),
+        ) as process_one, patch(
+            "jobs.run_renewal_agent.finish_run",
+            return_value=completed,
+        ):
+            result = execute_batch(now, limit=5)
+
+        self.assertEqual(result, completed)
+        self.assertEqual(process_one.call_count, 5)
+        self.assertEqual(len(create_run.call_args.args[0]), 5)
 
     def test_started_date_is_written_before_batch_and_prevents_second_run(self):
         now = datetime(
