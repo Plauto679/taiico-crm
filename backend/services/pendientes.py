@@ -91,6 +91,27 @@ VIDA_REQUEST_OPTIONS = {
     "Aplicación de pagos VIDA",
 }
 
+EMISION_SERVICIOS_STATUS_OPTIONS = (
+    "En cotización",
+    "En negociación",
+    "Recabando información",
+    "Pendiente Taiico",
+    "Pendiente Asegurado",
+    "Pendiente MetLife",
+    "Reingresado MetLife",
+    "Concluido",
+)
+
+EMISION_SERVICIOS_PROCEDURE_OPTIONS = (
+    "Emisión",
+    "Servicios",
+)
+
+AUTOMATIC_START_DATE_HEADERS = {
+    "emision-servicios": "Fecha Inicio",
+    "siniestros": "Fecha de registro de siniestro",
+}
+
 
 class EmisionServiciosCreateRequest(BaseModel):
     asegurado: str
@@ -260,6 +281,17 @@ def _derived_day_values(summary: dict[str, str], today: date | None = None) -> d
         if start_date:
             derived[actual_days_header] = str(max(0, (current_date - start_date).days))
     return derived
+
+
+def _automatic_creation_values(
+    source: PendingSource,
+    today: date | None = None,
+) -> dict[str, str]:
+    header = AUTOMATIC_START_DATE_HEADERS.get(source.key)
+    if not header:
+        return {}
+    current_date = today or datetime.now(ZoneInfo("America/Mexico_City")).date()
+    return {header: current_date.isoformat()}
 
 
 def _summary_value(summary: dict[str, str], label: str) -> str:
@@ -913,6 +945,38 @@ def update_pending_record(
         raise ValueError("La base no contiene las columnas: " + ", ".join(missing))
     if not values:
         raise ValueError("No se recibieron cambios para guardar")
+    automatic_date_header = AUTOMATIC_START_DATE_HEADERS.get(source.key)
+    if automatic_date_header and any(
+        _normalized_header(header) == _normalized_header(automatic_date_header)
+        for header in values
+    ):
+        raise ValueError(
+            f"{automatic_date_header} se asigna automáticamente al crear el registro."
+        )
+    status_header = next(
+        (header for header in values if _normalized_header(header) == "estatus actual"),
+        None,
+    )
+    procedure_header = next(
+        (header for header in values if _normalized_header(header) == "tipo de tramite"),
+        None,
+    )
+    if (
+        source.key == "emision-servicios"
+        and status_header
+        and clean_cell(values[status_header]) not in EMISION_SERVICIOS_STATUS_OPTIONS
+    ):
+        raise ValueError(
+            "Estatus actual no válido. Selecciona una de las opciones vigentes."
+        )
+    if (
+        source.key == "emision-servicios"
+        and procedure_header
+        and clean_cell(values[procedure_header]) not in EMISION_SERVICIOS_PROCEDURE_OPTIONS
+    ):
+        raise ValueError(
+            "Tipo de trámite no válido. Selecciona Emisión o Servicios."
+        )
     updates = {
         (source_row, header_columns[header]): clean_cell(value)
         for header, value in values.items()
@@ -1647,6 +1711,7 @@ def create_emision_servicios_pending(
         "Solicitud de": ", ".join(selected_requests),
         "Promotoria": promotoria,
         "RFC Agente": _assigned_agent_rfc(request.rfc_agente, promotoria, profile),
+        **_automatic_creation_values(SOURCES["emision-servicios"]),
     }
     return _create_pending_record(SOURCES["emision-servicios"], values)
 
@@ -1664,6 +1729,7 @@ def create_siniestros_pending(
         "Trámite": request.tramite,
         "Promotoria": promotoria,
         "RFC Agente": _assigned_agent_rfc(request.rfc_agente, promotoria, profile),
+        **_automatic_creation_values(SOURCES["siniestros"]),
     }
     return _create_pending_record(SOURCES["siniestros"], values)
 

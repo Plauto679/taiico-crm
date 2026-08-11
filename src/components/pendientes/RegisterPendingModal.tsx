@@ -168,7 +168,7 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                                 <>
                                     <TextField label="Póliza" value={poliza} onChange={setPoliza} required={false} />
                                     <SelectField label="Casificación" value={casificacion} onChange={(value) => { setCasificacion(value as 'Vida' | 'GMM'); setSolicitudesDe(['']); }} options={['Vida', 'GMM']} />
-                                    <SelectField label="Tipo de Trámite" value={tipoTramite} onChange={setTipoTramite} options={['Servicios', 'Emisión']} />
+                                    <SelectField label="Tipo de Trámite" value={tipoTramite} onChange={setTipoTramite} options={['Emisión', 'Servicios']} />
                                     <div className="sm:col-span-2">
                                         <span className="text-sm font-medium text-slate-700">Solicitud de</span>
                                         <div className="mt-1.5 space-y-2">

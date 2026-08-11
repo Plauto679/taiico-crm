@@ -33,7 +33,7 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
     const columns = useMemo(() => [
         ...activeData.core_headers.map((header) => ({
             header,
-            accessorKey: (row: PendingRow) => row.summary[header] || '—',
+            accessorKey: (row: PendingRow) => formatSummaryValue(header, row.summary[header]) || '—',
         })),
         {
             header: 'Última actualización',
@@ -61,7 +61,7 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
     const downloadExcel = () => {
         const rows = visibleRows.map((row) => ({
             ...Object.fromEntries(
-                activeData.core_headers.map((header) => [header, row.summary[header] || '']),
+                activeData.core_headers.map((header) => [header, formatSummaryValue(header, row.summary[header])]),
             ),
             'Última actualización': row.latest_update.update
                 ? `(${formatHistoryDate(row.latest_update.date)}) ${row.latest_update.update}`
@@ -172,4 +172,17 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
             {showReportModal && <PendingReportModal onClose={() => setShowReportModal(false)} />}
         </>
     );
+}
+
+function formatSummaryValue(header: string, value = ''): string {
+    const normalizedHeader = header
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .toLocaleLowerCase('es-MX');
+    if (normalizedHeader !== 'fecha inicio') return value;
+
+    const isoDate = value.trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (!isoDate) return value;
+    return `${isoDate[1]}-${isoDate[2].padStart(2, '0')}-${isoDate[3].padStart(2, '0')}`;
 }

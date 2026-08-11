@@ -14,12 +14,16 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.pendientes import (
+    EMISION_SERVICIOS_STATUS_OPTIONS,
+    EMISION_SERVICIOS_PROCEDURE_OPTIONS,
     EmisionServiciosCreateRequest,
     GMM_REQUEST_OPTIONS,
     SiniestrosCreateRequest,
+    SOURCES,
     VIDA_REQUEST_OPTIONS,
     PendingSource,
     _derived_day_values,
+    _automatic_creation_values,
     _folder_name_for_row,
     _filter_source_for_profile,
     _assigned_agent_rfc,
@@ -336,6 +340,99 @@ class PendingWorkbookTests(unittest.TestCase):
         self.assertEqual(row["summary"]["RFC"], "AAMA950203I52")
         self.assertEqual(row["summary"]["Póliza"], "")
         self.assertEqual(row["latest_update"]["update"], "Registrado")
+
+    def test_emision_status_update_accepts_only_current_catalog(self):
+        source = PendingSource(
+            "emision-servicios", "Emisión y Servicios", "TEST_ID", "file", "Base", 2
+        )
+        original = workbook_bytes(
+            "Base",
+            ["Asegurado", "Estatus actual", "22-jul"],
+            [["Cliente", "EN ESPERA DE METLIFE", ""]],
+        )
+
+        for status in EMISION_SERVICIOS_STATUS_OPTIONS:
+            updated = update_pending_record(
+                original,
+                source,
+                2,
+                {"Estatus actual": status},
+            )
+            row = parse_pending_workbook(updated, source)["rows"][0]
+            self.assertEqual(row["summary"]["Estatus actual"], status)
+
+        with self.assertRaisesRegex(ValueError, "Estatus actual no válido"):
+            update_pending_record(
+                original,
+                source,
+                2,
+                {"Estatus actual": "EN ESPERA DE METLIFE"},
+            )
+
+    def test_emision_procedure_update_accepts_only_emision_and_servicios(self):
+        source = PendingSource(
+            "emision-servicios", "Emisión y Servicios", "TEST_ID", "file", "Base", 2
+        )
+        original = workbook_bytes(
+            "Base",
+            ["Asegurado", "Tipo de Trámite", "22-jul"],
+            [["Cliente", "Trámite anterior", ""]],
+        )
+
+        for procedure in EMISION_SERVICIOS_PROCEDURE_OPTIONS:
+            updated = update_pending_record(
+                original,
+                source,
+                2,
+                {"Tipo de Trámite": procedure},
+            )
+            row = parse_pending_workbook(updated, source)["rows"][0]
+            self.assertEqual(row["summary"]["Tipo de Trámite"], procedure)
+
+        with self.assertRaisesRegex(ValueError, "Tipo de trámite no válido"):
+            update_pending_record(
+                original,
+                source,
+                2,
+                {"Tipo de Trámite": "Trámite anterior"},
+            )
+
+    def test_creation_dates_are_assigned_automatically_by_source(self):
+        today = date(2026, 8, 10)
+        self.assertEqual(
+            _automatic_creation_values(SOURCES["emision-servicios"], today),
+            {"Fecha Inicio": "2026-08-10"},
+        )
+        self.assertEqual(
+            _automatic_creation_values(SOURCES["siniestros"], today),
+            {"Fecha de registro de siniestro": "2026-08-10"},
+        )
+
+    def test_automatic_creation_dates_cannot_be_edited(self):
+        cases = (
+            (SOURCES["emision-servicios"], "Fecha Inicio"),
+            (SOURCES["siniestros"], "Fecha de registro de siniestro"),
+        )
+        for source, date_header in cases:
+            original = workbook_bytes(
+                source.sheet_name,
+                ["Asegurado", date_header, "22-jul"],
+                [["Cliente", "2026-08-10", ""]],
+            )
+            with self.assertRaisesRegex(ValueError, "se asigna automáticamente"):
+                update_pending_record(
+                    original,
+                    PendingSource(
+                        source.key,
+                        source.title,
+                        source.file_id_env,
+                        source.default_file_id,
+                        source.sheet_name,
+                        2,
+                    ),
+                    2,
+                    {date_header: "2026-08-09"},
+                )
 
     def test_delete_pending_record_removes_only_target_row_and_shrinks_table(self):
         source = PendingSource("test", "Test", "TEST_ID", "file", "Base", 3)

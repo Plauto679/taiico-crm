@@ -1,7 +1,7 @@
 'use client';
 
-import { ChangeEvent, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ExternalLink, File, FolderOpen, Loader2, MessageSquarePlus, Save, Trash2, Upload, X } from 'lucide-react';
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { Check, CheckCircle2, ChevronDown, ExternalLink, File, FolderOpen, Loader2, MessageSquarePlus, Save, Trash2, Upload, X } from 'lucide-react';
 
 import { PendingAccess, PendingDocument, PendingDocumentsResponse, PendingRow } from '@/lib/types/pendientes';
 import { createPendingFolder, createPendingFollowUp, deletePendingRecord, getPendingDocuments, updatePendingRecord, uploadPendingDocument } from '@/modules/pendientes/service';
@@ -9,6 +9,17 @@ import { agentsForPromotoria, PendingAgentSelect } from './PendingAgentSelect';
 
 type PendingSourceKey = 'emision-servicios' | 'siniestros';
 type DetailTab = 'detalle' | 'expediente';
+
+const EMISION_STATUS_OPTIONS = [
+    { value: 'En cotización', description: 'La solicitud se está cotizando y todavía no existe una propuesta final.' },
+    { value: 'En negociación', description: 'La propuesta está siendo revisada o negociada con el asegurado.' },
+    { value: 'Recabando información', description: 'Faltan datos o documentos necesarios para continuar el trámite.' },
+    { value: 'Pendiente Taiico', description: 'La siguiente acción corresponde al equipo de Taiico.' },
+    { value: 'Pendiente Asegurado', description: 'Se espera información, documentos o una decisión del asegurado.' },
+    { value: 'Pendiente MetLife', description: 'El trámite está en revisión o espera de respuesta por parte de MetLife.' },
+    { value: 'Reingresado MetLife', description: 'El trámite fue enviado nuevamente a MetLife para continuar su revisión.' },
+    { value: 'Concluido', description: 'El trámite terminó y no requiere acciones adicionales.' },
+] as const;
 
 interface PendingHistoryModalProps {
     row: PendingRow | null;
@@ -215,6 +226,7 @@ export function PendingHistoryModal({ row, source, onUpdated, onDeleted, onClose
                     {tab === 'detalle' ? (
                         <DetailTabContent
                             row={row}
+                            source={source}
                             values={detailValues}
                             saving={savingDetails}
                             dirtyFields={dirtyDetailFields}
@@ -302,6 +314,7 @@ export function PendingHistoryModal({ row, source, onUpdated, onDeleted, onClose
 
 function DetailTabContent({
     row,
+    source,
     values,
     saving,
     dirtyFields,
@@ -310,6 +323,7 @@ function DetailTabContent({
     access,
 }: {
     row: PendingRow;
+    source: PendingSourceKey;
     values: Record<string, string>;
     saving: boolean;
     dirtyFields: Set<string>;
@@ -335,6 +349,7 @@ function DetailTabContent({
                     .filter(([label]) => label.trim().toLocaleLowerCase('es-MX') !== 'fecha hoy')
                     .map(([label, value]) => {
                         const derived = isDerivedDayField(label);
+                        const automaticDate = isAutomaticStartDateField(source, label);
                         const normalizedLabel = normalizeFieldLabel(label);
                         return (
                             <label key={label} className="block">
@@ -372,16 +387,39 @@ function DetailTabContent({
                                         required={false}
                                         className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
                                     />
+                                ) : source === 'emision-servicios' && normalizedLabel === 'estatus actual' ? (
+                                    <PendingStatusSelect
+                                        value={value}
+                                        onChange={(nextValue) => onChange(label, nextValue)}
+                                        disabled={!canOperate}
+                                    />
+                                ) : source === 'emision-servicios' && normalizedLabel === 'tipo de tramite' ? (
+                                    <div className="mt-1">
+                                        <select
+                                            value={value === 'Emisión' || value === 'Servicios' ? value : ''}
+                                            disabled={!canOperate}
+                                            onChange={(event) => onChange(label, event.target.value)}
+                                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+                                        >
+                                            <option value="" disabled>Seleccionar...</option>
+                                            <option value="Emisión">Emisión</option>
+                                            <option value="Servicios">Servicios</option>
+                                        </select>
+                                        {value && value !== 'Emisión' && value !== 'Servicios' && (
+                                            <p className="mt-1 text-xs text-amber-700">Valor histórico: selecciona Emisión o Servicios para actualizarlo.</p>
+                                        )}
+                                    </div>
                                 ) : label.toLocaleLowerCase('es-MX').includes('comentario') ? (
                                     <textarea disabled={!canOperate} value={value} onChange={(event) => onChange(label, event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100" />
                                 ) : (
                                     <input
                                         type={isDateField(label) ? 'date' : 'text'}
                                         value={value}
-                                        readOnly={derived}
+                                        readOnly={derived || automaticDate}
                                         disabled={!canOperate}
                                         onChange={(event) => onChange(label, label === 'RFC' ? event.target.value.toUpperCase() : event.target.value)}
-                                        className={`mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-gray-900 outline-none ${derived ? 'cursor-not-allowed bg-slate-100' : 'bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100'}`}
+                                        title={automaticDate ? 'Esta fecha se asigna automáticamente al crear el registro.' : undefined}
+                                        className={`mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-gray-900 outline-none ${derived || automaticDate ? 'cursor-not-allowed bg-slate-100' : 'bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100'}`}
                                     />
                                 )}
                             </label>
@@ -402,6 +440,85 @@ function DetailTabContent({
             </ol>
         )}
     </>;
+}
+
+function PendingStatusSelect({
+    value,
+    onChange,
+    disabled,
+}: {
+    value: string;
+    onChange: (value: string) => void;
+    disabled: boolean;
+}) {
+    const [open, setOpen] = useState(false);
+    const [hoveredDescription, setHoveredDescription] = useState('');
+    const containerRef = useRef<HTMLDivElement>(null);
+    const selectedOption = EMISION_STATUS_OPTIONS.find((option) => option.value === value);
+
+    useEffect(() => {
+        if (!open) return;
+        const closeOnOutsideClick = (event: MouseEvent) => {
+            if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+        };
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') setOpen(false);
+        };
+        document.addEventListener('mousedown', closeOnOutsideClick);
+        document.addEventListener('keydown', closeOnEscape);
+        return () => {
+            document.removeEventListener('mousedown', closeOnOutsideClick);
+            document.removeEventListener('keydown', closeOnEscape);
+        };
+    }, [open]);
+
+    return (
+        <div ref={containerRef} className="relative mt-1">
+            <button
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                disabled={disabled}
+                onClick={() => setOpen((current) => !current)}
+                className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+            >
+                <span className={value ? '' : 'text-slate-400'}>{value || 'Seleccionar...'}</span>
+                <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`} />
+            </button>
+            {open && (
+                <div className="absolute z-30 mt-1 w-full min-w-72 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl">
+                    <div role="listbox" aria-label="Estatus actual" className="max-h-64 overflow-y-auto py-1">
+                        {EMISION_STATUS_OPTIONS.map((option) => (
+                            <button
+                                key={option.value}
+                                type="button"
+                                role="option"
+                                aria-selected={option.value === value}
+                                title={option.description}
+                                onMouseEnter={() => setHoveredDescription(option.description)}
+                                onFocus={() => setHoveredDescription(option.description)}
+                                onClick={() => {
+                                    onChange(option.value);
+                                    setOpen(false);
+                                    setHoveredDescription('');
+                                }}
+                                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm text-slate-800 hover:bg-blue-50 focus:bg-blue-50 focus:outline-none"
+                            >
+                                <span>{option.value}</span>
+                                {option.value === value && <Check className="h-4 w-4 shrink-0 text-blue-600" />}
+                            </button>
+                        ))}
+                    </div>
+                    <div aria-live="polite" className="min-h-14 border-t border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+                        {hoveredDescription || selectedOption?.description || 'Pasa el cursor sobre una opción para consultar su descripción.'}
+                    </div>
+                </div>
+            )}
+            {value && !selectedOption && (
+                <p className="mt-1 text-xs text-amber-700">Estatus histórico: selecciona una opción vigente para actualizarlo.</p>
+            )}
+        </div>
+    );
 }
 
 function DocumentList({ documents }: { documents: PendingDocument[] }) {
@@ -452,6 +569,13 @@ function isDateField(label: string): boolean {
 
 function isDerivedDayField(label: string): boolean {
     return DERIVED_DAY_FIELDS.has(normalizeFieldLabel(label));
+}
+
+function isAutomaticStartDateField(source: PendingSourceKey, label: string): boolean {
+    const normalizedLabel = normalizeFieldLabel(label);
+    return source === 'emision-servicios'
+        ? normalizedLabel === 'fecha inicio'
+        : normalizedLabel === 'fecha de registro de siniestro';
 }
 
 function toDateInputValue(value: string): string {
