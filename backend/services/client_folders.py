@@ -11,13 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
-from google.auth import default
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-
 from config import METLIFE_PATHS
-from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
-from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workbook
 
 
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
@@ -219,6 +213,9 @@ def build_client_folder_plan(
 
 
 def load_metlife_client_records() -> tuple[list[dict], list[dict]]:
+    from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
+    from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workbook
+
     gmm_rows, gmm_issues = parse_metlife_gmm_renewal_workbook(
         METLIFE_PATHS["RENOVACIONES_GMM"]
     )
@@ -233,6 +230,9 @@ def load_metlife_client_records() -> tuple[list[dict], list[dict]]:
 
 
 def build_client_folder_drive_service():
+    from google.auth import default
+    from googleapiclient.discovery import build
+
     credentials, _ = default(scopes=[DRIVE_SCOPE])
     return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
@@ -275,6 +275,8 @@ def create_client_folders(
     candidate_list = list(candidates)
 
     def create_one(worker_service, candidate: ClientFolderCandidate) -> dict:
+        from googleapiclient.errors import HttpError
+
         last_error: HttpError | None = None
         for attempt in range(5):
             try:

@@ -50,6 +50,7 @@ class MetLifeGmmPortalTask:
     rfc: str
     client_name: str | None = None
     renewal_deadline: Any | None = None
+    original_policy_number: str | None = None
 
 
 @dataclass

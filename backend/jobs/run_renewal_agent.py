@@ -20,9 +20,12 @@ sys.path.insert(0, str(BACKEND_DIR))
 load_dotenv(BACKEND_DIR / ".env", override=True)
 
 from adapters.metlife_gmm_portal import (  # noqa: E402
-    MetLifeGmmPortalAdapter,
     MetLifeGmmPortalTask,
     result_to_dict,
+)
+from adapters.metlife_gmm_old_portal import (  # noqa: E402
+    OLD_PORTAL_ADAPTER_NAME,
+    MetLifeGmmOldPortalAdapter,
 )
 from database import (  # noqa: E402
     AgentAction,
@@ -31,6 +34,7 @@ from database import (  # noqa: E402
     SessionLocal,
 )
 from services.client_email_directory import lookup_client_email  # noqa: E402
+from services.renewal_agent_api import TAIICO_AGENT_CODES  # noqa: E402
 from services.renovaciones import (  # noqa: E402
     SmtpDeliveryUncertainError,
     build_metlife_gmm_renewal_email_body,
@@ -274,6 +278,15 @@ def task_processing_order(
     )
 
 
+def task_agent_code(task: PolicyDocumentRetrievalTask) -> str:
+    payload = task.normalized_payload or {}
+    value = payload.get("agent_code")
+    if value is None:
+        value = (task.source_payload or {}).get("AGENTE")
+    text = str(value or "").strip()
+    return text[:-2] if text.endswith(".0") else text
+
+
 def selected_tasks(
     cutoff: date,
     *,
@@ -309,7 +322,10 @@ def selected_tasks(
         for task in tasks:
             db.expunge(task)
         eligible_tasks = [
-            task for task in tasks if task.id not in protected_task_ids
+            task
+            for task in tasks
+            if task.id not in protected_task_ids
+            and task_agent_code(task) in TAIICO_AGENT_CODES
         ]
         effective_process_date = process_date or local_now().date()
         return sorted(
@@ -330,7 +346,7 @@ def create_run(
     db = SessionLocal()
     try:
         run = PolicyDocumentRetrievalRun(
-            adapter_name="metlife_gmm_portal",
+            adapter_name=OLD_PORTAL_ADAPTER_NAME,
             insurer_id="metlife",
             product_branch="GMM",
             status="started",
@@ -404,7 +420,7 @@ def persist_result(
             task.expediente_link = result_data.get("drive_folder_link")
             task.target_drive_folder_id = result_data.get("drive_folder_id")
             task.target_drive_folder_path = result_data.get("drive_folder_link")
-            task.retrieval_adapter = "metlife_gmm_portal"
+            task.retrieval_adapter = OLD_PORTAL_ADAPTER_NAME
             task.completed_at = datetime.utcnow()
             task.last_error = error
         else:
@@ -506,6 +522,11 @@ def is_portal_failure(result_data: dict) -> bool:
             "search_policy",
             "confirm_policy_match",
             "download_policy_document",
+            "open_old_portal",
+            "authenticate_old_portal",
+            "open_contractual_search",
+            "search_rfc",
+            "download_documents",
         }
         for name in failed_steps
     )
@@ -521,7 +542,7 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
         deadline=str(task.renewal_deadline),
         attempt=task.attempt_count,
     )
-    adapter = MetLifeGmmPortalAdapter(headless=False)
+    adapter = MetLifeGmmOldPortalAdapter(headless=False)
     result = adapter.run(
         MetLifeGmmPortalTask(
             id=task.id,
@@ -529,10 +550,10 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
             rfc=task.rfc or "",
             client_name=task.client_name,
             renewal_deadline=task.renewal_deadline,
+            original_policy_number=task.original_policy_number,
         ),
-        stop_after="upload_to_drive",
+        stop_after="upload_to_client_folder",
         upload_to_drive=True,
-        target_drive_folder_id=target_drive_folder_id(),
     )
     data = result_to_dict(result)
     if result.status != "completed":
