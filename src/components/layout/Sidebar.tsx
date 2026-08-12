@@ -66,7 +66,7 @@ export function Sidebar() {
     }
 
     return (
-        <aside className={`relative flex h-screen min-h-0 shrink-0 flex-col overflow-hidden border-r bg-white transition-[width] duration-200 ${collapsed ? 'w-20' : 'w-64'}`}>
+        <aside className={`relative z-20 flex h-screen min-h-0 shrink-0 flex-col overflow-visible border-r bg-white transition-[width] duration-200 ${collapsed ? 'w-20' : 'w-64'}`}>
             <div className="flex min-h-52 flex-none flex-col items-center justify-center gap-2 border-b px-3 py-4">
                 <img src="/logo.png" alt="TAIICO CRM" className={`w-auto transition-all ${collapsed ? 'h-12' : 'h-20'}`} />
                 {!collapsed && (

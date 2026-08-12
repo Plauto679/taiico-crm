@@ -147,7 +147,7 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
                 </div>
 
                 <div className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg bg-white shadow">
-                    <DataTable key={activeTab} data={activeData.rows} columns={columns} onRowClick={setSelectedRow} onProcessedDataChange={handleProcessedDataChange} className="h-full max-w-full overflow-auto border-0 shadow-none" />
+                    <DataTable key={activeTab} data={activeData.rows} columns={columns} filterMode="multi-select" onRowClick={setSelectedRow} onProcessedDataChange={handleProcessedDataChange} className="h-full max-w-full overflow-auto border-0 shadow-none" />
                 </div>
                 <p className="flex-none text-sm text-blue-100">
                     Haz clic en un registro para consultar el historial completo de actualizaciones.

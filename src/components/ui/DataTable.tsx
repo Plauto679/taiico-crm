@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowUpDown, Check, ChevronDown, Search, X } from 'lucide-react';
 
 interface Column<T> {
     header: string;
@@ -19,6 +19,7 @@ interface DataTableProps<T> {
     className?: string;
     onRowClick?: (row: T) => void;
     onProcessedDataChange?: (rows: T[]) => void;
+    filterMode?: 'text' | 'multi-select';
 }
 
 type SortDirection = 'asc' | 'desc' | null;
@@ -28,9 +29,21 @@ interface SortConfig<T> {
     direction: SortDirection;
 }
 
-export function DataTable<T>({ data, columns, className, onRowClick, onProcessedDataChange }: DataTableProps<T>) {
+function columnKey<T>(column: Column<T>): string {
+    return typeof column.accessorKey !== 'function' ? String(column.accessorKey) : column.header;
+}
+
+function columnValue<T>(column: Column<T>, row: T): string {
+    const value = typeof column.accessorKey === 'function'
+        ? column.accessorKey(row)
+        : row[column.accessorKey];
+    return typeof value === 'string' || typeof value === 'number' ? String(value) : '';
+}
+
+export function DataTable<T>({ data, columns, className, onRowClick, onProcessedDataChange, filterMode = 'text' }: DataTableProps<T>) {
     const [sortConfig, setSortConfig] = useState<SortConfig<T>>({ key: null, direction: null });
     const [filters, setFilters] = useState<Record<string, string>>({});
+    const [multiFilters, setMultiFilters] = useState<Record<string, string[]>>({});
 
     const handleSort = (key: keyof T) => {
         let direction: SortDirection = 'asc';
@@ -46,10 +59,25 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
         setFilters(prev => ({ ...prev, [key]: value }));
     };
 
+    const filterOptions = useMemo(() => Object.fromEntries(columns.map((column) => {
+        const values = Array.from(new Set(data.map((row) => columnValue(column, row)).filter(Boolean)));
+        values.sort((left, right) => left.localeCompare(right, 'es-MX', { numeric: true, sensitivity: 'base' }));
+        return [columnKey(column), values];
+    })), [columns, data]);
+
+    const toggleMultiFilter = (key: string, value: string) => {
+        setMultiFilters((current) => {
+            const selected = current[key] || [];
+            const next = selected.includes(value)
+                ? selected.filter((item) => item !== value)
+                : [...selected, value];
+            return { ...current, [key]: next };
+        });
+    };
+
     const processedData = useMemo(() => {
         let filtered = [...data];
 
-        // Apply filters
         Object.keys(filters).forEach(key => {
             const filterValue = filters[key].toLowerCase();
             if (!filterValue) return;
@@ -66,20 +94,16 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
 
                 if (!col) return true;
 
-                let cellValue = '';
-                if (typeof col.accessorKey === 'function') {
-                    // This is tricky for ReactNode, we might skip filtering or try to stringify
-                    // For now, let's skip complex renderers or assume they return strings/numbers
-                    const val = col.accessorKey(row);
-                    if (typeof val === 'string' || typeof val === 'number') {
-                        cellValue = String(val);
-                    }
-                } else {
-                    cellValue = String(row[col.accessorKey]);
-                }
-
+                const cellValue = columnValue(col, row);
                 return cellValue.toLowerCase().includes(filterValue);
             });
+        });
+
+        Object.entries(multiFilters).forEach(([key, selected]) => {
+            if (!selected.length) return;
+            const column = columns.find((candidate) => columnKey(candidate) === key);
+            if (!column) return;
+            filtered = filtered.filter((row) => selected.includes(columnValue(column, row)));
         });
 
         // Apply sorting
@@ -97,7 +121,7 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
         }
 
         return filtered;
-    }, [data, filters, sortConfig, columns]);
+    }, [data, filters, multiFilters, sortConfig, columns]);
 
     useEffect(() => {
         onProcessedDataChange?.(processedData);
@@ -110,7 +134,7 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
                     <tr>
                         {columns.map((col, idx) => {
                             const isSortable = typeof col.accessorKey !== 'function'; // Only sort direct keys for now
-                            const filterKey = typeof col.accessorKey !== 'function' ? String(col.accessorKey) : col.header;
+                            const filterKey = columnKey(col);
 
                             return (
                                 <th
@@ -133,14 +157,24 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
                                                 </span>
                                             )}
                                         </div>
-                                        <input
-                                            type="text"
-                                            placeholder={`Filtrar...`}
-                                            className="w-full rounded border border-gray-300 px-2 py-1 text-xs font-normal focus:border-blue-500 focus:outline-none"
-                                            value={filters[filterKey] || ''}
-                                            onChange={(e) => handleFilterChange(filterKey, e.target.value)}
-                                            onClick={(e) => e.stopPropagation()}
-                                        />
+                                        {filterMode === 'multi-select' ? (
+                                            <MultiSelectFilter
+                                                label={col.header}
+                                                options={filterOptions[filterKey] || []}
+                                                selected={multiFilters[filterKey] || []}
+                                                onToggle={(value) => toggleMultiFilter(filterKey, value)}
+                                                onClear={() => setMultiFilters((current) => ({ ...current, [filterKey]: [] }))}
+                                            />
+                                        ) : (
+                                            <input
+                                                type="text"
+                                                placeholder="Filtrar..."
+                                                className="w-full rounded border border-gray-300 px-2 py-1 text-xs font-normal focus:border-blue-500 focus:outline-none"
+                                                value={filters[filterKey] || ''}
+                                                onChange={(e) => handleFilterChange(filterKey, e.target.value)}
+                                                onClick={(e) => e.stopPropagation()}
+                                            />
+                                        )}
                                     </div>
                                 </th>
                             );
@@ -177,5 +211,50 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
                 </tbody>
             </table>
         </div>
+    );
+}
+
+function MultiSelectFilter({
+    label,
+    options,
+    selected,
+    onToggle,
+    onClear,
+}: {
+    label: string;
+    options: string[];
+    selected: string[];
+    onToggle: (value: string) => void;
+    onClear: () => void;
+}) {
+    const [search, setSearch] = useState('');
+    const visibleOptions = options.filter((option) => option.toLocaleLowerCase('es-MX').includes(search.toLocaleLowerCase('es-MX')));
+    return (
+        <details className="group/filter relative font-normal" onClick={(event) => event.stopPropagation()}>
+            <summary className={clsx(
+                'flex min-w-32 cursor-pointer list-none items-center justify-between gap-2 rounded border px-2 py-1 text-xs',
+                selected.length ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-300 bg-white text-gray-500',
+            )}>
+                <span className="truncate">{selected.length ? `${selected.length} seleccionados` : 'Seleccionar valores'}</span>
+                <ChevronDown className="h-3.5 w-3.5 transition-transform group-open/filter:rotate-180" />
+            </summary>
+            <div className="absolute left-0 top-full z-30 mt-1 w-72 rounded-lg border border-slate-200 bg-white p-3 shadow-xl">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="truncate text-xs font-semibold text-slate-700">Filtrar {label}</p>
+                    {!!selected.length && <button type="button" onClick={onClear} className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800"><X className="h-3 w-3" /> Limpiar</button>}
+                </div>
+                <div className="relative mb-2">
+                    <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-slate-400" />
+                    <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar valor..." className="w-full rounded border border-slate-300 py-1.5 pl-7 pr-2 text-xs text-slate-800 outline-none focus:border-blue-500" />
+                </div>
+                <div className="max-h-56 space-y-0.5 overflow-y-auto overscroll-contain">
+                    {visibleOptions.map((option) => {
+                        const checked = selected.includes(option);
+                        return <button key={option} type="button" onClick={() => onToggle(option)} className={clsx('flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-blue-50', checked && 'bg-blue-50 text-blue-800')}><span className={clsx('mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border', checked ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white')}>{checked && <Check className="h-3 w-3" />}</span><span className="break-words">{option}</span></button>;
+                    })}
+                    {!visibleOptions.length && <p className="px-2 py-4 text-center text-xs text-slate-400">Sin coincidencias</p>}
+                </div>
+            </div>
+        </details>
     );
 }
