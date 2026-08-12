@@ -15,6 +15,7 @@ from xml.sax.saxutils import escape
 
 import pandas as pd
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 
 from drive.client import download_drive_file_bytes
 
@@ -61,6 +62,7 @@ MODULES = (
     "dashboards",
     "configuracion_mail",
     "carga_bases",
+    "accesos",
 )
 MODULE_COLUMNS = {
     module: f"Permiso_{module.title()}"
@@ -69,6 +71,39 @@ MODULE_COLUMNS = {
 MODULE_COLUMNS["configuracion_mail"] = "Permiso_Configuracion_Mail"
 MODULE_COLUMNS["cumpleanos_agentes"] = "Permiso_Cumpleanos_Agentes"
 MODULE_COLUMNS["carga_bases"] = "Permiso_Carga_Bases"
+MODULE_COLUMNS["accesos"] = "Permiso_Accesos"
+
+MODULE_LABELS = {
+    "inicio": "Inicio",
+    "cobranza": "Cobranza",
+    "renovaciones": "Renovaciones",
+    "cumpleanos": "Cumpleaños",
+    "cumpleanos_agentes": "Cumpleaños de agentes",
+    "pendientes": "Pendientes",
+    "cartera": "Cartera",
+    "clientes": "Clientes",
+    "recluta": "Recluta",
+    "dashboards": "Dashboards",
+    "configuracion_mail": "Configuración de Mail",
+    "carga_bases": "Carga de bases",
+    "accesos": "Accesos",
+}
+
+PERMISSION_LABELS = {
+    "ninguno": "Ninguno",
+    "lectura": "Lectura",
+    "operacion": "Operación",
+}
+
+
+class AccessUserPayload(BaseModel):
+    username: str = Field(min_length=3, max_length=320)
+    password: str | None = Field(default=None, max_length=256)
+    role: str = Field(default="agente")
+    promotorias: list[str] = Field(default_factory=list)
+    rfc: str = ""
+    aseguradoras: list[str] = Field(default_factory=list)
+    module_permissions: dict[str, str] = Field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -191,6 +226,7 @@ def _default_module_permissions(role: str, promotorias: tuple[str, ...]) -> dict
     permissions["cumpleanos"] = "ninguno"
     permissions["cumpleanos_agentes"] = "ninguno"
     permissions["carga_bases"] = "ninguno"
+    permissions["accesos"] = "ninguno"
     return permissions
 
 
@@ -242,6 +278,279 @@ def _read_user_directory(
 
 def _read_credentials(workbook: bytes) -> dict[str, str]:
     return _read_user_directory(workbook)[0]
+
+
+def _permission_label(value: object) -> str:
+    return PERMISSION_LABELS[_normalize_permission(value)]
+
+
+def _normalize_role(value: object) -> str:
+    role = str(value or "").strip().casefold()
+    if role == "admin":
+        return "admin"
+    if role == "agente":
+        return "agente"
+    raise ValueError("El rol debe ser Admin o Agente")
+
+
+def _normalize_promotorias(values: list[str]) -> list[str]:
+    normalized = {str(value).strip().upper() for value in values if str(value).strip()}
+    if "*" in normalized:
+        return list(PROMOTORIAS)
+    invalid = sorted(normalized.difference(PROMOTORIAS))
+    if invalid:
+        raise ValueError("Promotoría no válida: " + ", ".join(invalid))
+    return [promotoria for promotoria in PROMOTORIAS if promotoria in normalized]
+
+
+def _normalize_module_permissions(
+    values: dict[str, str],
+    *,
+    role: str,
+    promotorias: tuple[str, ...],
+) -> dict[str, str]:
+    invalid = sorted(set(values).difference(MODULES))
+    if invalid:
+        raise ValueError("Módulo no válido: " + ", ".join(invalid))
+    defaults = _default_module_permissions(role, promotorias)
+    return {
+        module: _normalize_permission(values.get(module, defaults[module]))
+        for module in MODULES
+    }
+
+
+def _validate_username(username: str) -> str:
+    normalized = str(username or "").strip().casefold()
+    if "@" not in normalized or "." not in normalized.rsplit("@", 1)[-1]:
+        raise ValueError("El usuario debe ser un correo válido")
+    return normalized
+
+
+def _workbook_users_sheet(workbook):
+    if "Usuarios" in workbook.sheetnames:
+        return workbook["Usuarios"]
+    return workbook.active
+
+
+def _headers_for_sheet(sheet) -> dict[str, int]:
+    headers: dict[str, int] = {}
+    for index, cell in enumerate(sheet[1], start=1):
+        value = str(cell.value or "").strip()
+        if value:
+            headers[value] = index
+    return headers
+
+
+def _ensure_user_headers(sheet) -> dict[str, int]:
+    headers = _headers_for_sheet(sheet)
+    required = [
+        "Usuario",
+        "Password",
+        "Rol",
+        "Promotoria",
+        "RFC",
+        "Aseguradoras",
+        *MODULE_COLUMNS.values(),
+    ]
+    for header in required:
+        if header not in headers:
+            column = sheet.max_column + 1
+            sheet.cell(row=1, column=column, value=header)
+            headers[header] = column
+    return headers
+
+
+def _find_user_row(sheet, headers: dict[str, int], username: str) -> int | None:
+    username_column = headers["Usuario"]
+    for row_number in range(2, sheet.max_row + 1):
+        value = sheet.cell(row=row_number, column=username_column).value
+        if str(value or "").strip().casefold() == username:
+            return row_number
+    return None
+
+
+def _serialize_user_payload(payload: AccessUserPayload, *, existing_password: str = "") -> dict[str, str]:
+    username = _validate_username(payload.username)
+    role = _normalize_role(payload.role)
+    promotorias = _normalize_promotorias(payload.promotorias)
+    permissions = _normalize_module_permissions(
+        payload.module_permissions,
+        role=role,
+        promotorias=tuple(promotorias),
+    )
+    password = payload.password if payload.password is not None else existing_password
+    return {
+        "Usuario": username,
+        "Password": str(password or ""),
+        "Rol": "Admin" if role == "admin" else "Agente",
+        "Promotoria": ", ".join(promotorias),
+        "RFC": str(payload.rfc or "").strip().upper(),
+        "Aseguradoras": ", ".join(
+            str(value).strip().upper()
+            for value in payload.aseguradoras
+            if str(value).strip()
+        ),
+        **{
+            column: _permission_label(permissions[module])
+            for module, column in MODULE_COLUMNS.items()
+        },
+    }
+
+
+def access_modules_configuration() -> dict[str, object]:
+    return {
+        "modules": [
+            {
+                "key": module,
+                "label": MODULE_LABELS[module],
+                "column": MODULE_COLUMNS[module],
+            }
+            for module in MODULES
+        ],
+        "promotorias": list(PROMOTORIAS),
+        "roles": ["admin", "agente"],
+        "permissions": [
+            {"key": key, "label": label}
+            for key, label in PERMISSION_LABELS.items()
+        ],
+    }
+
+
+def list_access_users() -> list[dict[str, object]]:
+    file_id = os.getenv(USERS_FILE_ID_ENV, "").strip()
+    if not file_id:
+        raise RuntimeError(f"{USERS_FILE_ID_ENV} is not configured")
+    workbook = _download_users_workbook(file_id)
+    _, profiles = _read_user_directory(workbook)
+    table = pd.read_excel(io.BytesIO(workbook), dtype=str, keep_default_na=False)
+    password_by_user = {
+        str(row.get("Usuario", "")).strip().casefold(): bool(str(row.get("Password", "")))
+        for _, row in table.iterrows()
+    }
+    return [
+        {
+            "username": profile.username,
+            "role": profile.role,
+            "promotorias": list(profile.promotorias),
+            "rfc": profile.rfc,
+            "aseguradoras": list(profile.aseguradoras),
+            "module_permissions": profile.module_permissions,
+            "has_password": password_by_user.get(profile.username, False),
+        }
+        for profile in profiles.values()
+    ]
+
+
+def save_access_user(payload: AccessUserPayload, *, create: bool) -> dict[str, object]:
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:
+        raise RuntimeError(
+            "openpyxl is required to update the users workbook. "
+            "Run `pip install -r backend/requirements.txt`."
+        ) from exc
+
+    file_id = os.getenv(USERS_FILE_ID_ENV, "").strip()
+    if not file_id:
+        raise RuntimeError(f"{USERS_FILE_ID_ENV} is not configured")
+
+    username = _validate_username(payload.username)
+    with _cache_lock:
+        workbook_bytes = _download_users_workbook(file_id)
+        workbook = load_workbook(io.BytesIO(workbook_bytes))
+        sheet = _workbook_users_sheet(workbook)
+        headers = _ensure_user_headers(sheet)
+        row_number = _find_user_row(sheet, headers, username)
+        if create and row_number is not None:
+            raise ValueError("El usuario ya existe")
+        if not create and row_number is None:
+            raise KeyError("Usuario no encontrado")
+        if create and not payload.password:
+            raise ValueError("La contraseña es obligatoria para usuarios nuevos")
+        if row_number is None:
+            row_number = sheet.max_row + 1
+            existing_password = ""
+        else:
+            existing_password = str(
+                sheet.cell(row=row_number, column=headers["Password"]).value or ""
+            )
+        values = _serialize_user_payload(payload, existing_password=existing_password)
+        for header, value in values.items():
+            sheet.cell(row=row_number, column=headers[header], value=value)
+        output = io.BytesIO()
+        workbook.save(output)
+        updated_workbook = output.getvalue()
+        _upload_users_workbook(file_id, updated_workbook)
+        _write_users_snapshot(updated_workbook)
+        clear_credentials_cache()
+    _, profiles = _read_user_directory(updated_workbook)
+    profile = profiles[username]
+    return {
+        "username": profile.username,
+        "role": profile.role,
+        "promotorias": list(profile.promotorias),
+        "rfc": profile.rfc,
+        "aseguradoras": list(profile.aseguradoras),
+        "module_permissions": profile.module_permissions,
+        "has_password": bool(values["Password"]),
+    }
+
+
+def delete_access_user(username: str) -> None:
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:
+        raise RuntimeError(
+            "openpyxl is required to update the users workbook. "
+            "Run `pip install -r backend/requirements.txt`."
+        ) from exc
+
+    normalized = _validate_username(username)
+    file_id = os.getenv(USERS_FILE_ID_ENV, "").strip()
+    if not file_id:
+        raise RuntimeError(f"{USERS_FILE_ID_ENV} is not configured")
+    with _cache_lock:
+        workbook_bytes = _download_users_workbook(file_id)
+        workbook = load_workbook(io.BytesIO(workbook_bytes))
+        sheet = _workbook_users_sheet(workbook)
+        headers = _ensure_user_headers(sheet)
+        row_number = _find_user_row(sheet, headers, normalized)
+        if row_number is None:
+            raise KeyError("Usuario no encontrado")
+        sheet.delete_rows(row_number, 1)
+        output = io.BytesIO()
+        workbook.save(output)
+        updated_workbook = output.getvalue()
+        _upload_users_workbook(file_id, updated_workbook)
+        _write_users_snapshot(updated_workbook)
+        clear_credentials_cache()
+
+
+def set_user_module_permission(username: str, module: str, permission: str) -> None:
+    if module not in MODULE_COLUMNS:
+        raise ValueError("Módulo no válido")
+    file_id = os.getenv(USERS_FILE_ID_ENV, "").strip()
+    if not file_id:
+        raise RuntimeError(f"{USERS_FILE_ID_ENV} is not configured")
+    normalized = _validate_username(username)
+    with _cache_lock:
+        workbook_bytes = _download_users_workbook(file_id)
+        _, profiles = _read_user_directory(workbook_bytes)
+        if normalized not in profiles:
+            raise KeyError("Usuario no encontrado")
+        values = {
+            profile.username: _permission_label(profile.permission_for(module))
+            for profile in profiles.values()
+        }
+        values[normalized] = _permission_label(permission)
+        updated_workbook = _set_permission_column_in_xlsx(
+            workbook_bytes,
+            MODULE_COLUMNS[module],
+            values,
+        )
+        _upload_users_workbook(file_id, updated_workbook)
+        _write_users_snapshot(updated_workbook)
+        clear_credentials_cache()
 
 
 def _cache_seconds() -> int:

@@ -182,6 +182,7 @@ class WorkbookAuthenticationTests(unittest.TestCase):
         self.assertFalse(
             profiles["admin@example.com"].can_read("cumpleanos_agentes")
         )
+        self.assertFalse(profiles["admin@example.com"].can_read("accesos"))
 
     def test_birthdays_module_uses_explicit_workbook_permissions(self):
         workbook = workbook_bytes([
@@ -231,6 +232,36 @@ class WorkbookAuthenticationTests(unittest.TestCase):
         )
         self.assertFalse(
             profiles["central-admin@example.com"].can_read("carga_bases")
+        )
+        self.assertFalse(
+            profiles["central-admin@example.com"].can_read("accesos")
+        )
+
+    def test_access_module_uses_explicit_workbook_permissions(self):
+        workbook = workbook_bytes([
+            {
+                "Usuario": "alberto.alfaro@taiico.com",
+                "Password": "secret",
+                "Rol": "Admin",
+                "Promotoria": "*",
+                "Permiso_Accesos": "Operación",
+            },
+            {
+                "Usuario": "other-admin@taiico.com",
+                "Password": "secret",
+                "Rol": "Admin",
+                "Promotoria": "*",
+                "Permiso_Accesos": "Ninguno",
+            },
+        ])
+
+        _, profiles = auth._read_user_directory(workbook)
+
+        self.assertTrue(
+            profiles["alberto.alfaro@taiico.com"].can_operate("accesos")
+        )
+        self.assertFalse(
+            profiles["other-admin@taiico.com"].can_read("accesos")
         )
 
     def test_agent_birthdays_module_uses_explicit_workbook_permissions(self):
