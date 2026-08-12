@@ -165,16 +165,17 @@ class RenewalAgentJobTests(unittest.TestCase):
             return_value="run-1",
         ), patch(
             "jobs.run_renewal_agent.send_email_smtp",
-        ), patch(
-            "jobs.run_renewal_agent.process_one",
+        ) as send_email, patch(
+            "jobs.run_renewal_agent.process_one_subprocess",
             return_value=failure,
-        ) as process_one, patch(
+        ) as process_one_subprocess, patch(
             "jobs.run_renewal_agent.finish_run",
             return_value=completed,
         ) as finish_run:
             result = execute_batch(now)
 
-        self.assertEqual(process_one.call_count, 7)
+        send_email.assert_not_called()
+        self.assertEqual(process_one_subprocess.call_count, 7)
         finish_run.assert_called_once_with(
             "run-1",
             [failure[0]] * 7,
@@ -219,17 +220,18 @@ class RenewalAgentJobTests(unittest.TestCase):
             return_value="run-1",
         ) as create_run, patch(
             "jobs.run_renewal_agent.send_email_smtp",
-        ), patch(
-            "jobs.run_renewal_agent.process_one",
+        ) as send_email, patch(
+            "jobs.run_renewal_agent.process_one_subprocess",
             return_value=({"status": "completed"}, False),
-        ) as process_one, patch(
+        ) as process_one_subprocess, patch(
             "jobs.run_renewal_agent.finish_run",
             return_value=completed,
         ):
             result = execute_batch(now, limit=5)
 
+        send_email.assert_not_called()
         self.assertEqual(result, completed)
-        self.assertEqual(process_one.call_count, 5)
+        self.assertEqual(process_one_subprocess.call_count, 5)
         self.assertEqual(len(create_run.call_args.args[0]), 5)
 
     def test_started_date_is_written_before_batch_and_prevents_second_run(self):

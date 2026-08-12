@@ -379,15 +379,42 @@ class MetLifeGmmOldPortalAdapter(MetLifeGmmPortalAdapter):
             if checkbox.is_enabled() and not checkbox.is_checked():
                 checkbox.check(force=True)
 
-        with page.expect_download(timeout=120_000) as download_info:
-            page.get_by_role("button", name="Descargar", exact=True).click()
-        download = download_info.value
-        filename = sanitize_drive_name(
-            download.suggested_filename
-            or f"{normalize_rfc(task.rfc)}_{task.policy_number}.zip"
+        download_dir = self.download_root / sanitize_drive_name(
+            f"old_portal_{normalize_rfc(task.rfc)}_{task.policy_number}_{int(time.time())}"
         )
+        download_dir.mkdir(parents=True, exist_ok=True)
+        cdp = page.context.new_cdp_session(page)
+        cdp.send(
+            "Page.setDownloadBehavior",
+            {"behavior": "allow", "downloadPath": str(download_dir)},
+        )
+        before = {item.name for item in download_dir.iterdir()}
+        page.get_by_role("button", name="Descargar", exact=True).click(no_wait_after=True)
+
+        deadline = time.monotonic() + 120
+        downloaded: Path | None = None
+        while time.monotonic() < deadline:
+            candidates = [
+                item
+                for item in download_dir.iterdir()
+                if item.is_file()
+                and item.name not in before
+                and not item.name.endswith(".crdownload")
+            ]
+            if candidates:
+                downloaded = max(candidates, key=lambda item: item.stat().st_mtime)
+                if downloaded.stat().st_size > 0:
+                    break
+            time.sleep(1)
+        if downloaded is None:
+            raise MetLifePortalAdapterError("No se recibió la descarga del portal antiguo")
+        filename = sanitize_drive_name(downloaded.name or f"{normalize_rfc(task.rfc)}_{task.policy_number}.zip")
         destination = self.download_root / filename
-        download.save_as(str(destination))
+        if destination.exists():
+            destination = self.download_root / sanitize_drive_name(
+                f"{destination.stem}_{int(time.time())}{destination.suffix}"
+            )
+        shutil.move(str(downloaded), str(destination))
         return destination
 
     def extract_download_safely(self, archive: Path, task: MetLifeGmmPortalTask) -> Path:
