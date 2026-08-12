@@ -3,28 +3,48 @@ from __future__ import annotations
 import io
 import os
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+import pandas as pd
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import or_
 
 from database import Client, SessionLocal
 from drive.client import download_drive_file_bytes
+from services.auth import AccessProfile
+from services.authorization import current_access_profile
 
 
 router = APIRouter(prefix="/cotizaciones", tags=["cotizaciones"])
 
 QUOTES_FILE_ID_ENV = "GOOGLE_DRIVE_QUOTES_FILE_ID"
 DEFAULT_QUOTES_FILE_ID = "1uP-G9GAz75SyO4nUhrJlaHDhX5zJ6vk4"
+AGENTS_FILE_ID_ENV = "GOOGLE_DRIVE_AGENTS_METLIFE_FILE_ID"
+DEFAULT_AGENTS_FILE_ID = "1IoeLDCQe4T3DofStiBSaI09xjX2-RSby"
 PRODUCTS = {
     "GMM": ("Medicalife Familiar", "Medicalife PG", "Primordial"),
     "Vida": ("Metalife", "Totalife", "Flexilife", "Horizonte", "Temporal"),
 }
 INITIAL_STATUS = "Pendiente de cotización"
-HEADERS = ("ID", "Cliente / Prospecto", "RFC", "Ramo", "Producto", "Estatus", "Cotizaciones")
+HEADERS = (
+    "Agente",
+    "Promotoría",
+    "Aseguradora",
+    "Clave de agente",
+    "Cliente / Prospecto",
+    "RFC",
+    "Ramo",
+    "Producto",
+    "Estatus",
+    "Cotizaciones",
+    "ID",
+)
 _workbook_lock = threading.RLock()
+_agent_cache_lock = threading.RLock()
+_agent_cache: tuple[float, list[dict[str, str]]] | None = None
 
 
 class QuoteCreate(BaseModel):
@@ -32,6 +52,8 @@ class QuoteCreate(BaseModel):
     prospect_name: str | None = Field(default=None, max_length=255)
     ramo: str
     producto: str
+    agent_rfc: str | None = None
+    agent_promotoria: str | None = None
 
     @model_validator(mode="after")
     def validate_client_and_product(self):
@@ -89,10 +111,6 @@ def _sheet_and_headers(workbook):
         value = str(cell.value or "").strip()
         if value:
             headers[value] = index
-    # El archivo original trae una primera columna sin encabezado; se reutiliza para el ID.
-    if "ID" not in headers and sheet.max_column >= len(HEADERS):
-        sheet.cell(row=1, column=1, value="ID")
-        headers["ID"] = 1
     for header in HEADERS:
         if header not in headers:
             column = sheet.max_column + 1
@@ -110,7 +128,103 @@ def _serialize_row(sheet, headers: dict[str, int], row_number: int) -> dict[str,
         "producto": str(sheet.cell(row=row_number, column=headers["Producto"]).value or ""),
         "estatus": str(sheet.cell(row=row_number, column=headers["Estatus"]).value or ""),
         "cotizaciones": str(sheet.cell(row=row_number, column=headers["Cotizaciones"]).value or ""),
+        "agente": str(sheet.cell(row=row_number, column=headers["Agente"]).value or ""),
+        "promotoria": str(sheet.cell(row=row_number, column=headers["Promotoría"]).value or ""),
+        "aseguradora": str(sheet.cell(row=row_number, column=headers["Aseguradora"]).value or ""),
+        "clave_agente": str(sheet.cell(row=row_number, column=headers["Clave de agente"]).value or ""),
     }
+
+
+def parse_agent_directory(workbook_bytes: bytes) -> list[dict[str, str]]:
+    excel = pd.ExcelFile(io.BytesIO(workbook_bytes))
+    sheet_name = "Datos" if "Datos" in excel.sheet_names else excel.sheet_names[0]
+    table = pd.read_excel(
+        io.BytesIO(workbook_bytes),
+        sheet_name=sheet_name,
+        dtype=str,
+        keep_default_na=False,
+    )
+    required = {"RFC", "Promotoria", "CLAVE_DEFINITIVA", "CLAVE_ARRANQUE"}
+    missing = sorted(required.difference(table.columns))
+    if missing:
+        raise ValueError("La base de agentes no contiene: " + ", ".join(missing))
+
+    agents: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for _, row in table.iterrows():
+        rfc = "".join(str(row.get("RFC") or "").upper().split())
+        promotoria = str(row.get("Promotoria") or "").strip().upper()
+        definitive_key = str(row.get("CLAVE_DEFINITIVA") or "").strip()
+        start_key = str(row.get("CLAVE_ARRANQUE") or "").strip()
+        key = definitive_key or start_key
+        if not rfc or not promotoria or not key or (rfc, promotoria) in seen:
+            continue
+        parts = [
+            str(row.get("Nombres") or "").strip(),
+            str(row.get("Apellido_Paterno") or "").strip(),
+            str(row.get("Apellido_Materno") or "").strip(),
+        ]
+        name = " ".join(part for part in parts if part)
+        if not name:
+            name = str(row.get("Nombre") or "").strip()
+        agents.append(
+            {
+                "rfc": rfc,
+                "name": name.title() or "Nombre no registrado",
+                "promotoria": promotoria,
+                "key": key,
+                "key_source": "CLAVE_DEFINITIVA" if definitive_key else "CLAVE_ARRANQUE",
+            }
+        )
+        seen.add((rfc, promotoria))
+    return sorted(agents, key=lambda item: (item["promotoria"], item["name"], item["rfc"]))
+
+
+def load_agent_directory() -> list[dict[str, str]]:
+    global _agent_cache
+    now = time.monotonic()
+    cache_seconds = max(0, int(os.getenv("QUOTES_AGENTS_CACHE_SECONDS", "300")))
+    with _agent_cache_lock:
+        if _agent_cache and now < _agent_cache[0]:
+            return _agent_cache[1]
+        file_id = os.getenv(AGENTS_FILE_ID_ENV, "").strip() or DEFAULT_AGENTS_FILE_ID
+        agents = parse_agent_directory(download_drive_file_bytes(file_id))
+        _agent_cache = (now + cache_seconds, agents)
+        return agents
+
+
+def agents_for_profile(profile: AccessProfile) -> list[dict[str, str]]:
+    allowed_promotorias = set(profile.promotorias)
+    agents = [agent for agent in load_agent_directory() if agent["promotoria"] in allowed_promotorias]
+    if profile.is_agent:
+        profile_rfc = "".join(profile.rfc.upper().split())
+        agents = [agent for agent in agents if agent["rfc"] == profile_rfc]
+    return agents
+
+
+def assigned_agent(
+    profile: AccessProfile,
+    requested_rfc: str | None,
+    requested_promotoria: str | None = None,
+) -> dict[str, str]:
+    options = agents_for_profile(profile)
+    if profile.is_agent:
+        if not profile.rfc:
+            raise ValueError("Tu usuario no tiene RFC de agente configurado en Accesos")
+        if len(options) != 1:
+            raise ValueError("No fue posible identificar una única clave MetLife para tu usuario")
+        return options[0]
+    selected = "".join(str(requested_rfc or "").upper().split())
+    selected_promotoria = str(requested_promotoria or "").strip().upper()
+    matches = [
+        agent for agent in options
+        if agent["rfc"] == selected and agent["promotoria"] == selected_promotoria
+    ]
+    if not selected:
+        raise ValueError("Selecciona el agente responsable de la cotización")
+    if len(matches) != 1:
+        raise ValueError("El agente no pertenece a una promotoría autorizada para tu usuario")
+    return matches[0]
 
 
 def list_quotes() -> list[dict[str, str]]:
@@ -124,7 +238,8 @@ def list_quotes() -> list[dict[str, str]]:
     return rows
 
 
-def create_quote(payload: QuoteCreate) -> dict[str, str]:
+def create_quote(payload: QuoteCreate, profile: AccessProfile) -> dict[str, str]:
+    agent = assigned_agent(profile, payload.agent_rfc, payload.agent_promotoria)
     db = SessionLocal()
     try:
         if payload.client_id:
@@ -146,6 +261,10 @@ def create_quote(payload: QuoteCreate) -> dict[str, str]:
     quote_id = f"COT-{datetime.now(timezone.utc):%Y%m%d}-{uuid.uuid4().hex[:6].upper()}"
     values = {
         "ID": quote_id,
+        "Agente": agent["name"],
+        "Promotoría": agent["promotoria"],
+        "Aseguradora": "MetLife",
+        "Clave de agente": agent["key"],
         "Cliente / Prospecto": name,
         "RFC": rfc,
         "Ramo": payload.ramo,
@@ -166,8 +285,15 @@ def create_quote(payload: QuoteCreate) -> dict[str, str]:
 
 
 @router.get("/config")
-def get_quotes_config():
-    return {"products": PRODUCTS, "initial_status": INITIAL_STATUS}
+def get_quotes_config(profile: AccessProfile = Depends(current_access_profile)):
+    agents = agents_for_profile(profile)
+    return {
+        "products": PRODUCTS,
+        "initial_status": INITIAL_STATUS,
+        "insurer": "MetLife",
+        "agents": agents,
+        "agent_is_automatic": profile.is_agent,
+    }
 
 
 @router.get("")
@@ -207,9 +333,12 @@ def search_clients(q: str = Query(min_length=2, max_length=120)):
 
 
 @router.post("", status_code=201)
-def add_quote(payload: QuoteCreate):
+def add_quote(
+    payload: QuoteCreate,
+    profile: AccessProfile = Depends(current_access_profile),
+):
     try:
-        return {"quote": create_quote(payload)}
+        return {"quote": create_quote(payload, profile)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

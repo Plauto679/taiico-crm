@@ -6,15 +6,19 @@ import {
   createQuote,
   searchQuoteClients,
   type Quote,
+  type QuoteAgent,
   type QuoteClient,
 } from '@/modules/cotizaciones/service';
 
 type Props = {
   initialQuotes: Quote[];
   products: Record<string, string[]>;
+  insurer: string;
+  agents: QuoteAgent[];
+  agentIsAutomatic: boolean;
 };
 
-export function CotizacionesView({ initialQuotes, products }: Props) {
+export function CotizacionesView({ initialQuotes, products, insurer, agents, agentIsAutomatic }: Props) {
   const [quotes, setQuotes] = useState(initialQuotes);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -24,6 +28,8 @@ export function CotizacionesView({ initialQuotes, products }: Props) {
   const [prospectName, setProspectName] = useState('');
   const [ramo, setRamo] = useState('GMM');
   const [producto, setProducto] = useState(products.GMM?.[0] || '');
+  const [agentRfc, setAgentRfc] = useState(agentIsAutomatic ? (agents[0]?.rfc || '') : '');
+  const [agentPromotoria, setAgentPromotoria] = useState(agentIsAutomatic ? (agents[0]?.promotoria || '') : '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -48,6 +54,8 @@ export function CotizacionesView({ initialQuotes, products }: Props) {
     setProspectName('');
     setRamo('GMM');
     setProducto(products.GMM?.[0] || '');
+    setAgentRfc(agentIsAutomatic ? (agents[0]?.rfc || '') : '');
+    setAgentPromotoria(agentIsAutomatic ? (agents[0]?.promotoria || '') : '');
     setError('');
   }
 
@@ -60,6 +68,8 @@ export function CotizacionesView({ initialQuotes, products }: Props) {
         prospect_name: prospect ? prospectName : undefined,
         ramo,
         producto,
+        agent_rfc: agentRfc || undefined,
+        agent_promotoria: agentPromotoria || undefined,
       });
       setQuotes((current) => [...current, quote]);
       setOpen(false);
@@ -87,12 +97,16 @@ export function CotizacionesView({ initialQuotes, products }: Props) {
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <tr>{['Folio', 'Cliente / Prospecto', 'RFC', 'Ramo', 'Producto', 'Estatus', 'Cotizaciones'].map((header) => <th key={header} className="px-4 py-3">{header}</th>)}</tr>
+              <tr>{['Folio', 'Agente', 'Promotoría', 'Aseguradora', 'Clave', 'Cliente / Prospecto', 'RFC', 'Ramo', 'Producto', 'Estatus', 'Cotizaciones'].map((header) => <th key={header} className="px-4 py-3">{header}</th>)}</tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {quotes.map((quote) => (
                 <tr key={quote.id} className="hover:bg-blue-50/40">
                   <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">{quote.id}</td>
+                  <td className="px-4 py-3">{quote.agente}</td>
+                  <td className="whitespace-nowrap px-4 py-3">{quote.promotoria}</td>
+                  <td className="px-4 py-3">{quote.aseguradora}</td>
+                  <td className="whitespace-nowrap px-4 py-3">{quote.clave_agente}</td>
                   <td className="px-4 py-3">{quote.cliente}</td>
                   <td className="whitespace-nowrap px-4 py-3">{quote.rfc || 'Prospecto'}</td>
                   <td className="px-4 py-3">{quote.ramo}</td>
@@ -101,7 +115,7 @@ export function CotizacionesView({ initialQuotes, products }: Props) {
                   <td className="px-4 py-3">{quote.cotizaciones ? <a className="text-blue-600 hover:underline" href={quote.cotizaciones} target="_blank" rel="noreferrer">Abrir carpeta</a> : <span className="text-slate-400">Pendiente</span>}</td>
                 </tr>
               ))}
-              {!quotes.length && <tr><td colSpan={7} className="px-6 py-16 text-center text-slate-500"><FileText className="mx-auto mb-3 h-9 w-9 text-slate-300" />Aún no hay cotizaciones registradas.</td></tr>}
+              {!quotes.length && <tr><td colSpan={11} className="px-6 py-16 text-center text-slate-500"><FileText className="mx-auto mb-3 h-9 w-9 text-slate-300" />Aún no hay cotizaciones registradas.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -115,6 +129,32 @@ export function CotizacionesView({ initialQuotes, products }: Props) {
               <button onClick={() => { setOpen(false); reset(); }} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
             </div>
             <div className="space-y-6 p-6">
+              <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="space-y-2 text-sm font-semibold text-slate-700">
+                    Agente
+                    {agentIsAutomatic ? (
+                      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 font-normal text-slate-900">
+                        {agents[0] ? `${agents[0].name} · ${agents[0].rfc}` : 'No se encontró el agente asociado a tu RFC'}
+                      </div>
+                    ) : (
+                      <select value={agentRfc && agentPromotoria ? `${agentRfc}|${agentPromotoria}` : ''} onChange={(event) => { const [rfc, promotoria] = event.target.value.split('|'); setAgentRfc(rfc || ''); setAgentPromotoria(promotoria || ''); }} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 font-normal text-slate-900">
+                        <option value="">Selecciona un agente</option>
+                        {agents.map((agent) => <option key={`${agent.rfc}-${agent.promotoria}`} value={`${agent.rfc}|${agent.promotoria}`}>{agent.name} · {agent.rfc} · {agent.promotoria}</option>)}
+                      </select>
+                    )}
+                  </label>
+                  <div className="space-y-2 text-sm font-semibold text-slate-700">
+                    Asignación automática
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 font-normal text-slate-700">
+                      {(() => {
+                        const agent = agents.find((item) => item.rfc === agentRfc && item.promotoria === agentPromotoria);
+                        return agent ? `${agent.promotoria} · ${insurer} · Clave ${agent.key}` : `${insurer} · Promotoría y clave pendientes`;
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              </section>
               {!selected && !prospect ? (
                 <section className="space-y-3">
                   <label className="block text-sm font-semibold text-slate-700">Buscar cliente por nombre o RFC</label>
@@ -137,7 +177,7 @@ export function CotizacionesView({ initialQuotes, products }: Props) {
               </div>}
               {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
             </div>
-            <div className="flex justify-end gap-3 border-t bg-slate-50 px-6 py-4"><button onClick={() => { setOpen(false); reset(); }} className="rounded-lg px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-200">Cancelar</button><button disabled={saving || (!selected && !prospect) || (prospect && prospectName.trim().length < 2)} onClick={submit} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Registrar cotización</button></div>
+            <div className="flex justify-end gap-3 border-t bg-slate-50 px-6 py-4"><button onClick={() => { setOpen(false); reset(); }} className="rounded-lg px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-200">Cancelar</button><button disabled={saving || !agentRfc || (!selected && !prospect) || (prospect && prospectName.trim().length < 2)} onClick={submit} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Registrar cotización</button></div>
           </div>
         </div>
       )}

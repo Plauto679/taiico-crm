@@ -8,14 +8,21 @@ export type Quote = {
   producto: string;
   estatus: string;
   cotizaciones: string;
+  agente: string;
+  promotoria: string;
+  aseguradora: string;
+  clave_agente: string;
 };
 
 export type QuoteClient = { id: string; nombre: string; rfc: string };
+export type QuoteAgent = { rfc: string; name: string; promotoria: string; key: string; key_source: string };
 export type QuoteCreate = {
   client_id?: string;
   prospect_name?: string;
   ramo: string;
   producto: string;
+  agent_rfc?: string;
+  agent_promotoria?: string;
 };
 
 export async function getQuotes(): Promise<Quote[]> {
@@ -24,7 +31,13 @@ export async function getQuotes(): Promise<Quote[]> {
 }
 
 export async function getQuoteConfig() {
-  return fetchFromApi<{ products: Record<string, string[]>; initial_status: string }>('/cotizaciones/config');
+  return fetchFromApi<{
+    products: Record<string, string[]>;
+    initial_status: string;
+    insurer: string;
+    agents: QuoteAgent[];
+    agent_is_automatic: boolean;
+  }>('/cotizaciones/config');
 }
 
 export async function searchQuoteClients(query: string): Promise<QuoteClient[]> {
