@@ -3,7 +3,7 @@ import unittest
 from pydantic import ValidationError
 
 from backend.services.auth import AccessProfile
-from backend.services.cotizaciones import QuoteCreate, assigned_agent, parse_agent_directory
+from backend.services.cotizaciones import QuoteCreate, QuoteUpdate, assigned_agent, parse_agent_directory
 from unittest.mock import patch
 from openpyxl import Workbook
 import io
@@ -25,6 +25,12 @@ class QuoteCreateTests(unittest.TestCase):
     def test_requires_exactly_one_client_source(self):
         with self.assertRaises(ValidationError):
             QuoteCreate(ramo="Vida", producto="Metalife")
+
+    def test_update_allows_empty_rfc(self):
+        payload = QuoteUpdate(
+            cliente="Cliente sin RFC", rfc="", ramo="GMM", producto="Primordial"
+        )
+        self.assertEqual(payload.rfc, "")
 
     def test_agent_key_prefers_definitive_and_falls_back_to_start(self):
         workbook = Workbook()

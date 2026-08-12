@@ -67,6 +67,24 @@ class QuoteCreate(BaseModel):
         return self
 
 
+class QuoteUpdate(BaseModel):
+    cliente: str = Field(min_length=2, max_length=255)
+    rfc: str | None = Field(default=None, max_length=50)
+    ramo: str
+    producto: str
+    agent_rfc: str | None = None
+    agent_promotoria: str | None = None
+
+    @model_validator(mode="after")
+    def validate_product(self):
+        products = PRODUCTS.get(self.ramo)
+        if not products:
+            raise ValueError("El ramo debe ser GMM o Vida")
+        if self.producto not in products:
+            raise ValueError(f"El producto no corresponde al ramo {self.ramo}")
+        return self
+
+
 def _file_id() -> str:
     return os.getenv(QUOTES_FILE_ID_ENV, "").strip() or DEFAULT_QUOTES_FILE_ID
 
@@ -120,8 +138,9 @@ def _sheet_and_headers(workbook):
 
 
 def _serialize_row(sheet, headers: dict[str, int], row_number: int) -> dict[str, str]:
+    stored_id = str(sheet.cell(row=row_number, column=headers["ID"]).value or "").strip()
     return {
-        "id": str(sheet.cell(row=row_number, column=headers["ID"]).value or ""),
+        "id": stored_id or f"ROW-{row_number}",
         "cliente": str(sheet.cell(row=row_number, column=headers["Cliente / Prospecto"]).value or ""),
         "rfc": str(sheet.cell(row=row_number, column=headers["RFC"]).value or ""),
         "ramo": str(sheet.cell(row=row_number, column=headers["Ramo"]).value or ""),
@@ -248,8 +267,6 @@ def create_quote(payload: QuoteCreate, profile: AccessProfile) -> dict[str, str]
                 raise ValueError("El cliente seleccionado ya no existe")
             name = client.full_name.strip()
             rfc = "".join(str(client.rfc or "").upper().split())
-            if not rfc:
-                raise ValueError("El cliente seleccionado no tiene RFC; regístralo como prospecto")
         else:
             name = " ".join(str(payload.prospect_name or "").split())
             rfc = ""
@@ -276,6 +293,51 @@ def create_quote(payload: QuoteCreate, profile: AccessProfile) -> dict[str, str]
         workbook = _load_workbook()
         sheet, headers = _sheet_and_headers(workbook)
         row_number = sheet.max_row + 1
+        for header, value in values.items():
+            sheet.cell(row=row_number, column=headers[header], value=value)
+        output = io.BytesIO()
+        workbook.save(output)
+        _upload_workbook(output.getvalue())
+        return _serialize_row(sheet, headers, row_number)
+
+
+def update_quote(quote_id: str, payload: QuoteUpdate, profile: AccessProfile) -> dict[str, str]:
+    agent = assigned_agent(profile, payload.agent_rfc, payload.agent_promotoria)
+    normalized_id = str(quote_id or "").strip()
+    with _workbook_lock:
+        workbook = _load_workbook()
+        sheet, headers = _sheet_and_headers(workbook)
+        row_number = None
+        if normalized_id.startswith("ROW-"):
+            try:
+                candidate = int(normalized_id.removeprefix("ROW-"))
+            except ValueError:
+                candidate = 0
+            if 2 <= candidate <= sheet.max_row:
+                row_number = candidate
+        else:
+            for candidate in range(2, sheet.max_row + 1):
+                value = str(sheet.cell(row=candidate, column=headers["ID"]).value or "").strip()
+                if value == normalized_id:
+                    row_number = candidate
+                    break
+        if row_number is None:
+            raise KeyError("Cotización no encontrada")
+
+        stored_id = str(sheet.cell(row=row_number, column=headers["ID"]).value or "").strip()
+        if not stored_id:
+            stored_id = f"COT-{datetime.now(timezone.utc):%Y%m%d}-{uuid.uuid4().hex[:6].upper()}"
+        values = {
+            "ID": stored_id,
+            "Agente": agent["name"],
+            "Promotoría": agent["promotoria"],
+            "Aseguradora": "MetLife",
+            "Clave de agente": agent["key"],
+            "Cliente / Prospecto": " ".join(payload.cliente.split()),
+            "RFC": "".join(str(payload.rfc or "").upper().split()),
+            "Ramo": payload.ramo,
+            "Producto": payload.producto,
+        }
         for header, value in values.items():
             sheet.cell(row=row_number, column=headers[header], value=value)
         output = io.BytesIO()
@@ -343,3 +405,19 @@ def add_quote(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"No se pudo registrar la cotización: {exc}") from exc
+
+
+@router.put("/{quote_id}")
+def edit_quote(
+    quote_id: str,
+    payload: QuoteUpdate,
+    profile: AccessProfile = Depends(current_access_profile),
+):
+    try:
+        return {"quote": update_quote(quote_id, payload, profile)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo actualizar la cotización: {exc}") from exc

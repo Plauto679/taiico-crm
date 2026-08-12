@@ -66,7 +66,7 @@ export function Sidebar() {
     }
 
     return (
-        <aside className={`relative flex h-screen shrink-0 flex-col border-r bg-white transition-[width] duration-200 ${collapsed ? 'w-20' : 'w-64'}`}>
+        <aside className={`relative flex h-screen min-h-0 shrink-0 flex-col overflow-hidden border-r bg-white transition-[width] duration-200 ${collapsed ? 'w-20' : 'w-64'}`}>
             <div className="flex min-h-52 flex-none flex-col items-center justify-center gap-2 border-b px-3 py-4">
                 <img src="/logo.png" alt="TAIICO CRM" className={`w-auto transition-all ${collapsed ? 'h-12' : 'h-20'}`} />
                 {!collapsed && (
@@ -105,7 +105,7 @@ export function Sidebar() {
                     {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
                 </button>
             </div>
-            <nav className="flex-1 space-y-1 px-2 py-4">
+            <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-2 py-4 [scrollbar-gutter:stable]">
                 {NAV_ITEMS.filter((item) => (
                     permissions?.[item.module] === 'lectura'
                     || permissions?.[item.module] === 'operacion'

@@ -25,6 +25,15 @@ export type QuoteCreate = {
   agent_promotoria?: string;
 };
 
+export type QuoteUpdate = {
+  cliente: string;
+  rfc?: string;
+  ramo: string;
+  producto: string;
+  agent_rfc?: string;
+  agent_promotoria?: string;
+};
+
 export async function getQuotes(): Promise<Quote[]> {
   const response = await fetchFromApi<{ quotes: Quote[] }>('/cotizaciones');
   return response.quotes;
@@ -48,6 +57,15 @@ export async function searchQuoteClients(query: string): Promise<QuoteClient[]> 
 export async function createQuote(payload: QuoteCreate): Promise<Quote> {
   const response = await fetchFromApi<{ quote: Quote }>('/cotizaciones', {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return response.quote;
+}
+
+export async function updateQuote(id: string, payload: QuoteUpdate): Promise<Quote> {
+  const response = await fetchFromApi<{ quote: Quote }>(`/cotizaciones/${encodeURIComponent(id)}`, {
+    method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
