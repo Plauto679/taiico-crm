@@ -2,7 +2,7 @@ import os
 
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from services import cobranza, renovaciones, cumpleanos, cumpleanos_agentes, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, client_email_directory, whatsapp, pendientes, mail_configuration, recluta, password_management, base_loads, accesos, cotizaciones
+from services import cobranza, renovaciones, cumpleanos, cumpleanos_agentes, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, client_email_directory, whatsapp, pendientes, mail_configuration, recluta, password_management, base_loads, accesos, cotizaciones, audit_logs
 from services.login_security import login_rate_limiter, secure_cookie_for
 from services.authorization import current_access_profile, require_module_access
 from services.session_auth import (
@@ -37,6 +37,22 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Accept", "Authorization", "Content-Type", "X-Requested-With"],
 )
+
+
+@app.middleware("http")
+async def audit_mutations(request: Request, call_next):
+    if not audit_logs.should_audit(request):
+        return await call_next(request)
+    username, payload = await audit_logs.capture_request(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        if username:
+            audit_logs.record_event(request, username, payload, 500)
+        raise
+    if username:
+        audit_logs.record_event(request, username, payload, response.status_code)
+    return response
 
 
 @app.middleware("http")
@@ -200,6 +216,7 @@ app.include_router(recluta.router, dependencies=[Depends(require_module_access("
 app.include_router(base_loads.router, dependencies=[Depends(require_module_access("carga_bases", operation=True))])
 app.include_router(accesos.router, dependencies=[Depends(require_module_access("accesos", operation=True))])
 app.include_router(cotizaciones.router, dependencies=[Depends(require_module_access("cotizaciones"))])
+app.include_router(audit_logs.router, dependencies=[Depends(require_module_access("logs"))])
 
 if __name__ == "__main__":
     import uvicorn

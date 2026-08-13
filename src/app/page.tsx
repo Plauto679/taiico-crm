@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, DatabaseZap, UserCog, FilePenLine } from 'lucide-react';
+import { DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, DatabaseZap, UserCog, FilePenLine, ScrollText } from 'lucide-react';
 import { fetchFromApi } from '@/lib/api';
 
 export default async function Home() {
@@ -185,6 +185,11 @@ export default async function Home() {
               <div className="rounded-full bg-blue-100 p-4 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors duration-300"><FilePenLine className="h-8 w-8" /></div>
               <div><h2 className="text-2xl font-bold text-gray-900">Cotizaciones</h2><p className="text-gray-500 mt-2">Prospectos, productos y seguimiento</p></div>
             </div>
+          </Link>
+        )}
+        {['lectura', 'operacion'].includes(session.module_permissions.logs || '') && (
+          <Link href="/logs" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-amber-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
+            <div className="flex flex-col items-center text-center space-y-4"><div className="rounded-full bg-amber-100 p-4 text-amber-700 group-hover:bg-amber-600 group-hover:text-white transition-colors duration-300"><ScrollText className="h-8 w-8" /></div><div><h2 className="text-2xl font-bold text-gray-900">Logs</h2><p className="text-gray-500 mt-2">Auditoría de usuarios y cambios</p></div></div>
           </Link>
         )}
       </div>

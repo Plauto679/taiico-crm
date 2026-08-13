@@ -64,6 +64,7 @@ MODULES = (
     "carga_bases",
     "accesos",
     "cotizaciones",
+    "logs",
 )
 MODULE_COLUMNS = {
     module: f"Permiso_{module.title()}"
@@ -74,6 +75,7 @@ MODULE_COLUMNS["cumpleanos_agentes"] = "Permiso_Cumpleanos_Agentes"
 MODULE_COLUMNS["carga_bases"] = "Permiso_Carga_Bases"
 MODULE_COLUMNS["accesos"] = "Permiso_Accesos"
 MODULE_COLUMNS["cotizaciones"] = "Permiso_Cotizaciones"
+MODULE_COLUMNS["logs"] = "Permiso_Logs"
 
 MODULE_LABELS = {
     "inicio": "Inicio",
@@ -90,6 +92,7 @@ MODULE_LABELS = {
     "carga_bases": "Carga de bases",
     "accesos": "Accesos",
     "cotizaciones": "Cotizaciones",
+    "logs": "Logs",
 }
 
 PERMISSION_LABELS = {

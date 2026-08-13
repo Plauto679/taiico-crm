@@ -82,6 +82,26 @@ class PasswordResetToken(Base):
     used_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
 
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    occurred_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
+    username = Column(String(255), nullable=False, index=True)
+    module = Column(String(100), nullable=False, index=True)
+    action = Column(String(100), nullable=False, index=True)
+    entity_type = Column(String(100), nullable=True)
+    entity_id = Column(String(255), nullable=True, index=True)
+    http_method = Column(String(10), nullable=False)
+    endpoint = Column(String(500), nullable=False)
+    status_code = Column(Integer, nullable=False)
+    outcome = Column(String(20), nullable=False, index=True)
+    changes_json = Column("changes", JSON, default={})
+    ip_address = Column(String(100), nullable=True)
+    user_agent = Column(String(500), nullable=True)
+    drive_snapshot = Column(String(500), nullable=True)
+
 # 2. Insurer Model
 class Insurer(Base):
     __tablename__ = "insurers"
