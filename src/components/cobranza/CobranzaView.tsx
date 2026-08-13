@@ -182,8 +182,8 @@ export function CobranzaView({ vidaData = [], gmmData = [], suraData = [], aarco
 
     return (
         <div className="flex flex-col h-full space-y-4">
-            <div className="flex items-center justify-between border-b pb-2 flex-none">
-                <div className="flex space-x-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-2 flex-none">
+                <div className="flex min-w-0 space-x-2 sm:space-x-4">
                     {insurer === 'Metlife' && (
                         <>
                             <button

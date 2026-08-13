@@ -65,6 +65,7 @@ MODULES = (
     "accesos",
     "cotizaciones",
     "logs",
+    "rrhh",
 )
 MODULE_COLUMNS = {
     module: f"Permiso_{module.title()}"
@@ -76,6 +77,7 @@ MODULE_COLUMNS["carga_bases"] = "Permiso_Carga_Bases"
 MODULE_COLUMNS["accesos"] = "Permiso_Accesos"
 MODULE_COLUMNS["cotizaciones"] = "Permiso_Cotizaciones"
 MODULE_COLUMNS["logs"] = "Permiso_Logs"
+MODULE_COLUMNS["rrhh"] = "Permiso_RRHH"
 
 MODULE_LABELS = {
     "inicio": "Inicio",
@@ -93,6 +95,7 @@ MODULE_LABELS = {
     "accesos": "Accesos",
     "cotizaciones": "Cotizaciones",
     "logs": "Logs",
+    "rrhh": "RRHH",
 }
 
 PERMISSION_LABELS = {
@@ -234,6 +237,8 @@ def _default_module_permissions(role: str, promotorias: tuple[str, ...]) -> dict
     permissions["carga_bases"] = "ninguno"
     permissions["accesos"] = "ninguno"
     permissions["cotizaciones"] = "ninguno"
+    permissions["logs"] = "ninguno"
+    permissions["rrhh"] = "ninguno"
     return permissions
 
 

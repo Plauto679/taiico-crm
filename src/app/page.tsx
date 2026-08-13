@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, DatabaseZap, UserCog, FilePenLine, ScrollText } from 'lucide-react';
+import { DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound } from 'lucide-react';
 import { fetchFromApi } from '@/lib/api';
 
 export default async function Home() {
@@ -15,20 +15,20 @@ export default async function Home() {
   }
   return (
     <div className="h-full overflow-y-auto">
-      <div className="flex min-h-full flex-col items-center space-y-12 p-8">
+      <div className="flex min-h-full flex-col items-center space-y-8 p-4 sm:space-y-12 sm:p-8">
       <div className="text-center space-y-6">
         <img
           src="/logo.png"
           alt="TAIICO CRM"
-          className="mx-auto h-32 w-auto" // 100% larger than the sidebar's h-10 approx, maybe even bigger
+          className="mx-auto h-24 w-auto sm:h-32"
         />
         <div className="space-y-2">
           <h1 className="text-4xl font-bold text-white">Bienvenido a TAIICO CRM</h1>
-          <p className="text-xl text-blue-100">Seleccione un módulo para comenzar:</p>
+          <p className="text-base text-blue-100 sm:text-xl">Seleccione un módulo para comenzar:</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-4 w-full max-w-6xl">
+      <div className="grid w-full max-w-6xl grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-8 lg:grid-cols-4">
         <Link href="/cobranza" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-blue-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
           <div className="flex flex-col items-center text-center space-y-4">
             <div className="rounded-full bg-blue-100 p-4 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors duration-300">
@@ -191,6 +191,9 @@ export default async function Home() {
           <Link href="/logs" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-amber-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
             <div className="flex flex-col items-center text-center space-y-4"><div className="rounded-full bg-amber-100 p-4 text-amber-700 group-hover:bg-amber-600 group-hover:text-white transition-colors duration-300"><ScrollText className="h-8 w-8" /></div><div><h2 className="text-2xl font-bold text-gray-900">Logs</h2><p className="text-gray-500 mt-2">Auditoría de usuarios y cambios</p></div></div>
           </Link>
+        )}
+        {['lectura', 'operacion'].includes(session.module_permissions.rrhh || '') && (
+          <Link href="/rrhh" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-teal-400 hover:shadow-2xl hover:scale-105 transition-all duration-300"><div className="flex flex-col items-center text-center space-y-4"><div className="rounded-full bg-teal-100 p-4 text-teal-700 group-hover:bg-teal-600 group-hover:text-white transition-colors duration-300"><ContactRound className="h-8 w-8" /></div><div><h2 className="text-2xl font-bold text-gray-900">RRHH</h2><p className="text-gray-500 mt-2">Colaboradores, contratos y vacaciones</p></div></div></Link>
         )}
       </div>
       </div>

@@ -129,7 +129,7 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
 
     return (
         <div className={twMerge("overflow-x-auto rounded-lg border border-gray-200 shadow-sm", className)}>
-            <table className="min-w-full divide-y divide-gray-200 bg-white text-sm">
+            <table className="min-w-max md:min-w-full divide-y divide-gray-200 bg-white text-sm">
                 <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
                     <tr>
                         {columns.map((col, idx) => {

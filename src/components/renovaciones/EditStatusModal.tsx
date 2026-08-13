@@ -115,8 +115,8 @@ export const EditStatusModal = ({
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-2 sm:p-4">
+            <div className="max-h-[calc(100dvh-1rem)] w-full max-w-md overflow-y-auto rounded-lg bg-white p-4 shadow-xl sm:p-6">
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-medium text-gray-900">
                         Actualizar Póliza
@@ -179,7 +179,7 @@ export const EditStatusModal = ({
                     </div>
                 </div>
 
-                <div className="mt-6 flex justify-between">
+                <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
                     <button
                         onClick={handleSendEmail}
                         disabled={isSending}
@@ -189,7 +189,7 @@ export const EditStatusModal = ({
                         {isSending ? 'Enviando...' : 'Enviar Correo'}
                     </button>
 
-                    <div className="flex space-x-3">
+                    <div className="grid grid-cols-2 gap-3 sm:flex sm:space-x-3">
                         <button
                             onClick={onClose}
                             disabled={isSending || isSaving}

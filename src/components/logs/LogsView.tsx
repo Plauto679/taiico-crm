@@ -37,10 +37,10 @@ export function LogsView({ initialLogs, driveFolderUrl }: { initialLogs: AuditLo
     }
   }
 
-  return <div className="flex h-full min-h-0 flex-col gap-4 p-8">
+  return <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4 sm:p-8">
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div><h1 className="text-3xl font-bold text-white">Logs</h1><p className="mt-1 text-blue-100">Bitácora de cambios y acciones realizadas en el CRM.</p></div>
-      <div className="flex gap-2">
+      <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto">
         <a href={driveFolderUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-white/40 px-4 py-2 font-medium text-white hover:bg-white/10"><ExternalLink className="h-4 w-4" />Abrir carpeta Logs</a>
         <button onClick={handleSync} disabled={syncing} className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 font-semibold text-blue-700 disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />Respaldar ahora</button>
       </div>

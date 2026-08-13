@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, DatabaseZap, UserCog, FilePenLine, ScrollText } from 'lucide-react';
+import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Menu, X } from 'lucide-react';
 
 const NAV_ITEMS = [
     { name: 'Inicio', href: '/', icon: Home, module: 'inicio' },
@@ -21,15 +21,19 @@ const NAV_ITEMS = [
     { name: 'Accesos', href: '/accesos', icon: UserCog, module: 'accesos' },
     { name: 'Cotizaciones', href: '/cotizaciones', icon: FilePenLine, module: 'cotizaciones' },
     { name: 'Logs', href: '/logs', icon: ScrollText, module: 'logs' },
+    { name: 'RRHH', href: '/rrhh', icon: ContactRound, module: 'rrhh' },
 ];
 
 export function Sidebar() {
     const [collapsed, setCollapsed] = useState(false);
+    const [mobileOpen, setMobileOpen] = useState(false);
     const [loggingOut, setLoggingOut] = useState(false);
     const [permissions, setPermissions] = useState<Record<string, string> | null>(null);
     const [username, setUsername] = useState('');
     const pathname = usePathname();
     const router = useRouter();
+
+    useEffect(() => setMobileOpen(false), [pathname]);
 
     useEffect(() => {
         if (pathname === '/login' || pathname === '/olvide-password' || pathname === '/restablecer-password') return;
@@ -67,7 +71,17 @@ export function Sidebar() {
     }
 
     return (
-        <aside className={`relative z-20 flex h-screen min-h-0 shrink-0 flex-col overflow-visible border-r bg-white transition-[width] duration-200 ${collapsed ? 'w-20' : 'w-64'}`}>
+        <>
+        <button
+            type="button"
+            onClick={() => setMobileOpen(true)}
+            className="fixed left-3 top-3 z-40 rounded-full border border-slate-200 bg-white p-2.5 text-slate-600 shadow-lg md:hidden"
+            aria-label="Abrir menú"
+        >
+            <Menu className="h-5 w-5" />
+        </button>
+        {mobileOpen && <button aria-label="Cerrar menú" onClick={() => setMobileOpen(false)} className="fixed inset-0 z-40 bg-slate-950/45 md:hidden" />}
+        <aside className={`fixed inset-y-0 left-0 z-50 flex h-[100dvh] min-h-0 w-[min(86vw,20rem)] shrink-0 flex-col overflow-visible border-r bg-white shadow-2xl transition-transform duration-200 md:relative md:z-20 md:h-screen md:translate-x-0 md:shadow-none ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} ${collapsed ? 'md:w-20' : 'md:w-64'}`}>
             <div className="flex min-h-52 flex-none flex-col items-center justify-center gap-2 border-b px-3 py-4">
                 <img src="/logo.png" alt="TAIICO CRM" className={`w-auto transition-all ${collapsed ? 'h-12' : 'h-20'}`} />
                 {!collapsed && (
@@ -99,12 +113,13 @@ export function Sidebar() {
                 <button
                     type="button"
                     onClick={() => setCollapsed((current) => !current)}
-                    className="absolute -right-3 top-4 z-20 rounded-full border border-slate-200 bg-white p-1.5 text-slate-500 shadow-md hover:bg-slate-50 hover:text-slate-800"
+                    className="absolute -right-3 top-4 z-20 hidden rounded-full border border-slate-200 bg-white p-1.5 text-slate-500 shadow-md hover:bg-slate-50 hover:text-slate-800 md:block"
                     aria-label={collapsed ? 'Mostrar barra lateral' : 'Ocultar barra lateral'}
                     title={collapsed ? 'Mostrar barra lateral' : 'Ocultar barra lateral'}
                 >
                     {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
                 </button>
+                <button type="button" onClick={() => setMobileOpen(false)} className="absolute right-3 top-3 rounded-full p-2 text-slate-500 hover:bg-slate-100 md:hidden" aria-label="Cerrar menú"><X className="h-5 w-5" /></button>
             </div>
             <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-2 py-4 [scrollbar-gutter:stable]">
                 {NAV_ITEMS.filter((item) => (
@@ -114,14 +129,16 @@ export function Sidebar() {
                     <Link
                         key={item.name}
                         href={item.href}
-                        className={`group flex items-center rounded-md py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 ${collapsed ? 'justify-center px-2' : 'px-2'}`}
+                        onClick={() => setMobileOpen(false)}
+                        className={`group flex items-center rounded-md px-2 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 ${collapsed ? 'md:justify-center' : ''}`}
                         title={collapsed ? item.name : undefined}
                     >
                         <item.icon className={`h-5 w-5 shrink-0 text-gray-400 group-hover:text-gray-500 ${collapsed ? '' : 'mr-3'}`} />
-                        {!collapsed && <span>{item.name}</span>}
+                        <span className={collapsed ? 'md:hidden' : ''}>{item.name}</span>
                     </Link>
                 ))}
             </nav>
         </aside>
+        </>
     );
 }

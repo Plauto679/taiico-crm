@@ -126,12 +126,12 @@ export function CotizacionesView({ initialQuotes, products, insurer, agents, age
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between rounded-xl bg-white p-4 shadow-sm">
+      <div className="flex flex-col items-stretch justify-between gap-3 rounded-xl bg-white p-4 shadow-sm sm:flex-row sm:items-center">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Control de cotizaciones</h2>
           <p className="text-sm text-slate-500">Registros sincronizados con Cotizaciones.xlsx</p>
         </div>
-        <button onClick={() => setOpen(true)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 font-semibold text-white shadow hover:bg-blue-700">
+        <button onClick={() => setOpen(true)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 font-semibold text-white shadow hover:bg-blue-700">
           <Plus className="h-5 w-5" /> Cotizar
         </button>
       </div>

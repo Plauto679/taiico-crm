@@ -35,19 +35,19 @@ export default async function CobranzaPage({
 
     return (
         <div className="flex flex-col h-full">
-            <div className="flex-none p-8 pb-4 space-y-4">
+            <div className="flex-none p-4 pt-16 sm:p-8 sm:pb-4 space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <h1 className="text-2xl font-bold text-white">Cobranza</h1>
 
                     {/* Insurer Selector */}
-                    <div className="inline-flex rounded-md shadow-sm" role="group">
+                    <div className="flex max-w-full overflow-x-auto rounded-md shadow-sm" role="group">
                         {['Metlife', 'SURA', 'AARCO_AXA'].map((ins) => {
                             const label = ins === 'AARCO_AXA' ? 'AARCO & AXA' : ins;
                             return (
                                 <Link
                                     key={ins}
                                     href={`?insurer=${ins}${startDate ? `&startDate=${startDate}` : ''}${endDate ? `&endDate=${endDate}` : ''}`}
-                                    className={`px-4 py-2 text-sm font-medium border border-gray-200 first:rounded-l-lg last:rounded-r-lg ${insurer === ins ? 'bg-blue-600 text-white' : 'bg-white text-gray-900 hover:bg-gray-100'}`}
+                                    className={`shrink-0 px-4 py-2 text-sm font-medium border border-gray-200 first:rounded-l-lg last:rounded-r-lg ${insurer === ins ? 'bg-blue-600 text-white' : 'bg-white text-gray-900 hover:bg-gray-100'}`}
                                 >
                                     {label}
                                 </Link>
@@ -58,7 +58,7 @@ export default async function CobranzaPage({
 
                 <DateRangeFilter />
             </div>
-            <div className="flex-1 min-h-0 px-8 pb-8">
+            <div className="flex-1 min-h-0 px-4 pb-4 sm:px-8 sm:pb-8">
                 <CobranzaView
                     vidaData={vidaData}
                     gmmData={gmmData}

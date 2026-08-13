@@ -22,7 +22,7 @@ export default function RootLayout({
         <div className="flex h-screen bg-gray-100">
           <SessionActivityGuard />
           <Sidebar />
-          <main className="flex-1 flex flex-col overflow-hidden bg-[#34587C]">
+          <main className="min-w-0 flex-1 flex flex-col overflow-hidden bg-[#34587C]">
             {children}
           </main>
         </div>
