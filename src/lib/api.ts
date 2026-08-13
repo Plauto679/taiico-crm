@@ -24,6 +24,11 @@ export async function fetchFromApi<T>(endpoint: string, options?: RequestInit): 
         headers: requestHeaders,
     });
 
+    if (response.status === 403 && typeof window === 'undefined') {
+        const { redirect } = await import('next/navigation');
+        redirect('/sin-acceso');
+    }
+
     if (!response.ok) {
         // Try to get error message from body
         let errorMessage = response.statusText || `HTTP ${response.status}`;
