@@ -6,7 +6,8 @@ import { searchClient } from '@/modules/clientes/service';
 interface EditStatusModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onSave: (newStatus: string | null, expediente: string | null, email: string | null) => void;
+    onSave: (newStatus: string | null, expediente: string | null, email: string | null) => Promise<void>;
+    onEmailSent: () => Promise<void>;
     currentStatus?: string | null;
     currentExpediente?: string | null;
     currentEmail?: string | null;
@@ -21,6 +22,7 @@ export const EditStatusModal = ({
     isOpen,
     onClose,
     onSave,
+    onEmailSent,
     currentStatus,
     currentExpediente,
     currentEmail,
@@ -35,12 +37,14 @@ export const EditStatusModal = ({
     const [email, setEmail] = useState<string>(currentEmail || '');
     const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
     const [isSending, setIsSending] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
 
     useEffect(() => {
         setStatus(currentStatus || null);
         setExpediente(currentExpediente || '');
         setEmail(currentEmail || '');
         setIsSending(false);
+        setIsSaving(false);
         setRegisteredEmail(null);
 
         // Fetch registered email if modal is open
@@ -55,9 +59,17 @@ export const EditStatusModal = ({
 
     if (!isOpen) return null;
 
-    const handleSave = () => {
-        onSave(status, expediente || null, email || null);
-        onClose();
+    const handleSave = async () => {
+        setIsSaving(true);
+        try {
+            await onSave(status, expediente || null, email || null);
+            onClose();
+        } catch (error: any) {
+            console.error('Failed to update renewal', error);
+            alert('Error al actualizar la póliza: ' + (error.message || 'Desconocido'));
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const handleSendEmail = async () => {
@@ -91,7 +103,9 @@ export const EditStatusModal = ({
                 endDate,
                 expediente
             );
+            await onEmailSent();
             alert('Correo enviado exitosamente.');
+            onClose();
         } catch (error: any) {
             console.error('Failed to send email', error);
             alert('Error al enviar correo: ' + (error.message || 'Desconocido'));
@@ -109,6 +123,7 @@ export const EditStatusModal = ({
                     </h3>
                     <button
                         onClick={onClose}
+                        disabled={isSending || isSaving}
                         className="text-gray-400 hover:text-gray-500"
                     >
                         <X className="h-6 w-6" />
@@ -177,15 +192,17 @@ export const EditStatusModal = ({
                     <div className="flex space-x-3">
                         <button
                             onClick={onClose}
+                            disabled={isSending || isSaving}
                             className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                         >
                             Cancelar
                         </button>
                         <button
                             onClick={handleSave}
+                            disabled={isSending || isSaving}
                             className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
                         >
-                            Guardar
+                            {isSaving ? 'Guardando...' : 'Guardar'}
                         </button>
                     </div>
                 </div>

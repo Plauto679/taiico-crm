@@ -40,6 +40,7 @@ HEADERS = (
     "Producto",
     "Estatus",
     "Cotizaciones",
+    "Documentos Adicionales",
     "ID",
 )
 _workbook_lock = threading.RLock()
@@ -147,6 +148,7 @@ def _serialize_row(sheet, headers: dict[str, int], row_number: int) -> dict[str,
         "producto": str(sheet.cell(row=row_number, column=headers["Producto"]).value or ""),
         "estatus": str(sheet.cell(row=row_number, column=headers["Estatus"]).value or ""),
         "cotizaciones": str(sheet.cell(row=row_number, column=headers["Cotizaciones"]).value or ""),
+        "documentos_adicionales": str(sheet.cell(row=row_number, column=headers["Documentos Adicionales"]).value or ""),
         "agente": str(sheet.cell(row=row_number, column=headers["Agente"]).value or ""),
         "promotoria": str(sheet.cell(row=row_number, column=headers["Promotoría"]).value or ""),
         "aseguradora": str(sheet.cell(row=row_number, column=headers["Aseguradora"]).value or ""),
@@ -288,6 +290,7 @@ def create_quote(payload: QuoteCreate, profile: AccessProfile) -> dict[str, str]
         "Producto": payload.producto,
         "Estatus": INITIAL_STATUS,
         "Cotizaciones": "",
+        "Documentos Adicionales": "",
     }
     with _workbook_lock:
         workbook = _load_workbook()

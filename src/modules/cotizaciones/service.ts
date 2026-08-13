@@ -8,6 +8,7 @@ export type Quote = {
   producto: string;
   estatus: string;
   cotizaciones: string;
+  documentos_adicionales: string;
   agente: string;
   promotoria: string;
   aseguradora: string;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { DataTable } from '@/components/ui/DataTable';
 import { RenovacionGMM, RenovacionVida, RenovacionSura, RenovacionAarco, RenovacionPromotoriaSura } from '@/lib/types/renovaciones';
@@ -22,22 +22,42 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
     const [activeTab, setActiveTab] = useState<'VIDA' | 'GMM'>('VIDA');
     const [selectedRow, setSelectedRow] = useState<any>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [visibleRenewals, setVisibleRenewals] = useState<any[]>([]);
+    const [vidaData, setVidaData] = useState<RenovacionVida[]>(vidaRenewals);
+    const [gmmData, setGmmData] = useState<RenovacionGMM[]>(gmmRenewals);
+    const [suraData, setSuraData] = useState<RenovacionSura[]>(suraRenewals);
+    const [aarcoData, setAarcoData] = useState<RenovacionAarco[]>(aarcoRenewals);
+    const [promotoriaSuraData, setPromotoriaSuraData] = useState<RenovacionPromotoriaSura[]>(promotoriaSuraRenewals);
+
+    const activeRenewals = insurer === 'Metlife'
+        ? (activeTab === 'VIDA' ? vidaData : gmmData)
+        : insurer === 'SURA'
+            ? suraData
+            : insurer === 'AARCO_AXA'
+                ? aarcoData
+                : promotoriaSuraData;
+
+    useEffect(() => setVidaData(vidaRenewals), [vidaRenewals]);
+    useEffect(() => setGmmData(gmmRenewals), [gmmRenewals]);
+    useEffect(() => setSuraData(suraRenewals), [suraRenewals]);
+    useEffect(() => setAarcoData(aarcoRenewals), [aarcoRenewals]);
+    useEffect(() => setPromotoriaSuraData(promotoriaSuraRenewals), [promotoriaSuraRenewals]);
+
+    useEffect(() => {
+        setVisibleRenewals(activeRenewals);
+    }, [activeTab, insurer, vidaData, gmmData, suraData, aarcoData, promotoriaSuraData]);
 
     const handleExport = () => {
-        let data: any[] = [];
+        let data: any[] = visibleRenewals;
         let prefix = '';
 
         if (insurer === 'Metlife') {
-            data = activeTab === 'VIDA' ? vidaRenewals : gmmRenewals;
             prefix = `Renovaciones_Metlife_${activeTab}`;
         } else if (insurer === 'SURA') {
-            data = suraRenewals;
             prefix = `Renovaciones_SURA`;
         } else if (insurer === 'AARCO_AXA') {
-            data = aarcoRenewals;
             prefix = `Renovaciones_AARCO_AXA`;
         } else if (insurer === 'Promotoria SURA') {
-            data = promotoriaSuraRenewals;
             prefix = `Renovaciones_Promotoria_SURA`;
         }
 
@@ -48,6 +68,34 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
     const handleRowClick = (row: any) => {
         setSelectedRow(row);
         setIsModalOpen(true);
+    };
+
+    const updateSelectedRenewal = (updates: Record<string, unknown>) => {
+        if (!selectedRow) return;
+
+        const policyKey = insurer === 'Metlife'
+            ? (activeTab === 'VIDA' ? 'POLIZA_ACTUAL' : 'NPOLIZA')
+            : insurer === 'Promotoria SURA'
+                ? 'PÓLIZA'
+                : 'POLIZA';
+        const selectedPolicy = String(selectedRow[policyKey] ?? '');
+        const updateRows = <T extends Record<string, any>>(rows: T[]) => rows.map((row) =>
+            String(row[policyKey] ?? '') === selectedPolicy ? { ...row, ...updates } : row
+        );
+
+        if (insurer === 'Metlife' && activeTab === 'VIDA') {
+            setVidaData((rows) => updateRows(rows));
+        } else if (insurer === 'Metlife') {
+            setGmmData((rows) => updateRows(rows));
+        } else if (insurer === 'SURA') {
+            setSuraData((rows) => updateRows(rows));
+        } else if (insurer === 'AARCO_AXA') {
+            setAarcoData((rows) => updateRows(rows));
+        } else {
+            setPromotoriaSuraData((rows) => updateRows(rows));
+        }
+
+        setSelectedRow((row: any) => row ? { ...row, ...updates } : row);
     };
 
     const handleSaveStatus = async (newStatus: string | null, expediente: string | null, email: string | null) => {
@@ -72,7 +120,16 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
 
         await updateRenewalStatus(insurer, type, id, newStatus, expediente, email);
 
-        // Refresh data
+        updateSelectedRenewal({
+            ...(newStatus !== null ? { ESTATUS_DE_RENOVACION: newStatus } : {}),
+            ...(expediente !== null ? { EXPEDIENTE: expediente } : {}),
+            ...(email !== null ? { Email: email } : {}),
+        });
+        router.refresh();
+    };
+
+    const handleEmailSent = async () => {
+        updateSelectedRenewal({ ESTATUS_DE_RENOVACION: 'Enviado' });
         router.refresh();
     };
 
@@ -284,37 +341,52 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                 {insurer === 'Metlife' ? (
                     activeTab === 'VIDA' ? (
                         <DataTable
-                            data={vidaRenewals}
+                            key="metlife-vida"
+                            data={vidaData}
                             columns={vidaColumns}
+                            filterMode="multi-select"
+                            onProcessedDataChange={setVisibleRenewals}
                             className="h-full overflow-auto"
                             onRowClick={handleRowClick}
                         />
                     ) : (
                         <DataTable
-                            data={gmmRenewals}
+                            key="metlife-gmm"
+                            data={gmmData}
                             columns={gmmColumns}
+                            filterMode="multi-select"
+                            onProcessedDataChange={setVisibleRenewals}
                             className="h-full overflow-auto"
                             onRowClick={handleRowClick}
                         />
                     )
                 ) : insurer === 'SURA' ? (
                     <DataTable
-                        data={suraRenewals}
+                        key="sura"
+                        data={suraData}
                         columns={suraColumns}
+                        filterMode="multi-select"
+                        onProcessedDataChange={setVisibleRenewals}
                         className="h-full overflow-auto"
                         onRowClick={handleRowClick}
                     />
                 ) : insurer === 'AARCO_AXA' ? (
                     <DataTable
-                        data={aarcoRenewals}
+                        key="aarco-axa"
+                        data={aarcoData}
                         columns={aarcoColumns}
+                        filterMode="multi-select"
+                        onProcessedDataChange={setVisibleRenewals}
                         className="h-full overflow-auto"
                         onRowClick={handleRowClick}
                     />
                 ) : (
                     <DataTable
-                        data={promotoriaSuraRenewals}
+                        key="promotoria-sura"
+                        data={promotoriaSuraData}
                         columns={promotoriaSuraColumns}
+                        filterMode="multi-select"
+                        onProcessedDataChange={setVisibleRenewals}
                         className="h-full overflow-auto"
                         onRowClick={handleRowClick}
                     />
@@ -326,6 +398,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                     isOpen={isModalOpen}
                     onClose={() => setIsModalOpen(false)}
                     onSave={handleSaveStatus}
+                    onEmailSent={handleEmailSent}
                     currentStatus={selectedRow.ESTATUS_DE_RENOVACION}
                     currentExpediente={selectedRow.EXPEDIENTE}
                     currentEmail={selectedRow.Email}

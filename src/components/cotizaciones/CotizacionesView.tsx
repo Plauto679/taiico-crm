@@ -140,7 +140,7 @@ export function CotizacionesView({ initialQuotes, products, insurer, agents, age
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <tr>{['Folio', 'Agente', 'Promotoría', 'Aseguradora', 'Clave', 'Cliente / Prospecto', 'RFC', 'Ramo', 'Producto', 'Estatus', 'Cotizaciones', 'Acciones'].map((header) => <th key={header} className="px-4 py-3">{header}</th>)}</tr>
+              <tr>{['Folio', 'Agente', 'Promotoría', 'Aseguradora', 'Clave', 'Cliente / Prospecto', 'RFC', 'Ramo', 'Producto', 'Estatus', 'Cotizaciones', 'Documentos adicionales', 'Acciones'].map((header) => <th key={header} className="px-4 py-3">{header}</th>)}</tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {quotes.map((quote) => (
@@ -156,10 +156,11 @@ export function CotizacionesView({ initialQuotes, products, insurer, agents, age
                   <td className="px-4 py-3">{quote.producto}</td>
                   <td className="px-4 py-3"><span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">{quote.estatus}</span></td>
                   <td className="px-4 py-3">{quote.cotizaciones ? <a className="text-blue-600 hover:underline" href={quote.cotizaciones} target="_blank" rel="noreferrer">Abrir carpeta</a> : <span className="text-slate-400">Pendiente</span>}</td>
+                  <td className="px-4 py-3">{quote.documentos_adicionales ? <a className="text-blue-600 hover:underline" href={quote.documentos_adicionales} target="_blank" rel="noreferrer">Abrir carpeta</a> : <span className="text-slate-400">{quote.rfc ? 'Sin documentos' : 'RFC requerido'}</span>}</td>
                   <td className="px-4 py-3"><button onClick={() => openEdit(quote)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 font-semibold text-slate-600 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"><Pencil className="h-4 w-4" /> Editar</button></td>
                 </tr>
               ))}
-              {!quotes.length && <tr><td colSpan={12} className="px-6 py-16 text-center text-slate-500"><FileText className="mx-auto mb-3 h-9 w-9 text-slate-300" />Aún no hay cotizaciones registradas.</td></tr>}
+              {!quotes.length && <tr><td colSpan={13} className="px-6 py-16 text-center text-slate-500"><FileText className="mx-auto mb-3 h-9 w-9 text-slate-300" />Aún no hay cotizaciones registradas.</td></tr>}
             </tbody>
           </table>
         </div>
