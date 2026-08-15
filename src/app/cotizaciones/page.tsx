@@ -13,6 +13,7 @@ export default async function CotizacionesPage() {
           insurer={config.insurer}
           agents={config.agents}
           agentIsAutomatic={config.agent_is_automatic}
+          quotationPortalCredentialsConfigured={config.quotation_portal_credentials_configured}
         />
       </div>
     </div>

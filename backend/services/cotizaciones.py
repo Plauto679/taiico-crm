@@ -9,6 +9,7 @@ import secrets
 import threading
 import time
 import uuid
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -17,13 +18,43 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import or_
 
-from adapters.metlife_quotation_portal import (
-    MetLifeQuotationAnswer,
-    MetLifeQuotationPortalAdapter,
-    MetLifeQuotationTask,
-    quotation_credentials_configured,
-    quotation_result_to_dict,
-)
+try:
+    from adapters.metlife_quotation_portal import (
+        MetLifeQuotationAnswer,
+        MetLifeQuotationPortalAdapter,
+        MetLifeQuotationTask,
+        quotation_credentials_configured,
+        quotation_result_to_dict,
+    )
+except ModuleNotFoundError:
+    @dataclass(frozen=True)
+    class MetLifeQuotationAnswer:
+        question_id: str
+        option_id: str
+        value: str | None = None
+
+    @dataclass(frozen=True)
+    class MetLifeQuotationTask:
+        id: str
+        rfc: str
+        client_name: str
+        branch: str
+        product: str
+        agent_name: str
+        drive_folder_link: str | None = None
+
+    class MetLifeQuotationPortalAdapter:
+        def run(self, task: MetLifeQuotationTask):
+            raise RuntimeError("El adaptador del portal de cotizaciones no está instalado")
+
+        def continue_with_answer(self, task: MetLifeQuotationTask, answer: MetLifeQuotationAnswer):
+            raise RuntimeError("El adaptador del portal de cotizaciones no está instalado")
+
+    def quotation_credentials_configured() -> bool:
+        return False
+
+    def quotation_result_to_dict(result) -> dict[str, object]:
+        return asdict(result) if hasattr(result, "__dataclass_fields__") else dict(result)
 from database import Client, SessionLocal
 from drive.client import download_drive_file_bytes
 from services.auth import AccessProfile
