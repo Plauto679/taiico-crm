@@ -25,6 +25,7 @@
 *.pem
 local-secrets/
 backend/local-secrets/
+backend/local-data/
 
 # python
 __pycache__/

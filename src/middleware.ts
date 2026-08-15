@@ -22,6 +22,7 @@ export function middleware(request: NextRequest) {
     const isPublicPath = path === '/login'
         || path === '/olvide-password'
         || path === '/restablecer-password'
+        || path.startsWith('/solicitud-datos')
         || path.startsWith('/_next')
         || path.startsWith('/static')
         || path === '/logo.png';
