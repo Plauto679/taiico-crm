@@ -25,6 +25,7 @@ class PendingReportJobTests(unittest.TestCase):
                     "alberto.alfaro@taiico.com",
                     "florgabriela.flores@taiico.com",
                     "juan.ibarraran@taiico.com",
+                    "gilberto.gonzalez@taiico.com",
                 ],
             )
 

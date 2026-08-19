@@ -21,6 +21,13 @@ const EMISION_STATUS_OPTIONS = [
     { value: 'Concluido', description: 'El trámite terminó y no requiere acciones adicionales.' },
 ] as const;
 
+const SINIESTROS_STATUS_OPTIONS = [
+    { value: 'En Proceso', description: 'El siniestro continúa en revisión o gestión.' },
+    { value: 'Pagado', description: 'La aseguradora realizó el pago correspondiente.' },
+    { value: 'Rechazado', description: 'La aseguradora rechazó el siniestro o la reclamación.' },
+    { value: 'Suspendido', description: 'La gestión del siniestro está detenida temporalmente.' },
+] as const;
+
 interface PendingHistoryModalProps {
     row: PendingRow | null;
     source: PendingSourceKey;
@@ -392,6 +399,16 @@ function DetailTabContent({
                                         value={value}
                                         onChange={(nextValue) => onChange(label, nextValue)}
                                         disabled={!canOperate}
+                                        options={EMISION_STATUS_OPTIONS}
+                                        ariaLabel="Estatus actual"
+                                    />
+                                ) : source === 'siniestros' && normalizedLabel === 'estatus' ? (
+                                    <PendingStatusSelect
+                                        value={value}
+                                        onChange={(nextValue) => onChange(label, nextValue)}
+                                        disabled={!canOperate}
+                                        options={SINIESTROS_STATUS_OPTIONS}
+                                        ariaLabel="Estatus"
                                     />
                                 ) : source === 'emision-servicios' && normalizedLabel === 'tipo de tramite' ? (
                                     <div className="mt-1">
@@ -446,15 +463,19 @@ function PendingStatusSelect({
     value,
     onChange,
     disabled,
+    options,
+    ariaLabel,
 }: {
     value: string;
     onChange: (value: string) => void;
     disabled: boolean;
+    options: readonly { value: string; description: string }[];
+    ariaLabel: string;
 }) {
     const [open, setOpen] = useState(false);
     const [hoveredDescription, setHoveredDescription] = useState('');
     const containerRef = useRef<HTMLDivElement>(null);
-    const selectedOption = EMISION_STATUS_OPTIONS.find((option) => option.value === value);
+    const selectedOption = options.find((option) => option.value === value);
 
     useEffect(() => {
         if (!open) return;
@@ -487,8 +508,8 @@ function PendingStatusSelect({
             </button>
             {open && (
                 <div className="absolute z-30 mt-1 w-full min-w-72 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl">
-                    <div role="listbox" aria-label="Estatus actual" className="max-h-64 overflow-y-auto py-1">
-                        {EMISION_STATUS_OPTIONS.map((option) => (
+                    <div role="listbox" aria-label={ariaLabel} className="max-h-64 overflow-y-auto py-1">
+                        {options.map((option) => (
                             <button
                                 key={option.value}
                                 type="button"

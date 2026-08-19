@@ -26,6 +26,12 @@ from pydantic import BaseModel, Field
 
 from services.auth import AccessProfile, PROMOTORIAS
 from services.authorization import current_access_profile, require_module_access
+from services.client_folders import (
+    client_folders_parent_id,
+    normalize_client_name,
+    normalize_rfc,
+    valid_client_rfc,
+)
 from services.pending_document_requirements import requirements_for, split_request_types
 from services.mail_configuration import smtp_settings_for
 from services.renovaciones import send_email_smtp
@@ -37,7 +43,6 @@ router = APIRouter(prefix="/pendientes", tags=["pendientes"])
 
 DEFAULT_EMISION_SERVICIOS_FILE_ID = "1JMr-EwtniwHvPm6zefhGJroTw2vxivmC"
 DEFAULT_SINIESTROS_FILE_ID = "1UvXo2LboTKWl5323mEuP6bmmyIhLYveL"
-DEFAULT_PENDING_DOCUMENTS_FOLDER_ID = "1IIIgHB8SlEIZr5vSAuly14NJMO50ke1b"
 DEFAULT_AGENTS_METLIFE_FILE_ID = "1IoeLDCQe4T3DofStiBSaI09xjX2-RSby"
 DEFAULT_CACHE_SECONDS = 300
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
@@ -107,6 +112,13 @@ EMISION_SERVICIOS_PROCEDURE_OPTIONS = (
     "Servicios",
 )
 
+SINIESTROS_STATUS_OPTIONS = (
+    "En Proceso",
+    "Pagado",
+    "Rechazado",
+    "Suspendido",
+)
+
 AUTOMATIC_START_DATE_HEADERS = {
     "emision-servicios": "Fecha Inicio",
     "siniestros": "Fecha de registro de siniestro",
@@ -134,6 +146,7 @@ class SiniestrosCreateRequest(BaseModel):
         "Programación de estudios/terapias",
     ]
     tramite: Literal["Complemento", "Reconsideración", "Garantías"]
+    estatus: Literal["En Proceso", "Pagado", "Rechazado", "Suspendido"] = "En Proceso"
     promotoria: str = ""
     rfc_agente: str = ""
 
@@ -356,12 +369,35 @@ def _report_metric(
     }
 
 
+def _reportable_rows(rows: list[dict], *, excluded_statuses: tuple[str, ...]) -> list[dict]:
+    excluded = {_normalized_header(status) for status in excluded_statuses}
+    reportable = []
+    for row in rows:
+        summary = row.get("summary", {})
+        status = _summary_value(summary, "Estatus actual") or _summary_value(summary, "Estatus")
+        if _normalized_header(status) in excluded:
+            continue
+        reportable.append(row)
+    return reportable
+
+
 def build_pending_report(
     emision_servicios: dict,
     siniestros: dict,
     generated_on: date | None = None,
 ) -> dict:
     report_date = generated_on or datetime.now(ZoneInfo("America/Mexico_City")).date()
+    report_emision = {
+        **emision_servicios,
+        "rows": _reportable_rows(emision_servicios["rows"], excluded_statuses=("Concluido",)),
+    }
+    report_siniestros = {
+        **siniestros,
+        "rows": _reportable_rows(
+            siniestros["rows"],
+            excluded_statuses=("Concluido", "Pagado", "Rechazado"),
+        ),
+    }
     return {
         "generated_on": report_date.isoformat(),
         "sections": [
@@ -370,14 +406,14 @@ def build_pending_report(
                 "title": "Emisión y Servicios",
                 "metrics": [
                     _report_metric(
-                        emision_servicios["rows"],
+                        report_emision["rows"],
                         key="dias-transcurridos",
                         label="Días transcurridos (registro de la emisión/servicio)",
                         days_header="Días Transcurridos",
                         only_when_blank_header="Dias en la aseguradora",
                     ),
                     _report_metric(
-                        emision_servicios["rows"],
+                        report_emision["rows"],
                         key="dias-en-aseguradora",
                         label="Días en la aseguradora",
                         days_header="Dias en la aseguradora",
@@ -389,14 +425,14 @@ def build_pending_report(
                 "title": "Siniestros",
                 "metrics": [
                     _report_metric(
-                        siniestros["rows"],
+                        report_siniestros["rows"],
                         key="dias-desde-registro",
                         label="Días desde el registro del siniestro",
                         days_header="Dias desde registro del siniestro",
                         only_when_blank_header="DIAS CUMPLIDOS EN LA ASEGURADORA",
                     ),
                     _report_metric(
-                        siniestros["rows"],
+                        report_siniestros["rows"],
                         key="dias-en-aseguradora",
                         label="Días cumplidos en la aseguradora",
                         days_header="DIAS CUMPLIDOS EN LA ASEGURADORA",
@@ -405,8 +441,8 @@ def build_pending_report(
             },
         ],
         "inconsistencies": [
-            *_inconsistency_rows(emision_servicios, "Emisión y Servicios"),
-            *_inconsistency_rows(siniestros, "Siniestros"),
+            *_inconsistency_rows(report_emision, "Emisión y Servicios"),
+            *_inconsistency_rows(report_siniestros, "Siniestros"),
         ],
     }
 
@@ -520,7 +556,7 @@ def parse_pending_workbook(
     today: date | None = None,
 ) -> dict:
     table = pd.read_excel(
-        io.BytesIO(workbook),
+        io.BytesIO(_workbook_for_tabular_read(workbook, source.sheet_name)),
         sheet_name=source.sheet_name,
         dtype=str,
         keep_default_na=False,
@@ -569,6 +605,64 @@ def parse_pending_workbook(
         "latest_update_header": latest_header,
         "rows": rows,
     }
+
+
+def _workbook_for_tabular_read(workbook: bytes, sheet_name: str) -> bytes:
+    """Ignore Excel's formatting-only sentinel rows when pandas reads a sheet.
+
+    Some canonical workbooks contain empty formatted rows near Excel's row limit,
+    followed by normal rows.  openpyxl's streaming reader then renumbers those
+    trailing rows, so API ``source_row`` values no longer match the physical XLSX
+    rows.  This creates a read-only, in-memory view with content rows ordered by
+    their real row number and a truthful dimension.  The uploaded workbook is not
+    rewritten by this helper.
+    """
+    with zipfile.ZipFile(io.BytesIO(workbook), "r") as archive:
+        sheet_path = _worksheet_path(archive, sheet_name)
+        sheet_xml = archive.read(sheet_path).decode("utf-8")
+        sheet_data = re.search(r"(<sheetData>)(.*?)(</sheetData>)", sheet_xml, re.DOTALL)
+        if not sheet_data:
+            return workbook
+
+        row_pattern = re.compile(
+            r'<row\b(?=[^>]*\br="(\d+)")(?:[^>]*/>|[^>]*>.*?</row>)',
+            re.DOTALL,
+        )
+        content_rows = sorted(
+            (
+                (int(match.group(1)), match.group(0))
+                for match in row_pattern.finditer(sheet_data.group(2))
+                if _row_xml_has_content(match.group(0))
+            ),
+            key=lambda item: item[0],
+        )
+        if not content_rows:
+            return workbook
+
+        ordered_rows = "".join(row_xml for _, row_xml in content_rows)
+        normalized_xml = (
+            sheet_xml[:sheet_data.start(2)]
+            + ordered_rows
+            + sheet_xml[sheet_data.end(2):]
+        )
+        max_row = content_rows[-1][0]
+        normalized_xml = re.sub(
+            r'<dimension\b[^>]*\bref="[^"]+"',
+            f'<dimension ref="A1:XFD{max_row}"',
+            normalized_xml,
+            count=1,
+        )
+
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as destination:
+            for item in archive.infolist():
+                content = (
+                    normalized_xml.encode("utf-8")
+                    if item.filename == sheet_path
+                    else archive.read(item.filename)
+                )
+                destination.writestr(item, content)
+        return output.getvalue()
 
 
 def _assignment_issues(row: dict) -> list[str]:
@@ -779,14 +873,16 @@ def build_pending_drive_service():
 
 
 def _documents_root_id() -> str:
-    return os.getenv(
-        "GOOGLE_DRIVE_PENDING_DOCUMENTS_FOLDER_ID",
-        DEFAULT_PENDING_DOCUMENTS_FOLDER_ID,
-    ).strip()
+    return client_folders_parent_id()
 
 
 def _rfc_from_row(row: dict) -> str:
-    return clean_cell(row.get("summary", {}).get("RFC", "")).upper()
+    return normalize_rfc(row.get("summary", {}).get("RFC", ""))
+
+
+def _client_name_from_row(row: dict) -> str:
+    summary = row.get("summary", {})
+    return clean_cell(summary.get("Asegurado") or summary.get("ASEGURADO") or "")
 
 
 def _folder_name_for_rfc(rfc: str) -> str:
@@ -807,9 +903,9 @@ def _folder_descriptor_from_row(row: dict) -> str:
 
 
 def _folder_name_for_row(row: dict) -> str:
-    rfc = _folder_name_for_rfc(_rfc_from_row(row))
+    _folder_name_for_rfc(_rfc_from_row(row))
     descriptor = re.sub(r"[\\/:*?\"<>|]+", "-", _folder_descriptor_from_row(row))
-    return f"{rfc} - {descriptor}"[:180] if descriptor else rfc
+    return f"Pendiente - {descriptor}"[:180] if descriptor else "Pendiente"
 
 
 def _document_name_for(value: str, original_filename: str) -> str:
@@ -822,34 +918,72 @@ def _document_name_for(value: str, original_filename: str) -> str:
     return cleaned[:220]
 
 
-def _list_pending_folders(service) -> list[dict]:
-    response = service.files().list(
-        q=(
-            f"'{_documents_root_id()}' in parents and "
-            f"mimeType = '{FOLDER_MIME_TYPE}' and trashed = false"
-        ),
-        fields="files(id,name,webViewLink,modifiedTime)",
+def _list_child_folders(service, parent_id: str) -> list[dict]:
+    folders: list[dict] = []
+    page_token = None
+    while True:
+        response = service.files().list(
+            q=(
+                f"'{parent_id}' in parents and "
+                f"mimeType = '{FOLDER_MIME_TYPE}' and trashed = false"
+            ),
+            fields="nextPageToken,files(id,name,webViewLink,modifiedTime)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            pageSize=1000,
+            pageToken=page_token,
+        ).execute()
+        folders.extend(response.get("files", []))
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            return folders
+
+
+def _client_folder_rfc(folder: dict) -> str:
+    return normalize_rfc(clean_cell(folder.get("name", "")).split(" - ", 1)[0])
+
+
+def _client_folder_for_row(service, row: dict, *, create: bool = False) -> dict | None:
+    rfc = _folder_name_for_rfc(_rfc_from_row(row))
+    if not valid_client_rfc(rfc):
+        raise ValueError("Captura un RFC válido antes de integrar el expediente")
+    existing = next(
+        (folder for folder in _list_child_folders(service, _documents_root_id()) if _client_folder_rfc(folder) == rfc),
+        None,
+    )
+    if existing or not create:
+        return existing
+    client_name = normalize_client_name(_client_name_from_row(row), rfc)
+    if not client_name:
+        raise ValueError("El nombre del cliente es obligatorio para crear su carpeta única")
+    return service.files().create(
+        body={
+            "name": f"{rfc} - {client_name}"[:180],
+            "parents": [_documents_root_id()],
+            "mimeType": FOLDER_MIME_TYPE,
+        },
+        fields="id,name,webViewLink",
         supportsAllDrives=True,
-        includeItemsFromAllDrives=True,
-        pageSize=1000,
     ).execute()
-    return response.get("files", [])
 
 
 def _decorate_rows_with_folders(result: dict, service) -> dict:
-    folders = {
-        clean_cell(folder.get("name", "")).casefold(): folder
-        for folder in _list_pending_folders(service)
+    client_folders = {
+        _client_folder_rfc(folder): folder
+        for folder in _list_child_folders(service, _documents_root_id())
+        if valid_client_rfc(_client_folder_rfc(folder))
     }
+    pending_folders_by_client: dict[str, dict[str, dict]] = {}
     for row in result["rows"]:
         rfc = _rfc_from_row(row)
         folder_name = _folder_name_for_row(row) if rfc else ""
-        legacy_name = _folder_name_for_rfc(rfc) if rfc else ""
-        folder = (
-            folders.get(folder_name.casefold()) or folders.get(legacy_name.casefold())
-            if folder_name
-            else None
-        )
+        client_folder = client_folders.get(rfc)
+        if client_folder and rfc not in pending_folders_by_client:
+            pending_folders_by_client[rfc] = {
+                clean_cell(folder.get("name", "")).casefold(): folder
+                for folder in _list_child_folders(service, client_folder["id"])
+            }
+        folder = pending_folders_by_client.get(rfc, {}).get(folder_name.casefold()) if folder_name else None
         row["folder_name"] = folder_name
         row["folder_id"] = folder.get("id") if folder else None
         row["folder_url"] = folder.get("webViewLink") if folder else None
@@ -860,29 +994,22 @@ def _decorate_rows_with_folders(result: dict, service) -> dict:
 
 def _create_folder_for_row(service, row: dict) -> dict:
     folder_name = _folder_name_for_row(row)
-    legacy_name = _folder_name_for_rfc(_rfc_from_row(row))
+    client_folder = _client_folder_for_row(service, row, create=True)
+    assert client_folder is not None
     existing = next(
         (
-            folder for folder in _list_pending_folders(service)
-            if clean_cell(folder.get("name", "")).casefold()
-            in {folder_name.casefold(), legacy_name.casefold()}
+            folder for folder in _list_child_folders(service, client_folder["id"])
+            if clean_cell(folder.get("name", "")).casefold() == folder_name.casefold()
         ),
         None,
     )
     if existing:
         folder = existing
-        if clean_cell(existing.get("name", "")).casefold() != folder_name.casefold():
-            folder = service.files().update(
-                fileId=existing["id"],
-                body={"name": folder_name},
-                fields="id,name,webViewLink",
-                supportsAllDrives=True,
-            ).execute()
     else:
         folder = service.files().create(
             body={
                 "name": folder_name,
-                "parents": [_documents_root_id()],
+                "parents": [client_folder["id"]],
                 "mimeType": FOLDER_MIME_TYPE,
             },
             fields="id,name,webViewLink",
@@ -918,7 +1045,8 @@ def _download_workbook(file_id: str, service=None) -> bytes:
 
 def append_pending_record(workbook: bytes, source: PendingSource, values: dict[str, str]) -> tuple[bytes, int]:
     parsed = parse_pending_workbook(workbook, source)
-    next_row = max((row["source_row"] for row in parsed["rows"]), default=1) + 1
+    candidate_row = max((row["source_row"] for row in parsed["rows"]), default=1) + 1
+    next_row = _next_available_sheet_row(workbook, source.sheet_name, candidate_row)
     header_columns = {header: index + 1 for index, header in enumerate(parsed["core_headers"])}
     missing = sorted(set(values).difference(header_columns))
     if missing:
@@ -930,14 +1058,47 @@ def append_pending_record(workbook: bytes, source: PendingSource, values: dict[s
     return _append_xlsx_row(workbook, source.sheet_name, next_row, indexed_values), next_row
 
 
+def _next_available_sheet_row(workbook: bytes, sheet_name: str, start_row: int) -> int:
+    with zipfile.ZipFile(io.BytesIO(workbook), "r") as archive:
+        sheet_xml = archive.read(_worksheet_path(archive, sheet_name)).decode("utf-8")
+    occupied_rows: set[int] = set()
+    row_pattern = re.compile(
+        r'<row\b(?=[^>]*\br="(\d+)")(?:[^>]*/>|[^>]*>.*?</row>)',
+        re.DOTALL,
+    )
+    for row_match in row_pattern.finditer(sheet_xml):
+        if _row_xml_has_content(row_match.group(0)):
+            occupied_rows.add(int(row_match.group(1)))
+    candidate = max(2, start_row)
+    while candidate in occupied_rows:
+        candidate += 1
+    return candidate
+
+
+def _row_xml_has_content(row_xml: str) -> bool:
+    if re.search(r'<f\b', row_xml):
+        return True
+    return any(
+        clean_cell(re.sub(r'<[^>]+>', '', value))
+        for value in re.findall(r'<(?:v|t)\b[^>]*>(.*?)</(?:v|t)>', row_xml, re.DOTALL)
+    )
+
+
 def update_pending_record(
     workbook: bytes,
     source: PendingSource,
     source_row: int,
     values: dict[str, str],
+    *,
+    history_values: dict[str, str] | None = None,
+    history_date: date | None = None,
 ) -> bytes:
     parsed = parse_pending_workbook(workbook, source)
-    if not any(row["source_row"] == source_row for row in parsed["rows"]):
+    current_row = next(
+        (row for row in parsed["rows"] if row["source_row"] == source_row),
+        None,
+    )
+    if not current_row:
         raise ValueError(f"La fila {source_row} no existe en el archivo canónico")
     header_columns = {header: index + 1 for index, header in enumerate(parsed["core_headers"])}
     missing = sorted(set(values).difference(header_columns))
@@ -969,6 +1130,18 @@ def update_pending_record(
         raise ValueError(
             "Estatus actual no válido. Selecciona una de las opciones vigentes."
         )
+    siniestros_status_header = next(
+        (header for header in values if _normalized_header(header) == "estatus"),
+        None,
+    )
+    if (
+        source.key == "siniestros"
+        and siniestros_status_header
+        and clean_cell(values[siniestros_status_header]) not in SINIESTROS_STATUS_OPTIONS
+    ):
+        raise ValueError(
+            "Estatus no válido. Selecciona En Proceso, Pagado, Rechazado o Suspendido."
+        )
     if (
         source.key == "emision-servicios"
         and procedure_header
@@ -981,7 +1154,27 @@ def update_pending_record(
         (source_row, header_columns[header]): clean_cell(value)
         for header, value in values.items()
     }
-    return _update_xlsx_cells(workbook, source.sheet_name, updates)
+    updated = _update_xlsx_cells(workbook, source.sheet_name, updates)
+    change_comment = _field_change_comment(current_row["summary"], history_values or {})
+    if change_comment:
+        updated, _ = add_pending_follow_up(
+            updated,
+            source,
+            source_row,
+            change_comment,
+            follow_up_date=history_date,
+        )
+    return updated
+
+
+def _field_change_comment(original: dict[str, str], values: dict[str, str]) -> str:
+    changes = []
+    for field, value in values.items():
+        new_value = clean_cell(value)
+        if _summary_value(original, field) == new_value:
+            continue
+        changes.append(f"{field}: {new_value or '(vacío)'}")
+    return "; ".join(changes)
 
 
 def delete_pending_record(
@@ -1026,7 +1219,7 @@ def add_pending_follow_up(
         raise ValueError("El comentario de seguimiento es obligatorio")
 
     table = pd.read_excel(
-        io.BytesIO(workbook),
+        io.BytesIO(_workbook_for_tabular_read(workbook, source.sheet_name)),
         sheet_name=source.sheet_name,
         dtype=str,
         keep_default_na=False,
@@ -1203,7 +1396,7 @@ def _extend_table_definition(table_xml: str, column_number: int, header_value: s
 def _upsert_sheet_cells(sheet_xml: str, updates: dict[tuple[int, int], str]) -> str:
     for (row_number, column_number), value in sorted(updates.items()):
         row_pattern = re.compile(
-            rf'<row\b[^>]*\br="{row_number}"[^>]*(?:/>|>.*?</row>)',
+            rf'<row\b(?=[^>]*\br="{row_number}")(?:[^>]*/>|[^>]*>.*?</row>)',
             re.DOTALL,
         )
         row_match = row_pattern.search(sheet_xml)
@@ -1287,10 +1480,21 @@ def _insert_sheet_row(sheet_xml: str, row_number: int, values: dict[int, str]) -
         raise ValueError("La pestaña no contiene una tabla de datos válida")
 
     rows_xml = sheet_data.group(2)
-    row_pattern = re.compile(r'<row\b[^>]*\br="(\d+)"[^>]*(?:/>|>.*?</row>)', re.DOTALL)
+    row_pattern = re.compile(
+        r'<row\b(?=[^>]*\br="(\d+)")(?:[^>]*/>|[^>]*>.*?</row>)',
+        re.DOTALL,
+    )
     rows = list(row_pattern.finditer(rows_xml))
-    if any(int(match.group(1)) == row_number for match in rows):
-        raise ValueError(f"La fila {row_number} ya está ocupada")
+    existing_row = next((match for match in rows if int(match.group(1)) == row_number), None)
+    if existing_row:
+        if _row_xml_has_content(existing_row.group(0)):
+            raise ValueError(f"La fila {row_number} ya está ocupada")
+        updated_row = existing_row.group(0)
+        for column_number, value in values.items():
+            updated_row = _upsert_cell_in_row(updated_row, row_number, column_number, value)
+        updated_rows = rows_xml[:existing_row.start()] + updated_row + rows_xml[existing_row.end():]
+        updated_xml = sheet_xml[:sheet_data.start(2)] + updated_rows + sheet_xml[sheet_data.end(2):]
+        return _extend_dimension(updated_xml, row_number)
 
     previous = next((match for match in reversed(rows) if int(match.group(1)) < row_number), None)
     styles = _cell_styles(previous.group(0), int(previous.group(1))) if previous else {}
@@ -1320,7 +1524,7 @@ def _delete_sheet_row(sheet_xml: str, row_number: int) -> str:
         raise ValueError("La pestaña no contiene una tabla de datos válida")
 
     row_pattern = re.compile(
-        r'<row\b[^>]*\br="(\d+)"[^>]*(?:/>|>.*?</row>)',
+        r'<row\b(?=[^>]*\br="(\d+)")(?:[^>]*/>|[^>]*>.*?</row>)',
         re.DOTALL,
     )
     found = False
@@ -1727,6 +1931,7 @@ def create_siniestros_pending(
         "RFC": request.rfc.strip().upper(),
         "Tipo de Trámite": request.tipo_tramite,
         "Trámite": request.tramite,
+        "Estatus": request.estatus,
         "Promotoria": promotoria,
         "RFC Agente": _assigned_agent_rfc(request.rfc_agente, promotoria, profile),
         **_automatic_creation_values(SOURCES["siniestros"]),
@@ -1815,6 +2020,7 @@ def update_pending(
                     allow_empty=True,
                 )
                 merged_summary = {**original_row["summary"], **values}
+            history_values = dict(values)
             values.update(_derived_day_values(merged_summary))
             file_id = _source_file_id(source)
             updated_workbook = update_pending_record(
@@ -1822,6 +2028,7 @@ def update_pending(
                 source,
                 source_row,
                 values,
+                history_values=history_values,
             )
             _upload_workbook(file_id, updated_workbook, service)
             _clear_source_cache(source.key)

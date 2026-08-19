@@ -19,6 +19,7 @@ from services.pendientes import (
     EmisionServiciosCreateRequest,
     GMM_REQUEST_OPTIONS,
     SiniestrosCreateRequest,
+    SINIESTROS_STATUS_OPTIONS,
     SOURCES,
     VIDA_REQUEST_OPTIONS,
     PendingSource,
@@ -33,6 +34,7 @@ from services.pendientes import (
     build_pending_report,
     delete_pending_record,
     pending_report_html,
+    pending_report_text,
     normalize_report_recipients,
     parse_pending_workbook,
     parse_agents_workbook,
@@ -307,6 +309,110 @@ class PendingWorkbookTests(unittest.TestCase):
         })
         self.assertEqual(parsed["rows"][-1]["latest_update"]["update"], "")
 
+    def test_append_reuses_row_that_contains_only_excel_formatting(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Base"
+        sheet.append(["Asegurado", "Póliza", "Casificacion", "16-jul"])
+        sheet.append(["Anterior", "123", "Vida", "Seguimiento"])
+        sheet.cell(row=3, column=1).number_format = "@"
+        output = io.BytesIO()
+        workbook.save(output)
+        source = PendingSource("test", "Test", "TEST_ID", "file", "Base", 3)
+
+        updated, source_row = append_pending_record(output.getvalue(), source, {
+            "Asegurado": "Nueva Persona",
+            "Póliza": "456",
+            "Casificacion": "GMM",
+        })
+
+        self.assertEqual(source_row, 3)
+        self.assertEqual(
+            parse_pending_workbook(updated, source)["rows"][-1]["summary"]["Asegurado"],
+            "Nueva Persona",
+        )
+
+    def test_append_preserves_physical_row_after_excel_sentinel(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Base"
+        sheet.append(["Asegurado", "Póliza", "Casificacion", "16-jul"])
+        sheet.append(["Anterior", "123", "Vida", "Seguimiento"])
+        sheet.cell(row=3, column=1).number_format = "@"
+        sheet.cell(row=1048575, column=1).number_format = "@"
+        output = io.BytesIO()
+        workbook.save(output)
+
+        source = PendingSource("test", "Test", "TEST_ID", "file", "Base", 3)
+        with zipfile.ZipFile(io.BytesIO(output.getvalue()), "r") as archive:
+            sheet_path = "xl/worksheets/sheet1.xml"
+            sheet_xml = archive.read(sheet_path).decode("utf-8")
+            row_three_start = sheet_xml.index('<row r="3"')
+            row_three_end = sheet_xml.index("</row>", row_three_start) + len("</row>")
+            row_three = sheet_xml[row_three_start:row_three_end]
+            sheet_xml = sheet_xml[:row_three_start] + sheet_xml[row_three_end:]
+            sentinel_start = sheet_xml.index('<row r="1048575"')
+            sheet_xml = sheet_xml[:sentinel_start] + row_three + sheet_xml[sentinel_start:]
+            reordered = io.BytesIO()
+            with zipfile.ZipFile(reordered, "w") as destination:
+                for item in archive.infolist():
+                    content = (
+                        sheet_xml.encode("utf-8")
+                        if item.filename == sheet_path
+                        else archive.read(item.filename)
+                    )
+                    destination.writestr(item, content)
+
+        updated, source_row = append_pending_record(reordered.getvalue(), source, {
+            "Asegurado": "Nueva Persona",
+            "Póliza": "456",
+            "Casificacion": "GMM",
+        })
+        parsed = parse_pending_workbook(updated, source)
+
+        self.assertEqual(source_row, 3)
+        self.assertEqual(parsed["rows"][-1]["source_row"], 3)
+        self.assertEqual(parsed["rows"][-1]["summary"]["Asegurado"], "Nueva Persona")
+
+        followed_up, _ = add_pending_follow_up(
+            updated,
+            source,
+            3,
+            "Seguimiento en fila física",
+            date(2026, 8, 19),
+        )
+        followed_up_row = next(
+            row for row in parse_pending_workbook(followed_up, source)["rows"]
+            if row["source_row"] == 3
+        )
+        self.assertEqual(
+            followed_up_row["latest_update"]["update"],
+            "Seguimiento en fila física",
+        )
+
+    def test_append_skips_row_with_data_outside_core_columns(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Base"
+        sheet.append(["Asegurado", "Póliza", "Casificacion", "16-jul"])
+        sheet.append(["Anterior", "123", "Vida", "Seguimiento"])
+        sheet.cell(row=3, column=4, value="Comentario huérfano")
+        output = io.BytesIO()
+        workbook.save(output)
+        source = PendingSource("test", "Test", "TEST_ID", "file", "Base", 3)
+
+        updated, source_row = append_pending_record(output.getvalue(), source, {
+            "Asegurado": "Nueva Persona",
+            "Póliza": "456",
+            "Casificacion": "GMM",
+        })
+
+        self.assertEqual(source_row, 4)
+        self.assertEqual(
+            parse_pending_workbook(updated, source)["rows"][-1]["summary"]["Asegurado"],
+            "Nueva Persona",
+        )
+
     def test_create_requests_allow_missing_rfc_and_policy(self):
         emision = EmisionServiciosCreateRequest(
             asegurado="Cliente",
@@ -340,6 +446,46 @@ class PendingWorkbookTests(unittest.TestCase):
         self.assertEqual(row["summary"]["RFC"], "AAMA950203I52")
         self.assertEqual(row["summary"]["Póliza"], "")
         self.assertEqual(row["latest_update"]["update"], "Registrado")
+
+    def test_field_edits_are_added_to_update_history(self):
+        source = PendingSource("siniestros", "Siniestros", "TEST_ID", "file", "Base", 3)
+        original = workbook_bytes(
+            "Base",
+            ["Asegurado", "Estatus", "Comentarios", "22-jul-26"],
+            [["Cliente", "Pendiente", "Nota anterior", "Seguimiento previo"]],
+        )
+
+        updated = update_pending_record(
+            original,
+            source,
+            2,
+            {"Estatus": "Pagado", "Comentarios": "Caso terminado"},
+            history_values={"Estatus": "Pagado", "Comentarios": "Caso terminado"},
+            history_date=date(2026, 8, 17),
+        )
+        row = parse_pending_workbook(updated, source)["rows"][0]
+
+        self.assertEqual(row["summary"]["Estatus"], "Pagado")
+        self.assertEqual(row["summary"]["Comentarios"], "Caso terminado")
+        self.assertEqual(row["latest_update"]["date"], "17/08/2026")
+        self.assertEqual(
+            row["latest_update"]["update"],
+            "Estatus: Pagado; Comentarios: Caso terminado",
+        )
+
+    def test_siniestros_status_update_accepts_only_current_catalog(self):
+        source = PendingSource("siniestros", "Siniestros", "TEST_ID", "file", "Base", 2)
+        original = workbook_bytes(
+            "Base",
+            ["ASEGURADO", "Estatus", "22-jul"],
+            [["Cliente", "Estatus anterior", ""]],
+        )
+        for status in SINIESTROS_STATUS_OPTIONS:
+            updated = update_pending_record(original, source, 2, {"Estatus": status})
+            row = parse_pending_workbook(updated, source)["rows"][0]
+            self.assertEqual(row["summary"]["Estatus"], status)
+        with self.assertRaisesRegex(ValueError, "Estatus no válido"):
+            update_pending_record(original, source, 2, {"Estatus": "Concluido"})
 
     def test_emision_status_update_accepts_only_current_catalog(self):
         source = PendingSource(
@@ -491,7 +637,7 @@ class PendingWorkbookTests(unittest.TestCase):
         self.assertEqual(row["summary"]["Promotoria"], "TAIICO")
         self.assertEqual(row["summary"]["RFC Agente"], "AAMA950203I52")
 
-    def test_folder_name_combines_rfc_and_request(self):
+    def test_folder_name_uses_pending_request_under_client_folder(self):
         self.assertEqual(
             _folder_name_for_row({
                 "summary": {
@@ -499,7 +645,7 @@ class PendingWorkbookTests(unittest.TestCase):
                     "Solicitud de": "Rehabilitación póliza",
                 },
             }),
-            "AAMA950203I52 - Rehabilitación póliza",
+            "Pendiente - Rehabilitación póliza",
         )
 
     def test_request_options_are_classification_specific(self):
@@ -648,6 +794,16 @@ class PendingWorkbookTests(unittest.TestCase):
                     },
                     "latest_update": {},
                 },
+                {
+                    "source_row": 60,
+                    "summary": {
+                        "Asegurado": "Emisión concluida",
+                        "Estatus actual": "CONCLUIDO",
+                        "Días Transcurridos": "40",
+                        "Dias en la aseguradora": "",
+                    },
+                    "latest_update": {},
+                },
             ],
         }
         siniestros = {
@@ -670,6 +826,36 @@ class PendingWorkbookTests(unittest.TestCase):
                     },
                     "latest_update": {},
                 },
+                {
+                    "source_row": 40,
+                    "summary": {
+                        "ASEGURADO": "Siniestro concluido",
+                        "Estatus": "Concluido",
+                        "Dias desde registro del siniestro": "40",
+                        "DIAS CUMPLIDOS EN LA ASEGURADORA": "",
+                    },
+                    "latest_update": {},
+                },
+                {
+                    "source_row": 41,
+                    "summary": {
+                        "ASEGURADO": "Siniestro pagado",
+                        "Estatus": "Pagado",
+                        "Dias desde registro del siniestro": "40",
+                        "DIAS CUMPLIDOS EN LA ASEGURADORA": "",
+                    },
+                    "latest_update": {},
+                },
+                {
+                    "source_row": 42,
+                    "summary": {
+                        "ASEGURADO": "Siniestro rechazado",
+                        "Estatus": "Rechazado",
+                        "Dias desde registro del siniestro": "40",
+                        "DIAS CUMPLIDOS EN LA ASEGURADORA": "",
+                    },
+                    "latest_update": {},
+                },
             ],
         }
 
@@ -681,6 +867,12 @@ class PendingWorkbookTests(unittest.TestCase):
         self.assertEqual(emision_inside["counts"], {"verde": 0, "amarillo": 0, "rojo": 1})
         self.assertEqual(siniestro_before["counts"], {"verde": 0, "amarillo": 1, "rojo": 0})
         self.assertEqual(siniestro_inside["counts"], {"verde": 1, "amarillo": 0, "rojo": 0})
+        report_text = pending_report_text(report)
+        self.assertNotIn("Emisión concluida", report_text)
+        self.assertNotIn("Siniestro concluido", report_text)
+        self.assertNotIn("Siniestro pagado", report_text)
+        self.assertNotIn("Siniestro rechazado", report_text)
+        self.assertFalse(any(item["source_row"] in {40, 41, 42, 60} for item in report["inconsistencies"]))
 
     def test_report_html_contains_summary_and_escapes_record_values(self):
         report = build_pending_report(

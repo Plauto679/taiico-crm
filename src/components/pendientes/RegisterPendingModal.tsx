@@ -75,6 +75,7 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
     const [tipoTramite, setTipoTramite] = useState('');
     const [solicitudesDe, setSolicitudesDe] = useState<string[]>(['']);
     const [tramite, setTramite] = useState('');
+    const [estatusSiniestro, setEstatusSiniestro] = useState('En Proceso');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [promotoria, setPromotoria] = useState(
@@ -103,6 +104,7 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                     rfc,
                     tipo_tramite: tipoTramite as 'Cirugía Progamada' | 'Reembolso' | 'Programación de Medicamentos' | 'Programación de estudios/terapias',
                     tramite: tramite as 'Complemento' | 'Reconsideración' | 'Garantías',
+                    estatus: estatusSiniestro as 'En Proceso' | 'Pagado' | 'Rechazado' | 'Suspendido',
                     promotoria,
                     rfc_agente: rfcAgente,
                 });
@@ -208,6 +210,7 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                                 <>
                                     <SelectField label="Tipo de Trámite" value={tipoTramite} onChange={setTipoTramite} options={['Cirugía Progamada', 'Reembolso', 'Programación de Medicamentos', 'Programación de estudios/terapias']} />
                                     <SelectField label="Trámite" value={tramite} onChange={setTramite} options={['Complemento', 'Reconsideración', 'Garantías']} />
+                                    <SelectField label="Estatus" value={estatusSiniestro} onChange={setEstatusSiniestro} options={['En Proceso', 'Pagado', 'Rechazado', 'Suspendido']} />
                                 </>
                             )}
                         </div>

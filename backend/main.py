@@ -215,6 +215,7 @@ app.include_router(mail_configuration.router, dependencies=[Depends(require_modu
 app.include_router(recluta.router, dependencies=[Depends(require_module_access("recluta"))])
 app.include_router(base_loads.router, dependencies=[Depends(require_module_access("carga_bases", operation=True))])
 app.include_router(accesos.router, dependencies=[Depends(require_module_access("accesos", operation=True))])
+app.include_router(cotizaciones.public_router)
 app.include_router(cotizaciones.router, dependencies=[Depends(require_module_access("cotizaciones"))])
 app.include_router(audit_logs.router, dependencies=[Depends(require_module_access("logs"))])
 app.include_router(rrhh.router, dependencies=[Depends(require_module_access("rrhh"))])

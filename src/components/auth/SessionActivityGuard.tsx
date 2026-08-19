@@ -8,12 +8,19 @@ const HEARTBEAT_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 30 * 1000;
 const LAST_ACTIVITY_KEY = 'taiico_last_activity';
 
+function isPublicPath(pathname: string): boolean {
+    return pathname === '/login'
+        || pathname === '/olvide-password'
+        || pathname === '/restablecer-password'
+        || pathname.startsWith('/solicitud-datos/');
+}
+
 export function SessionActivityGuard() {
     const pathname = usePathname();
     const router = useRouter();
 
     useEffect(() => {
-        if (pathname === '/login' || pathname === '/olvide-password' || pathname === '/restablecer-password') return;
+        if (isPublicPath(pathname)) return;
 
         let lastHeartbeat = 0;
         let lastRecordedActivity = 0;

@@ -77,10 +77,12 @@ export function SolicitudDatosForm({ token }: Props) {
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
+      <main className="flex h-full min-h-0 overflow-y-auto overscroll-y-contain bg-slate-100 p-6">
+        <div className="m-auto">
         <div className="flex items-center gap-3 rounded-2xl bg-white p-6 text-slate-600 shadow">
           <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
           Cargando solicitud…
+        </div>
         </div>
       </main>
     );
@@ -88,8 +90,8 @@ export function SolicitudDatosForm({ token }: Props) {
 
   if (!request || error && !request) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
-        <section className="w-full max-w-xl rounded-2xl bg-white p-8 text-center shadow">
+      <main className="flex h-full min-h-0 overflow-y-auto overscroll-y-contain bg-slate-100 p-6">
+        <section className="m-auto w-full max-w-xl rounded-2xl bg-white p-8 text-center shadow">
           <img src="/logo.png" alt="TAIICO Life Advisors" className="mx-auto mb-5 h-20 w-auto" />
           <h1 className="text-2xl font-bold text-slate-900">Solicitud no disponible</h1>
           <p className="mt-3 text-slate-600">{error || 'La liga no existe o no se pudo validar.'}</p>
@@ -100,7 +102,7 @@ export function SolicitudDatosForm({ token }: Props) {
 
   if (request.expired || request.submitted || success) {
     return (
-      <main className="min-h-screen bg-slate-100 p-6">
+      <main className="h-full min-h-0 overflow-y-auto overscroll-y-contain bg-slate-100 p-6">
         <section className="mx-auto mt-10 w-full max-w-2xl rounded-2xl bg-white p-8 shadow">
           <img src="/logo.png" alt="TAIICO Life Advisors" className="mb-6 h-16 w-auto" />
           {success ? (
@@ -124,7 +126,7 @@ export function SolicitudDatosForm({ token }: Props) {
   }
 
   return (
-    <main className="min-h-screen bg-slate-100 p-4 sm:p-8">
+    <main className="h-full min-h-0 overflow-y-auto overscroll-y-contain bg-slate-100 p-4 [-webkit-overflow-scrolling:touch] sm:p-8">
       <section className="mx-auto w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-xl">
         <header className="bg-[#355f86] px-6 py-8 text-white sm:px-10">
           <img src="/logo.png" alt="TAIICO Life Advisors" className="mb-6 h-16 w-auto rounded-full bg-white/10 p-1" />

@@ -24,6 +24,13 @@ const NAV_ITEMS = [
     { name: 'RRHH', href: '/rrhh', icon: ContactRound, module: 'rrhh' },
 ];
 
+function isPublicPath(pathname: string): boolean {
+    return pathname === '/login'
+        || pathname === '/olvide-password'
+        || pathname === '/restablecer-password'
+        || pathname.startsWith('/solicitud-datos/');
+}
+
 export function Sidebar() {
     const [collapsed, setCollapsed] = useState(false);
     const [mobileOpen, setMobileOpen] = useState(false);
@@ -36,7 +43,7 @@ export function Sidebar() {
     useEffect(() => setMobileOpen(false), [pathname]);
 
     useEffect(() => {
-        if (pathname === '/login' || pathname === '/olvide-password' || pathname === '/restablecer-password') return;
+        if (isPublicPath(pathname)) return;
         let active = true;
         fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' })
             .then((response) => response.ok ? response.json() : Promise.reject())
@@ -52,7 +59,7 @@ export function Sidebar() {
         return () => { active = false; };
     }, [pathname]);
 
-    if (pathname === '/login' || pathname === '/olvide-password' || pathname === '/restablecer-password') return null;
+    if (isPublicPath(pathname)) return null;
 
     async function handleLogout() {
         if (loggingOut) return;

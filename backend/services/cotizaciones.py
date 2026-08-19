@@ -73,6 +73,7 @@ from services.renovaciones import send_email_smtp
 
 
 router = APIRouter(prefix="/cotizaciones", tags=["cotizaciones"])
+public_router = APIRouter(prefix="/cotizaciones", tags=["cotizaciones-public"])
 
 QUOTES_FILE_ID_ENV = "GOOGLE_DRIVE_QUOTES_FILE_ID"
 DEFAULT_QUOTES_FILE_ID = "1uP-G9GAz75SyO4nUhrJlaHDhX5zJ6vk4"
@@ -1282,7 +1283,7 @@ def search_clients(q: str = Query(min_length=2, max_length=120)):
         db.close()
 
 
-@router.get("/public/data-requests/{token}")
+@public_router.get("/public/data-requests/{token}")
 def get_quote_data_request_route(token: str):
     try:
         return get_quote_data_request(token)
@@ -1292,7 +1293,7 @@ def get_quote_data_request_route(token: str):
         raise HTTPException(status_code=502, detail=f"No fue posible leer la solicitud: {exc}") from exc
 
 
-@router.post("/public/data-requests/{token}")
+@public_router.post("/public/data-requests/{token}")
 async def submit_quote_data_request_route(
     token: str,
     payload: str = Form(...),

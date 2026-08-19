@@ -30,7 +30,8 @@ DEFAULT_RECIPIENTS = (
     "veronica.alfaro@taiico.com,"
     "alberto.alfaro@taiico.com,"
     "florgabriela.flores@taiico.com,"
-    "juan.ibarraran@taiico.com"
+    "juan.ibarraran@taiico.com,"
+    "gilberto.gonzalez@taiico.com"
 )
 DEFAULT_TIMEZONE = "America/Mexico_City"
 DEFAULT_HOUR = 19

@@ -68,6 +68,7 @@ export interface SiniestrosPendingInput {
     rfc: string;
     tipo_tramite: 'Cirugía Progamada' | 'Reembolso' | 'Programación de Medicamentos' | 'Programación de estudios/terapias';
     tramite: 'Complemento' | 'Reconsideración' | 'Garantías';
+    estatus: 'En Proceso' | 'Pagado' | 'Rechazado' | 'Suspendido';
     promotoria: string;
     rfc_agente: string;
 }

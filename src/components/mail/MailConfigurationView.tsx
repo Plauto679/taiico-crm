@@ -92,7 +92,14 @@ export function MailConfigurationView() {
 
             <section className="rounded-xl bg-white p-6 shadow">
                 <h2 className="text-xl font-semibold text-gray-900">Cómo obtener el permiso de Gmail</h2>
-                <ol className="mt-4 list-decimal space-y-3 pl-5 text-sm text-gray-700">
+                <ol start={0} className="mt-4 list-decimal space-y-3 pl-5 text-sm text-gray-700">
+                    <li>
+                        Intenta entrar a{' '}
+                        <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="font-medium text-blue-700 hover:underline">
+                            Contraseñas de aplicaciones de Google
+                        </a>
+                        . Si el enlace abre sin problemas, continúa desde el paso 3.
+                    </li>
                     <li>Abre la seguridad de tu Cuenta de Google y activa la verificación en dos pasos.</li>
                     <li>En la misma sección, busca “Contraseñas de aplicaciones”. Si tu administrador la deshabilitó, solicítale autorización.</li>
                     <li>Crea una contraseña con el nombre “TAIICO CRM”. Google mostrará una clave de 16 caracteres una sola vez.</li>
