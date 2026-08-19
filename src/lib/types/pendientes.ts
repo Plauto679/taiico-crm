@@ -52,7 +52,16 @@ export interface PendingAssignmentInconsistency {
     action: string;
 }
 
+export interface PendingClientOption {
+    id: string;
+    nombre: string;
+    rfc: string;
+    estado_identidad: 'prospect' | 'identified' | string;
+    expediente_url: string;
+}
+
 export interface EmisionServiciosPendingInput {
+    client_id: string;
     asegurado: string;
     rfc: string;
     poliza: string;
@@ -64,6 +73,7 @@ export interface EmisionServiciosPendingInput {
 }
 
 export interface SiniestrosPendingInput {
+    client_id: string;
     asegurado: string;
     rfc: string;
     tipo_tramite: 'Cirugía Progamada' | 'Reembolso' | 'Programación de Medicamentos' | 'Programación de estudios/terapias';

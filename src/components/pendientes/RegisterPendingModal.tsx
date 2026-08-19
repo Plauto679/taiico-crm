@@ -1,12 +1,13 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
-import { ClipboardPlus, Loader2, Plus, X } from 'lucide-react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, ClipboardPlus, Loader2, Plus, Search, UserRoundPlus, X } from 'lucide-react';
 
-import { PendingAccess, PendingRow } from '@/lib/types/pendientes';
+import { PendingAccess, PendingClientOption, PendingRow } from '@/lib/types/pendientes';
 import {
     createEmisionServiciosPending,
     createSiniestrosPending,
+    getPendingClientDirectory,
 } from '@/modules/pendientes/service';
 import { agentsForPromotoria, PendingAgentSelect } from './PendingAgentSelect';
 
@@ -68,6 +69,9 @@ const VIDA_REQUESTS = [
 ];
 
 export function RegisterPendingModal({ source, onClose, onCreated, access }: RegisterPendingModalProps) {
+    const [clients, setClients] = useState<PendingClientOption[]>([]);
+    const [loadingClients, setLoadingClients] = useState(true);
+    const [selectedClient, setSelectedClient] = useState<PendingClientOption | null>(null);
     const [asegurado, setAsegurado] = useState('');
     const [rfc, setRfc] = useState('');
     const [poliza, setPoliza] = useState('');
@@ -83,6 +87,38 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
     );
     const [rfcAgente, setRfcAgente] = useState('');
 
+    useEffect(() => {
+        let active = true;
+        getPendingClientDirectory()
+            .then((directory) => { if (active) setClients(directory); })
+            .catch((directoryError) => {
+                if (active) setError(directoryError instanceof Error ? directoryError.message : 'No fue posible consultar Clientes.');
+            })
+            .finally(() => { if (active) setLoadingClients(false); });
+        return () => { active = false; };
+    }, []);
+
+    const clientMatches = useMemo(() => {
+        const term = asegurado.trim().toLocaleLowerCase('es-MX');
+        if (!term || selectedClient) return [];
+        return clients.filter((client) =>
+            client.nombre.toLocaleLowerCase('es-MX').includes(term)
+            || client.rfc.toLocaleLowerCase('es-MX').includes(term)
+        ).slice(0, 8);
+    }, [asegurado, clients, selectedClient]);
+
+    const chooseClient = (client: PendingClientOption) => {
+        setSelectedClient(client);
+        setAsegurado(client.nombre);
+        setRfc(client.rfc || '');
+    };
+
+    const changeClient = () => {
+        setSelectedClient(null);
+        setAsegurado('');
+        setRfc('');
+    };
+
     const submit = async (event: FormEvent) => {
         event.preventDefault();
         setSaving(true);
@@ -90,6 +126,7 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
         try {
             const response = source === 'emision-servicios'
                 ? await createEmisionServiciosPending({
+                    client_id: selectedClient?.id || '',
                     asegurado,
                     rfc,
                     poliza,
@@ -100,6 +137,7 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                     rfc_agente: rfcAgente,
                 })
                 : await createSiniestrosPending({
+                    client_id: selectedClient?.id || '',
                     asegurado,
                     rfc,
                     tipo_tramite: tipoTramite as 'Cirugía Progamada' | 'Reembolso' | 'Programación de Medicamentos' | 'Programación de estudios/terapias',
@@ -147,6 +185,60 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                 <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
                     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 [-webkit-overflow-scrolling:touch] sm:p-5">
                         <div className="grid gap-4 sm:grid-cols-2">
+                            <div className="sm:col-span-2 rounded-xl border border-blue-200 bg-blue-50/60 p-4">
+                                <div className="mb-3">
+                                    <p className="font-bold text-slate-900">Cliente o prospecto</p>
+                                    <p className="text-sm text-slate-600">Busca primero en el registro maestro por nombre o RFC. Si no existe, escribe su nombre para registrarlo como prospecto.</p>
+                                </div>
+                                {selectedClient ? (
+                                    <div className="rounded-lg border border-emerald-200 bg-white p-3">
+                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                            <div>
+                                                <p className="flex items-center gap-2 font-semibold text-emerald-800"><CheckCircle2 className="h-4 w-4" /> Cliente seleccionado</p>
+                                                <p className="mt-1 font-bold text-slate-900">{selectedClient.nombre}</p>
+                                                <p className="text-sm text-slate-600">{selectedClient.rfc || 'Prospecto sin RFC'}</p>
+                                            </div>
+                                            <button type="button" onClick={changeClient} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Cambiar cliente</button>
+                                        </div>
+                                        {!selectedClient.rfc && (
+                                            <label className="mt-3 block border-t border-slate-100 pt-3">
+                                                <span className="text-sm font-medium text-slate-700">Asignar RFC al prospecto <span className="font-normal text-slate-400">(opcional)</span></span>
+                                                <input value={rfc} onChange={(event) => setRfc(event.target.value.toUpperCase())} placeholder="Al capturarlo se creará su expediente único" className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                                            </label>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="relative">
+                                        <label className="block">
+                                            <span className="text-sm font-medium text-slate-700">Buscar o capturar nombre</span>
+                                            <div className="relative mt-1.5">
+                                                <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                                                <input required autoComplete="off" value={asegurado} onChange={(event) => setAsegurado(event.target.value)} placeholder="Nombre o RFC del cliente" className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                                            </div>
+                                        </label>
+                                        {loadingClients && <p className="mt-2 text-xs text-slate-500">Consultando registro maestro…</p>}
+                                        {clientMatches.length > 0 && (
+                                            <div className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                                                {clientMatches.map((client) => (
+                                                    <button key={client.id} type="button" onClick={() => chooseClient(client)} className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-3 py-2 text-left last:border-0 hover:bg-blue-50">
+                                                        <span><span className="block font-semibold text-slate-900">{client.nombre}</span><span className="block text-xs text-slate-500">{client.rfc || 'Prospecto sin RFC'}</span></span>
+                                                        <span className="text-xs font-semibold text-blue-700">Seleccionar</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                        {asegurado.trim() && !loadingClients && clientMatches.length === 0 && (
+                                            <p className="mt-2 flex items-center gap-2 text-xs font-medium text-amber-700"><UserRoundPlus className="h-4 w-4" /> Se registrará como prospecto nuevo si no capturas RFC.</p>
+                                        )}
+                                    </div>
+                                )}
+                                {!selectedClient && (
+                                    <label className="mt-3 block">
+                                        <span className="text-sm font-medium text-slate-700">RFC <span className="font-normal text-slate-400">(opcional para prospectos)</span></span>
+                                        <input value={rfc} onChange={(event) => setRfc(event.target.value.toUpperCase())} placeholder="Se solicitará antes de crear el expediente" className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                                    </label>
+                                )}
+                            </div>
                             <SelectField
                                 label="Promotoría"
                                 value={promotoria}
@@ -164,8 +256,6 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                                     className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
                                 />
                             </label>
-                            <TextField label="Nombre del Asegurado" value={asegurado} onChange={setAsegurado} />
-                            <TextField label="RFC" value={rfc} onChange={(value) => setRfc(value.toUpperCase())} required={false} />
                             {source === 'emision-servicios' ? (
                                 <>
                                     <TextField label="Póliza" value={poliza} onChange={setPoliza} required={false} />

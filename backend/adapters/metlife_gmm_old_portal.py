@@ -23,6 +23,7 @@ from adapters.metlife_gmm_portal import (
 )
 from services.client_folders import (
     FOLDER_MIME_TYPE,
+    client_folder_creation_lock,
     client_folders_parent_id,
     normalize_client_name,
     normalize_rfc,
@@ -83,33 +84,34 @@ def _drive_literal(value: str) -> str:
 def find_or_create_client_folder(service, task: MetLifeGmmPortalTask) -> dict[str, Any]:
     parent_id = os.getenv(CLIENT_FOLDERS_PARENT_ID_ENV, "").strip() or client_folders_parent_id()
     rfc = normalize_rfc(task.rfc)
-    response = service.files().list(
-        q=(
-            f"'{_drive_literal(parent_id)}' in parents and "
-            f"mimeType = '{FOLDER_MIME_TYPE}' and trashed = false"
-        ),
-        fields="files(id,name,webViewLink)",
-        supportsAllDrives=True,
-        includeItemsFromAllDrives=True,
-        pageSize=1000,
-    ).execute()
-    matches = [
-        item for item in response.get("files", [])
-        if normalize_rfc(str(item.get("name", "")).split(" - ", 1)[0]) == rfc
-    ]
-    if len(matches) > 1:
-        raise MetLifePortalAdapterError(f"Hay múltiples carpetas de cliente para el RFC {rfc}")
-    if matches:
-        return matches[0]
-    return service.files().create(
-        body={
-            "name": client_folder_name(task),
-            "mimeType": FOLDER_MIME_TYPE,
-            "parents": [parent_id],
-        },
-        fields="id,name,webViewLink",
-        supportsAllDrives=True,
-    ).execute()
+    with client_folder_creation_lock(rfc):
+        response = service.files().list(
+            q=(
+                f"'{_drive_literal(parent_id)}' in parents and "
+                f"mimeType = '{FOLDER_MIME_TYPE}' and trashed = false"
+            ),
+            fields="files(id,name,webViewLink)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            pageSize=1000,
+        ).execute()
+        matches = [
+            item for item in response.get("files", [])
+            if normalize_rfc(str(item.get("name", "")).split(" - ", 1)[0]) == rfc
+        ]
+        if len(matches) > 1:
+            raise MetLifePortalAdapterError(f"Hay múltiples carpetas de cliente para el RFC {rfc}")
+        if matches:
+            return matches[0]
+        return service.files().create(
+            body={
+                "name": client_folder_name(task),
+                "mimeType": FOLDER_MIME_TYPE,
+                "parents": [parent_id],
+            },
+            fields="id,name,webViewLink",
+            supportsAllDrives=True,
+        ).execute()
 
 
 def renewal_folder_name(task: MetLifeGmmPortalTask) -> str:

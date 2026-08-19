@@ -63,6 +63,7 @@ from services.client_email_directory import lookup_client_email
 from services.client_folders import (
     FOLDER_MIME_TYPE,
     build_client_folder_drive_service,
+    client_folder_creation_lock,
     client_folders_parent_id,
     normalize_client_name,
     normalize_rfc,
@@ -325,32 +326,33 @@ def find_or_create_quote_client_folder(
         raise ValueError("Captura un RFC válido antes de iniciar la cotización")
     parent = (parent_id or client_folders_parent_id()).strip()
     expected_name = quote_client_folder_name(normalized_rfc, client_name)
-    response = service.files().list(
-        q=(
-            f"'{_drive_query_literal(parent)}' in parents and "
-            f"mimeType = '{FOLDER_MIME_TYPE}' and trashed = false"
-        ),
-        spaces="drive",
-        fields="files(id,name,mimeType,webViewLink)",
-        supportsAllDrives=True,
-        includeItemsFromAllDrives=True,
-        pageSize=1000,
-    ).execute()
-    folders = [
-        item for item in response.get("files", [])
-        if normalize_rfc(str(item.get("name", "")).split(" - ", 1)[0]) == normalized_rfc
-    ]
-    if folders:
-        return folders[0]
-    return service.files().create(
-        body={
-            "name": expected_name,
-            "mimeType": FOLDER_MIME_TYPE,
-            "parents": [parent],
-        },
-        fields="id,name,mimeType,webViewLink",
-        supportsAllDrives=True,
-    ).execute()
+    with client_folder_creation_lock(normalized_rfc):
+        response = service.files().list(
+            q=(
+                f"'{_drive_query_literal(parent)}' in parents and "
+                f"mimeType = '{FOLDER_MIME_TYPE}' and trashed = false"
+            ),
+            spaces="drive",
+            fields="files(id,name,mimeType,webViewLink)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            pageSize=1000,
+        ).execute()
+        folders = [
+            item for item in response.get("files", [])
+            if normalize_rfc(str(item.get("name", "")).split(" - ", 1)[0]) == normalized_rfc
+        ]
+        if folders:
+            return folders[0]
+        return service.files().create(
+            body={
+                "name": expected_name,
+                "mimeType": FOLDER_MIME_TYPE,
+                "parents": [parent],
+            },
+            fields="id,name,mimeType,webViewLink",
+            supportsAllDrives=True,
+        ).execute()
 
 
 def _drive_folder_metadata(service, folder_id: str) -> dict[str, object]:

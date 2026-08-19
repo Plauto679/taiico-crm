@@ -2,6 +2,7 @@ import { fetchFromApi } from '@/lib/api';
 import {
     EmisionServiciosPendingInput,
     PendingCreateResponse,
+    PendingClientOption,
     PendingDocument,
     PendingDeleteResponse,
     PendingDocumentsResponse,
@@ -24,6 +25,10 @@ export function getPendingSource(
     source: 'emision-servicios' | 'siniestros',
 ): Promise<PendingSourceData> {
     return fetchFromApi<PendingSourceData>(`/pendientes/${source}`);
+}
+
+export function getPendingClientDirectory(): Promise<PendingClientOption[]> {
+    return fetchFromApi('/pendientes/client-directory');
 }
 
 export function getPendingDocuments(

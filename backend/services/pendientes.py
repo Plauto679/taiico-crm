@@ -23,10 +23,14 @@ from google.auth import default
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 
+from database import Client, SessionLocal
 from services.auth import AccessProfile, PROMOTORIAS
 from services.authorization import current_access_profile, require_module_access
+from services.clientes import _assert_unique_rfc, _ensure_default_owner
 from services.client_folders import (
+    client_folder_creation_lock,
     client_folders_parent_id,
     normalize_client_name,
     normalize_rfc,
@@ -126,6 +130,7 @@ AUTOMATIC_START_DATE_HEADERS = {
 
 
 class EmisionServiciosCreateRequest(BaseModel):
+    client_id: str = ""
     asegurado: str
     rfc: str = ""
     poliza: str = ""
@@ -137,6 +142,7 @@ class EmisionServiciosCreateRequest(BaseModel):
 
 
 class SiniestrosCreateRequest(BaseModel):
+    client_id: str = ""
     asegurado: str
     rfc: str = ""
     tipo_tramite: Literal[
@@ -885,6 +891,102 @@ def _client_name_from_row(row: dict) -> str:
     return clean_cell(summary.get("Asegurado") or summary.get("ASEGURADO") or "")
 
 
+def _master_client_payload(client: Client) -> dict[str, str]:
+    return {
+        "id": client.id,
+        "nombre": client.full_name,
+        "rfc": normalize_rfc(client.rfc),
+        "estado_identidad": client.identity_status or ("identified" if client.rfc else "prospect"),
+        "expediente_url": client.drive_folder_url or "",
+    }
+
+
+def _resolve_pending_master_client(
+    *,
+    client_id: str = "",
+    client_name: str,
+    rfc: str = "",
+) -> dict[str, str]:
+    name = clean_cell(client_name)
+    normalized_rfc = normalize_rfc(rfc)
+    if not name:
+        raise ValueError("El nombre del asegurado es obligatorio")
+    if normalized_rfc and not valid_client_rfc(normalized_rfc):
+        raise ValueError("Captura un RFC válido de persona física o moral")
+
+    db = SessionLocal()
+    try:
+        client = None
+        if clean_cell(client_id):
+            client = db.query(Client).filter(Client.id == clean_cell(client_id)).first()
+            if not client:
+                raise ValueError("El cliente seleccionado ya no existe en el registro maestro")
+        if not client and normalized_rfc:
+            client = db.query(Client).filter(
+                func.upper(func.trim(Client.rfc)) == normalized_rfc
+            ).first()
+        if not client:
+            client = db.query(Client).filter(
+                func.lower(func.trim(Client.full_name)) == name.casefold()
+            ).first()
+
+        if client:
+            current_rfc = normalize_rfc(client.rfc)
+            if normalized_rfc and current_rfc and current_rfc != normalized_rfc:
+                raise ValueError(
+                    f"{client.full_name} ya está identificado con el RFC {current_rfc}"
+                )
+            if normalized_rfc and not current_rfc:
+                _assert_unique_rfc(db, normalized_rfc, excluding_id=client.id)
+                client.rfc = normalized_rfc
+                client.identity_status = "identified"
+            db.commit()
+            db.refresh(client)
+            return _master_client_payload(client)
+
+        _assert_unique_rfc(db, normalized_rfc or None)
+        client = Client(
+            full_name=name,
+            rfc=normalized_rfc or None,
+            identity_status="identified" if normalized_rfc else "prospect",
+            responsible_user_id=_ensure_default_owner(db),
+            status="active",
+        )
+        db.add(client)
+        db.commit()
+        db.refresh(client)
+        return _master_client_payload(client)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _link_master_client_folder(client_id: str, folder: dict) -> None:
+    if not client_id or not folder.get("id"):
+        return
+    db = SessionLocal()
+    try:
+        client = db.query(Client).filter(Client.id == client_id).first()
+        if not client:
+            return
+        client.drive_folder_id = str(folder["id"])
+        client.drive_folder_url = str(
+            folder.get("webViewLink")
+            or f"https://drive.google.com/drive/folders/{folder['id']}"
+        )
+        client.drive_folder_name = str(folder.get("name") or "")
+        client.drive_verified_at = datetime.utcnow()
+        client.identity_status = "identified"
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def _folder_name_for_rfc(rfc: str) -> str:
     cleaned = re.sub(r"[\\/:*?\"<>|]+", "-", clean_cell(rfc).upper())
     if not cleaned:
@@ -947,24 +1049,25 @@ def _client_folder_for_row(service, row: dict, *, create: bool = False) -> dict 
     rfc = _folder_name_for_rfc(_rfc_from_row(row))
     if not valid_client_rfc(rfc):
         raise ValueError("Captura un RFC válido antes de integrar el expediente")
-    existing = next(
-        (folder for folder in _list_child_folders(service, _documents_root_id()) if _client_folder_rfc(folder) == rfc),
-        None,
-    )
-    if existing or not create:
-        return existing
-    client_name = normalize_client_name(_client_name_from_row(row), rfc)
-    if not client_name:
-        raise ValueError("El nombre del cliente es obligatorio para crear su carpeta única")
-    return service.files().create(
-        body={
-            "name": f"{rfc} - {client_name}"[:180],
-            "parents": [_documents_root_id()],
-            "mimeType": FOLDER_MIME_TYPE,
-        },
-        fields="id,name,webViewLink",
-        supportsAllDrives=True,
-    ).execute()
+    with client_folder_creation_lock(rfc):
+        existing = next(
+            (folder for folder in _list_child_folders(service, _documents_root_id()) if _client_folder_rfc(folder) == rfc),
+            None,
+        )
+        if existing or not create:
+            return existing
+        client_name = normalize_client_name(_client_name_from_row(row), rfc)
+        if not client_name:
+            raise ValueError("El nombre del cliente es obligatorio para crear su carpeta única")
+        return service.files().create(
+            body={
+                "name": f"{rfc} - {client_name}"[:180],
+                "parents": [_documents_root_id()],
+                "mimeType": FOLDER_MIME_TYPE,
+            },
+            fields="id,name,webViewLink",
+            supportsAllDrives=True,
+        ).execute()
 
 
 def _decorate_rows_with_folders(result: dict, service) -> dict:
@@ -1866,6 +1969,20 @@ def pending_access_options(
     }
 
 
+@router.get("/client-directory")
+def pending_client_directory(
+    profile: AccessProfile = Depends(require_module_access("pendientes")),
+):
+    db = SessionLocal()
+    try:
+        return [
+            _master_client_payload(client)
+            for client in db.query(Client).order_by(Client.full_name).all()
+        ]
+    finally:
+        db.close()
+
+
 @router.get("/{source_key}")
 async def get_pending_source(
     source_key: str,
@@ -1905,10 +2022,20 @@ def create_emision_servicios_pending(
                 + ", ".join(invalid_requests or ["sin selección"])
             ),
         )
+    try:
+        master_client = _resolve_pending_master_client(
+            client_id=request.client_id,
+            client_name=request.asegurado,
+            rfc=request.rfc,
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     promotoria = _assigned_promotoria(request.promotoria, profile)
     values = {
-        "Asegurado": request.asegurado,
-        "RFC": request.rfc.strip().upper(),
+        "Asegurado": master_client["nombre"],
+        "RFC": master_client["rfc"],
         "Póliza": request.poliza,
         "Casificacion": request.casificacion,
         "Tipo de Trámite": request.tipo_tramite,
@@ -1917,7 +2044,11 @@ def create_emision_servicios_pending(
         "RFC Agente": _assigned_agent_rfc(request.rfc_agente, promotoria, profile),
         **_automatic_creation_values(SOURCES["emision-servicios"]),
     }
-    return _create_pending_record(SOURCES["emision-servicios"], values)
+    return _create_pending_record(
+        SOURCES["emision-servicios"],
+        values,
+        master_client_id=master_client["id"],
+    )
 
 
 @router.post("/siniestros")
@@ -1925,10 +2056,20 @@ def create_siniestros_pending(
     request: SiniestrosCreateRequest,
     profile: AccessProfile = Depends(require_module_access("pendientes", operation=True)),
 ):
+    try:
+        master_client = _resolve_pending_master_client(
+            client_id=request.client_id,
+            client_name=request.asegurado,
+            rfc=request.rfc,
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     promotoria = _assigned_promotoria(request.promotoria, profile)
     values = {
-        "ASEGURADO": request.asegurado,
-        "RFC": request.rfc.strip().upper(),
+        "ASEGURADO": master_client["nombre"],
+        "RFC": master_client["rfc"],
         "Tipo de Trámite": request.tipo_tramite,
         "Trámite": request.tramite,
         "Estatus": request.estatus,
@@ -1936,10 +2077,19 @@ def create_siniestros_pending(
         "RFC Agente": _assigned_agent_rfc(request.rfc_agente, promotoria, profile),
         **_automatic_creation_values(SOURCES["siniestros"]),
     }
-    return _create_pending_record(SOURCES["siniestros"], values)
+    return _create_pending_record(
+        SOURCES["siniestros"],
+        values,
+        master_client_id=master_client["id"],
+    )
 
 
-def _create_pending_record(source: PendingSource, values: dict[str, str]):
+def _create_pending_record(
+    source: PendingSource,
+    values: dict[str, str],
+    *,
+    master_client_id: str = "",
+):
     if not clean_cell(values.get("Asegurado") or values.get("ASEGURADO")):
         raise HTTPException(status_code=422, detail="El nombre del asegurado es obligatorio")
     try:
@@ -1960,6 +2110,9 @@ def _create_pending_record(source: PendingSource, values: dict[str, str]):
         folder_warning = None
         if _rfc_from_row(created) and not created.get("folder_id"):
             try:
+                client_folder = _client_folder_for_row(service, created, create=True)
+                if client_folder:
+                    _link_master_client_folder(master_client_id, client_folder)
                 _create_folder_for_row(service, created)
                 _clear_source_cache(source.key)
             except Exception as exc:
@@ -2022,6 +2175,18 @@ def update_pending(
                 merged_summary = {**original_row["summary"], **values}
             history_values = dict(values)
             values.update(_derived_day_values(merged_summary))
+            master_client = None
+            identity_fields_changed = bool(
+                {"RFC", "Asegurado", "ASEGURADO"}.intersection(history_values)
+            )
+            if identity_fields_changed:
+                master_client = _resolve_pending_master_client(
+                    client_name=clean_cell(
+                        merged_summary.get("Asegurado")
+                        or merged_summary.get("ASEGURADO")
+                    ),
+                    rfc=clean_cell(merged_summary.get("RFC")),
+                )
             file_id = _source_file_id(source)
             updated_workbook = update_pending_record(
                 _download_workbook(file_id, service),
@@ -2045,6 +2210,9 @@ def update_pending(
             old_folder_id = original_row.get("folder_id")
             if new_rfc:
                 try:
+                    client_folder = _client_folder_for_row(service, updated_row, create=True)
+                    if master_client and client_folder:
+                        _link_master_client_folder(master_client["id"], client_folder)
                     target_name = _folder_name_for_row(updated_row)
                     if old_folder_id:
                         folder = service.files().update(

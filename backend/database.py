@@ -137,6 +137,11 @@ class Client(Base):
     rfc = Column(String(50), nullable=True, index=True)
     email = Column(String(255), unique=False, nullable=True) # Changed from unique=True to allow corporate and family shared emails
     phone = Column(String(50), nullable=True)
+    identity_status = Column(String(30), default="prospect", nullable=False, index=True)
+    drive_folder_id = Column(String(255), nullable=True, index=True)
+    drive_folder_url = Column(String(1000), nullable=True)
+    drive_folder_name = Column(String(500), nullable=True)
+    drive_verified_at = Column(DateTime, nullable=True)
     responsible_user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     status = Column(String(50), default="active", nullable=False) # active, inactive
     communication_preference = Column(String(50), default="email")

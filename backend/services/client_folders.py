@@ -8,6 +8,7 @@ import time
 import unicodedata
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
@@ -21,6 +22,18 @@ RFC_PATTERN = re.compile(
     r"^(?:[A-ZÑ&]{3}|[A-ZÑ&]{4})(?P<date>\d{6})[A-Z0-9]{3}$",
     re.IGNORECASE,
 )
+_CLIENT_FOLDER_LOCKS: dict[str, threading.RLock] = {}
+_CLIENT_FOLDER_LOCKS_GUARD = threading.Lock()
+
+
+@contextmanager
+def client_folder_creation_lock(rfc: object):
+    """Serializes find-or-create operations for one RFC in this CRM process."""
+    key = normalize_rfc(rfc)
+    with _CLIENT_FOLDER_LOCKS_GUARD:
+        lock = _CLIENT_FOLDER_LOCKS.setdefault(key, threading.RLock())
+    with lock:
+        yield
 
 
 @dataclass(frozen=True)
