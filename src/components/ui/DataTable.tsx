@@ -8,6 +8,7 @@ import { ArrowUp, ArrowDown, ArrowUpDown, Check, ChevronDown, Search, X } from '
 interface Column<T> {
     header: string;
     accessorKey: keyof T | ((row: T) => React.ReactNode);
+    filterValue?: (row: T) => string | number;
     className?: string;
     enableSorting?: boolean;
     enableFiltering?: boolean;
@@ -34,6 +35,9 @@ function columnKey<T>(column: Column<T>): string {
 }
 
 function columnValue<T>(column: Column<T>, row: T): string {
+    if (column.filterValue) {
+        return String(column.filterValue(row) ?? '');
+    }
     const value = typeof column.accessorKey === 'function'
         ? column.accessorKey(row)
         : row[column.accessorKey];

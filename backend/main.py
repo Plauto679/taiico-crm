@@ -1,4 +1,5 @@
 import os
+import time
 
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +13,8 @@ from services.session_auth import (
     session_idle_seconds,
 )
 from pydantic import BaseModel, Field
+from database import engine
+from services.performance import begin_request, end_request, install_sqlalchemy_timing, log_request, server_timing
 
 is_production = os.getenv("TAIICO_ENV", "development").strip().casefold() == "production"
 app = FastAPI(
@@ -37,6 +40,27 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Accept", "Authorization", "Content-Type", "X-Requested-With"],
 )
+
+install_sqlalchemy_timing(engine)
+
+
+@app.middleware("http")
+async def measure_request_performance(request: Request, call_next):
+    token, metrics = begin_request()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        total_ms = (time.perf_counter() - metrics.started_at) * 1000
+        measured_ms = sum(metrics.timings_ms.values())
+        metrics.timings_ms["processing"] = max(0.0, total_ms - measured_ms)
+        response.headers["Server-Timing"] = server_timing(metrics, total_ms)
+        response.headers["X-Request-ID"] = metrics.request_id
+        return response
+    finally:
+        total_ms = (time.perf_counter() - metrics.started_at) * 1000
+        log_request(metrics=metrics, method=request.method, path=request.url.path, status=status_code, total_ms=total_ms)
+        end_request(token)
 
 
 @app.middleware("http")

@@ -15,6 +15,7 @@ from services.cumpleanos import (
     parse_birth_date_from_rfc,
 )
 from services.pendientes import DEFAULT_AGENTS_METLIFE_FILE_ID, _download_workbook
+from services.data_cache import data_cache
 
 
 router = APIRouter(prefix="/cumpleanos-agentes", tags=["cumpleanos-agentes"])
@@ -137,17 +138,15 @@ def build_agent_birthday_directory(
 
 
 def load_agent_birthday_directory() -> dict:
-    global _cached_result, _cache_expires_at
-
-    now = time.monotonic()
-    with _cache_lock:
-        if _cached_result is not None and now < _cache_expires_at:
-            return _cached_result
+    def load_fresh():
         workbook = _download_workbook(DEFAULT_AGENTS_METLIFE_FILE_ID)
-        result = build_agent_birthday_directory(workbook)
-        _cached_result = result
-        _cache_expires_at = now + CACHE_SECONDS
-        return result
+        return build_agent_birthday_directory(workbook)
+
+    return data_cache.get_or_load(
+        "cumpleanos:agentes",
+        load_fresh,
+        ttl_seconds=CACHE_SECONDS,
+    ).value
 
 
 @router.get("")

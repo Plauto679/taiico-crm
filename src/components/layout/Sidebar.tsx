@@ -1,9 +1,12 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Menu, X } from 'lucide-react';
+import { SmartLink } from '@/components/navigation/SmartLink';
+import { IdleModulePrefetch } from '@/components/navigation/IdleModulePrefetch';
+
+const SESSION_CACHE_KEY = 'taiico_session_profile';
 
 const NAV_ITEMS = [
     { name: 'Inicio', href: '/', icon: Home, module: 'inicio' },
@@ -39,27 +42,42 @@ export function Sidebar() {
     const [username, setUsername] = useState('');
     const pathname = usePathname();
     const router = useRouter();
+    const publicPath = isPublicPath(pathname);
 
     useEffect(() => setMobileOpen(false), [pathname]);
 
     useEffect(() => {
-        if (isPublicPath(pathname)) return;
+        if (publicPath) return;
         let active = true;
+        try {
+            const cached = window.sessionStorage.getItem(SESSION_CACHE_KEY);
+            if (cached) {
+                const data = JSON.parse(cached);
+                setPermissions(data.module_permissions || {});
+                setUsername(data.username || '');
+            }
+        } catch {
+            window.sessionStorage.removeItem(SESSION_CACHE_KEY);
+        }
         fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' })
             .then((response) => response.ok ? response.json() : Promise.reject())
             .then((data) => {
                 if (active) {
                     setPermissions(data.module_permissions || {});
                     setUsername(data.username || '');
+                    window.sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({
+                        module_permissions: data.module_permissions || {},
+                        username: data.username || '',
+                    }));
                 }
             })
             .catch(() => {
                 if (active) setPermissions({});
             });
         return () => { active = false; };
-    }, [pathname]);
+    }, [publicPath]);
 
-    if (isPublicPath(pathname)) return null;
+    if (publicPath) return null;
 
     async function handleLogout() {
         if (loggingOut) return;
@@ -72,6 +90,7 @@ export function Sidebar() {
             });
         } finally {
             window.localStorage.removeItem('taiico_last_activity');
+            window.sessionStorage.removeItem(SESSION_CACHE_KEY);
             router.replace('/login');
             router.refresh();
         }
@@ -108,7 +127,7 @@ export function Sidebar() {
                     <LogOut className={`h-4 w-4 ${collapsed ? '' : 'mr-2'}`} />
                     {!collapsed && <span>{loggingOut ? 'Cerrando...' : 'Cerrar sesión'}</span>}
                 </button>
-                <Link
+                <SmartLink
                     href="/cambiar-password"
                     className={`flex items-center justify-center rounded-md px-2 py-1.5 text-sm font-medium text-slate-500 hover:bg-blue-50 hover:text-blue-700 ${collapsed ? '' : 'w-full'}`}
                     aria-label="Cambiar contraseña"
@@ -116,7 +135,7 @@ export function Sidebar() {
                 >
                     <KeyRound className={`h-4 w-4 ${collapsed ? '' : 'mr-2'}`} />
                     {!collapsed && <span>Cambiar contraseña</span>}
-                </Link>
+                </SmartLink>
                 <button
                     type="button"
                     onClick={() => setCollapsed((current) => !current)}
@@ -133,7 +152,7 @@ export function Sidebar() {
                     permissions?.[item.module] === 'lectura'
                     || permissions?.[item.module] === 'operacion'
                 )).map((item) => (
-                    <Link
+                    <SmartLink
                         key={item.name}
                         href={item.href}
                         onClick={() => setMobileOpen(false)}
@@ -142,9 +161,10 @@ export function Sidebar() {
                     >
                         <item.icon className={`h-5 w-5 shrink-0 text-gray-400 group-hover:text-gray-500 ${collapsed ? '' : 'mr-3'}`} />
                         <span className={collapsed ? 'md:hidden' : ''}>{item.name}</span>
-                    </Link>
+                    </SmartLink>
                 ))}
             </nav>
+            <IdleModulePrefetch permissions={permissions} />
         </aside>
         </>
     );

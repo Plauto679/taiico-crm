@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { SessionActivityGuard } from "@/components/auth/SessionActivityGuard";
+import { NavigationProgress } from "@/components/navigation/NavigationProgress";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -21,6 +22,7 @@ export default function RootLayout({
       <body className={inter.className}>
         <div className="flex h-screen bg-gray-100">
           <SessionActivityGuard />
+          <NavigationProgress />
           <Sidebar />
           <main className="min-w-0 flex-1 flex flex-col overflow-hidden bg-[#34587C]">
             {children}

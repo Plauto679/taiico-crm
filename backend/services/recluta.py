@@ -17,6 +17,7 @@ from openpyxl import load_workbook
 from pydantic import BaseModel
 
 from services.session_auth import current_username
+from services.data_cache import data_cache
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -180,6 +181,7 @@ def upload_source_workbook(service, workbook: bytes) -> None:
         media_body=media,
         supportsAllDrives=True,
     ).execute()
+    data_cache.invalidate("recluta:prospects")
 
 
 def sanitize_folder_name(value: str) -> str:
@@ -262,20 +264,29 @@ def create_folder_for_prospect(service, prospect: dict) -> dict:
     return prospect
 
 
+def _load_recluta_prospects_fresh():
+    columns, prospects = load_prospects()
+    phases = list(dict.fromkeys(item["fase"] for item in prospects))
+    return {
+        "source_file_id": RECLUTA_SOURCE_FILE_ID,
+        "source_url": f"https://docs.google.com/spreadsheets/d/{RECLUTA_SOURCE_FILE_ID}",
+        "documents_folder_id": RECLUTA_DOCUMENTS_FOLDER_ID,
+        "documents_folder_url": f"https://drive.google.com/drive/folders/{RECLUTA_DOCUMENTS_FOLDER_ID}",
+        "columns": columns,
+        "phases": phases,
+        "prospects": prospects,
+    }
+
+
 @router.get("/prospects")
 def get_recluta_prospects():
     try:
-        columns, prospects = load_prospects()
-        phases = list(dict.fromkeys(item["fase"] for item in prospects))
-        return {
-            "source_file_id": RECLUTA_SOURCE_FILE_ID,
-            "source_url": f"https://docs.google.com/spreadsheets/d/{RECLUTA_SOURCE_FILE_ID}",
-            "documents_folder_id": RECLUTA_DOCUMENTS_FOLDER_ID,
-            "documents_folder_url": f"https://drive.google.com/drive/folders/{RECLUTA_DOCUMENTS_FOLDER_ID}",
-            "columns": columns,
-            "phases": phases,
-            "prospects": prospects,
-        }
+        ttl_seconds = max(0, int(os.getenv("RECLUTA_CACHE_SECONDS", "300")))
+        return data_cache.get_or_load(
+            "recluta:prospects",
+            _load_recluta_prospects_fresh,
+            ttl_seconds=ttl_seconds,
+        ).value
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:

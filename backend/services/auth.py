@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from drive.client import download_drive_file_bytes
+from services.performance import mark_cache
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -600,6 +601,7 @@ def _load_credentials() -> dict[str, str]:
     now = time.monotonic()
     with _cache_lock:
         if _cached_credentials is not None and now < _cache_expires_at:
+            mark_cache("auth", "hit")
             return _cached_credentials
 
         # A valid local snapshot keeps authorization available after a process
@@ -613,12 +615,14 @@ def _load_credentials() -> dict[str, str]:
             except (FileNotFoundError, OSError, ValueError):
                 pass
             else:
+                mark_cache("auth", "snapshot")
                 _cached_credentials = credentials
                 _cached_profiles = profiles
                 _cache_expires_at = now + STALE_CACHE_RETRY_SECONDS
                 return credentials
 
         try:
+            mark_cache("auth", "miss")
             workbook = _download_users_workbook(file_id)
             credentials, profiles = _read_user_directory(workbook)
         except Exception:
@@ -628,6 +632,7 @@ def _load_credentials() -> dict[str, str]:
             # With no prior valid snapshot we still fail closed.
             if _cached_credentials is None or _cached_profiles is None:
                 raise
+            mark_cache("auth", "stale")
             _cache_expires_at = now + STALE_CACHE_RETRY_SECONDS
             return _cached_credentials
         try:

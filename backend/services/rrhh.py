@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from drive.client import download_drive_file_bytes
 from services.auth import _build_writable_drive_service
+from services.data_cache import data_cache
 
 
 router = APIRouter(prefix="/rrhh", tags=["rrhh"])
@@ -81,6 +82,7 @@ def _upload(file_id: str, rows: list[dict[str, Any]], headers: tuple[str, ...]) 
     _build_writable_drive_service().files().update(
         fileId=file_id, media_body=media, supportsAllDrives=True
     ).execute()
+    data_cache.invalidate("rrhh:data")
 
 
 def _vacations_file_id(*, create: bool = False) -> str | None:
@@ -150,16 +152,21 @@ def _people_and_vacations():
     return people, vacations
 
 
+def _load_hr_data_fresh():
+    people, vacations = _people_and_vacations()
+    serialized_people = [_serialize_person(row, index, vacations) for index, row in enumerate(people, 2)]
+    return {
+        "collaborators": serialized_people,
+        "vacations": [_serialize_vacation(row) for row in vacations],
+        "source_url": f"https://drive.google.com/open?id={PEOPLE_FILE_ID}",
+    }
+
+
 @router.get("")
 def get_hr_data():
     try:
-        people, vacations = _people_and_vacations()
-        serialized_people = [_serialize_person(row, index, vacations) for index, row in enumerate(people, 2)]
-        return {
-            "collaborators": serialized_people,
-            "vacations": [_serialize_vacation(row) for row in vacations],
-            "source_url": f"https://drive.google.com/open?id={PEOPLE_FILE_ID}",
-        }
+        ttl_seconds = max(0, int(os.getenv("RRHH_CACHE_SECONDS", "300")))
+        return data_cache.get_or_load("rrhh:data", _load_hr_data_fresh, ttl_seconds=ttl_seconds).value
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"No se pudo leer la información de RRHH: {exc}") from exc
 

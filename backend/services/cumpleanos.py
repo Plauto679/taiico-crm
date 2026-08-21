@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import io
 import re
 import threading
@@ -16,6 +17,7 @@ from config import METLIFE_PATHS
 from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
 from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workbook
 from services.pendientes import DEFAULT_AGENTS_METLIFE_FILE_ID, _download_workbook
+from services.data_cache import data_cache
 
 
 router = APIRouter(prefix="/cumpleanos", tags=["cumpleanos"])
@@ -343,22 +345,13 @@ def _load_directory_uncached() -> dict:
 
 
 def load_birthday_directory() -> dict:
-    global _cached_result, _cache_expires_at, _cache_signature
-
     signature = _source_signature()
-    now = time.monotonic()
-    with _cache_lock:
-        if (
-            _cached_result is not None
-            and _cache_signature == signature
-            and now < _cache_expires_at
-        ):
-            return _cached_result
-        result = _load_directory_uncached()
-        _cached_result = result
-        _cache_signature = signature
-        _cache_expires_at = now + CACHE_SECONDS
-        return result
+    signature_key = hashlib.sha256(repr(signature).encode("utf-8")).hexdigest()[:16]
+    return data_cache.get_or_load(
+        f"cumpleanos:clientes:{signature_key}",
+        _load_directory_uncached,
+        ttl_seconds=CACHE_SECONDS,
+    ).value
 
 
 @router.get("/clientes")

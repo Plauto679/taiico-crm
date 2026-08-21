@@ -74,6 +74,7 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
         { header: 'Teléfono', accessorKey: 'telefono' as keyof Cliente },
         {
             header: 'Estado',
+            filterValue: (client: Cliente) => client.estado_identidad === 'identified' ? 'Cliente identificado' : 'Prospecto',
             accessorKey: (client: Cliente) => (
                 <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${client.estado_identidad === 'identified' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
                     {client.estado_identidad === 'identified' ? 'Cliente identificado' : 'Prospecto'}
@@ -82,6 +83,7 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
         },
         {
             header: 'Expediente',
+            filterValue: (client: Cliente) => client.expediente_url ? 'Vinculado' : 'Sin vincular',
             accessorKey: (client: Cliente) => client.expediente_url ? (
                 <a href={client.expediente_url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="inline-flex items-center gap-1 font-semibold text-blue-600 hover:text-blue-800">
                     Abrir <ExternalLink className="h-3.5 w-3.5" />
@@ -91,8 +93,8 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
     ];
 
     return (
-        <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-lg shadow-sm">
+        <div className="flex h-full min-h-0 flex-col gap-6 overflow-hidden">
+            <div className="flex flex-none flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-lg shadow-sm">
                 <div className="relative flex-1 max-w-md">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                         <Search className="h-5 w-5 text-gray-400" />
@@ -116,7 +118,7 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
             </div>
 
             {audit && (
-                <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <section className="max-h-[42%] flex-none overflow-y-auto rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                     <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                             <h2 className="text-lg font-bold text-slate-900">Auditoría del registro maestro</h2>
@@ -147,10 +149,12 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
                 </section>
             )}
 
-            <div className="bg-white rounded-lg shadow overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-hidden rounded-lg bg-white shadow">
                 <DataTable
                     data={filteredClients}
                     columns={columns}
+                    filterMode="multi-select"
+                    className="h-full max-w-full overflow-auto border-0 shadow-none"
                     onRowClick={(row) => setSelectedClient(row)}
                 />
             </div>

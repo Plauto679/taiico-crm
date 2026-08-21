@@ -926,6 +926,20 @@ class PendingWorkbookTests(unittest.TestCase):
         self.assertEqual(set(GMM_DOCUMENT_REQUIREMENTS), GMM_REQUEST_OPTIONS)
         self.assertEqual(set(VIDA_DOCUMENT_REQUIREMENTS), VIDA_REQUEST_OPTIONS)
 
+    def test_siniestros_use_fixed_required_document_catalog(self):
+        from services.pendientes import _requirements_for_row
+
+        self.assertEqual(
+            _requirements_for_row({"summary": {}}, "siniestros"),
+            [
+                "Identificación",
+                "Comprobante de domicilio",
+                "Informe Médico",
+                "Facturas",
+                "Finiquito",
+            ],
+        )
+
     def test_multiple_requests_combine_requirements_without_duplicates(self):
         selected = "Cambio de contratante GMM, Rehabilitación GMM & Cambio clave de agente"
         self.assertEqual(

@@ -3,6 +3,15 @@ from __future__ import annotations
 import re
 
 
+SINIESTROS_DOCUMENT_REQUIREMENTS = [
+    "Identificación",
+    "Comprobante de domicilio",
+    "Informe Médico",
+    "Facturas",
+    "Finiquito",
+]
+
+
 GMM_DOCUMENT_REQUIREMENTS: dict[str, list[str]] = {
     "EMISION PERSONA FISICA": [
         "Solicitud Única Digital",

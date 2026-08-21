@@ -17,6 +17,8 @@ from xml.sax.saxutils import escape, quoteattr
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+from services.performance import timed
+from services.data_cache import data_cache
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from google.auth import default
@@ -36,7 +38,11 @@ from services.client_folders import (
     normalize_rfc,
     valid_client_rfc,
 )
-from services.pending_document_requirements import requirements_for, split_request_types
+from services.pending_document_requirements import (
+    SINIESTROS_DOCUMENT_REQUIREMENTS,
+    requirements_for,
+    split_request_types,
+)
 from services.mail_configuration import smtp_settings_for
 from services.renovaciones import send_email_smtp
 from services.xlsx_integrity import repair_workbook_integrity
@@ -1124,7 +1130,9 @@ def _create_folder_for_row(service, row: dict) -> dict:
     return row
 
 
-def _requirements_for_row(row: dict) -> list[str]:
+def _requirements_for_row(row: dict, source_key: str = "") -> list[str]:
+    if source_key == "siniestros":
+        return list(SINIESTROS_DOCUMENT_REQUIREMENTS)
     summary = row.get("summary", {})
     return requirements_for(
         clean_cell(summary.get("Casificacion", "")),
@@ -1134,16 +1142,17 @@ def _requirements_for_row(row: dict) -> list[str]:
 
 def _download_workbook(file_id: str, service=None) -> bytes:
     service = service or build_pending_drive_service()
-    output = io.BytesIO()
-    request = service.files().get_media(
-        fileId=file_id,
-        supportsAllDrives=True,
-    )
-    downloader = MediaIoBaseDownload(output, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    return output.getvalue()
+    with timed("drive"):
+        output = io.BytesIO()
+        request = service.files().get_media(
+            fileId=file_id,
+            supportsAllDrives=True,
+        )
+        downloader = MediaIoBaseDownload(output, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        return output.getvalue()
 
 
 def append_pending_record(workbook: bytes, source: PendingSource, values: dict[str, str]) -> tuple[bytes, int]:
@@ -1784,6 +1793,7 @@ def _source_file_id(source: PendingSource) -> str:
 def _clear_source_cache(source_key: str) -> None:
     with _cache_lock:
         _cache.pop(source_key, None)
+    data_cache.invalidate(f"pendientes:{source_key}")
 
 
 def normalize_report_recipients(values: list[str]) -> list[str]:
@@ -1915,19 +1925,21 @@ def load_pending_source(source: PendingSource, service=None) -> dict:
         0,
         int(os.getenv("PENDING_SOURCES_CACHE_SECONDS", str(DEFAULT_CACHE_SECONDS))),
     )
-    now = time.monotonic()
-    with _cache_lock:
-        cached = _cache.get(source.key)
-        if cached and now < cached[0]:
-            return cached[1]
-
-        service = service or build_pending_drive_service()
+    def load_fresh() -> dict:
+        active_service = build_pending_drive_service()
         file_id = _source_file_id(source)
-        result = parse_pending_workbook(_download_workbook(file_id, service), source)
-        _decorate_rows_with_folders(result, service)
+        workbook = _download_workbook(file_id, active_service)
+        with timed("excel"):
+            result = parse_pending_workbook(workbook, source)
+        _decorate_rows_with_folders(result, active_service)
         result["source_file_id"] = file_id
-        _cache[source.key] = (now + cache_seconds, result)
         return result
+
+    return data_cache.get_or_load(
+        f"pendientes:{source.key}",
+        load_fresh,
+        ttl_seconds=cache_seconds,
+    ).value
 
 
 @router.post("/report")
@@ -2348,7 +2360,7 @@ def get_pending_documents(
             return {
                 "row": row,
                 "folder_missing": True,
-                "required_documents": _requirements_for_row(row),
+                "required_documents": _requirements_for_row(row, source_key),
                 "documents": [],
             }
         response = service.files().list(
@@ -2362,7 +2374,7 @@ def get_pending_documents(
         return {
             "row": row,
             "folder_missing": False,
-            "required_documents": _requirements_for_row(row),
+            "required_documents": _requirements_for_row(row, source_key),
             "documents": response.get("files", []),
         }
     except HTTPException:

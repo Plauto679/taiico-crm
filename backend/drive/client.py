@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from services.performance import timed
 
 
 DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
@@ -34,12 +35,13 @@ def download_drive_file(service, file_id: str, destination_path: Path) -> Path:
         ) from exc
 
     destination_path.parent.mkdir(parents=True, exist_ok=True)
-    request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
-    with destination_path.open("wb") as file_handle:
-        downloader = MediaIoBaseDownload(file_handle, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
+    with timed("drive"):
+        request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+        with destination_path.open("wb") as file_handle:
+            downloader = MediaIoBaseDownload(file_handle, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
 
     return destination_path
 
@@ -61,26 +63,27 @@ def download_drive_file_bytes(file_id: str, *, timeout: int = 120) -> bytes:
             "Google Drive dependencies are not installed. Run `pip install -r backend/requirements.txt`."
         ) from exc
 
-    credentials, _ = default(scopes=[DRIVE_READONLY_SCOPE])
-    url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
-    last_error: Exception | None = None
+    with timed("drive"):
+        credentials, _ = default(scopes=[DRIVE_READONLY_SCOPE])
+        url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
+        last_error: Exception | None = None
 
-    for attempt in range(3):
-        session = AuthorizedSession(credentials)
-        try:
-            response = session.get(
-                url,
-                params={"alt": "media", "supportsAllDrives": "true"},
-                timeout=timeout,
-            )
-            response.raise_for_status()
-            return response.content
-        except (OSError, RequestException, TransportError) as exc:
-            last_error = exc
-            if attempt < 2:
-                time.sleep(0.25 * (2**attempt))
-        finally:
-            session.close()
+        for attempt in range(3):
+            session = AuthorizedSession(credentials)
+            try:
+                response = session.get(
+                    url,
+                    params={"alt": "media", "supportsAllDrives": "true"},
+                    timeout=timeout,
+                )
+                response.raise_for_status()
+                return response.content
+            except (OSError, RequestException, TransportError) as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(0.25 * (2**attempt))
+            finally:
+                session.close()
 
-    assert last_error is not None
-    raise last_error
+        assert last_error is not None
+        raise last_error

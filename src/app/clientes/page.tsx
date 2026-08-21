@@ -8,12 +8,12 @@ export default async function ClientesPage() {
 
     return (
         <div className="flex flex-col h-full">
-            <div className="flex-none p-8 pb-4">
+            <div className="flex-none p-4 pb-3 sm:p-8 sm:pb-4">
                 <h1 className="text-2xl font-bold text-white">Clientes</h1>
                 <p className="mt-1 text-sm text-blue-100">Registro maestro de identidad y expedientes únicos.</p>
             </div>
 
-            <div className="flex-1 min-h-0 px-8 pb-8">
+            <div className="min-h-0 flex-1 px-4 pb-4 sm:px-8 sm:pb-8">
                 <ClientesView initialClients={clients} />
             </div>
         </div>

@@ -14,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
+from services.performance import timed
+from services.data_cache import data_cache
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import or_
@@ -200,6 +202,7 @@ def _upload_workbook(workbook_bytes: bytes) -> None:
     _build_writable_drive_service().files().update(
         fileId=_file_id(), media_body=media, supportsAllDrives=True
     ).execute()
+    data_cache.invalidate("cotizaciones:list")
 
 
 def _load_workbook():
@@ -207,7 +210,9 @@ def _load_workbook():
         from openpyxl import load_workbook
     except ImportError as exc:
         raise RuntimeError("openpyxl es necesario para administrar cotizaciones") from exc
-    return load_workbook(io.BytesIO(download_drive_file_bytes(_file_id())))
+    workbook_bytes = download_drive_file_bytes(_file_id())
+    with timed("excel"):
+        return load_workbook(io.BytesIO(workbook_bytes))
 
 
 def _sheet_and_headers(workbook):
@@ -1032,7 +1037,7 @@ def assigned_agent(
     return matches[0]
 
 
-def list_quotes() -> list[dict[str, str]]:
+def _list_quotes_fresh() -> list[dict[str, str]]:
     workbook = _load_workbook()
     sheet, headers = _sheet_and_headers(workbook)
     rows = []
@@ -1041,6 +1046,15 @@ def list_quotes() -> list[dict[str, str]]:
         if any(row.values()):
             rows.append(row)
     return rows
+
+
+def list_quotes() -> list[dict[str, str]]:
+    ttl_seconds = max(0, int(os.getenv("QUOTES_CACHE_SECONDS", "120")))
+    return data_cache.get_or_load(
+        "cotizaciones:list",
+        _list_quotes_fresh,
+        ttl_seconds=ttl_seconds,
+    ).value
 
 
 def create_quote(payload: QuoteCreate, profile: AccessProfile) -> dict[str, str]:
