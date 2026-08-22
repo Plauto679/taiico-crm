@@ -1,6 +1,6 @@
 import { SmartLink } from '@/components/navigation/SmartLink';
 import { redirect } from 'next/navigation';
-import { DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound } from 'lucide-react';
+import { DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone } from 'lucide-react';
 import { fetchFromApi } from '@/lib/api';
 
 export default async function Home() {
@@ -194,6 +194,9 @@ export default async function Home() {
         )}
         {['lectura', 'operacion'].includes(session.module_permissions.rrhh || '') && (
           <SmartLink href="/rrhh" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-teal-400 hover:shadow-2xl hover:scale-105 transition-all duration-300"><div className="flex flex-col items-center text-center space-y-4"><div className="rounded-full bg-teal-100 p-4 text-teal-700 group-hover:bg-teal-600 group-hover:text-white transition-colors duration-300"><ContactRound className="h-8 w-8" /></div><div><h2 className="text-2xl font-bold text-gray-900">RRHH</h2><p className="text-gray-500 mt-2">Colaboradores, contratos y vacaciones</p></div></div></SmartLink>
+        )}
+        {['lectura', 'operacion'].includes(session.module_permissions.campanas || '') && (
+          <SmartLink href="/campanas" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-rose-400 hover:shadow-2xl hover:scale-105 transition-all duration-300"><div className="flex flex-col items-center text-center space-y-4"><div className="rounded-full bg-rose-100 p-4 text-rose-700 group-hover:bg-rose-600 group-hover:text-white transition-colors duration-300"><Megaphone className="h-8 w-8" /></div><div><h2 className="text-2xl font-bold text-gray-900">Campañas</h2><p className="text-gray-500 mt-2">Audiencias, mensajes y resultados</p></div></div></SmartLink>
         )}
       </div>
       </div>

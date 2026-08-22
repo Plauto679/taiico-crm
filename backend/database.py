@@ -102,6 +102,41 @@ class AuditLog(Base):
     user_agent = Column(String(500), nullable=True)
     drive_snapshot = Column(String(500), nullable=True)
 
+
+class Campaign(Base):
+    __tablename__ = "campaigns"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String(255), nullable=False)
+    subject = Column(String(500), nullable=False)
+    body = Column(Text, nullable=False)
+    status = Column(String(30), default="borrador", nullable=False, index=True)
+    segment_json = Column("segment", JSON, default={}, nullable=False)
+    created_by = Column(String(255), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+
+class CampaignDelivery(Base):
+    __tablename__ = "campaign_deliveries"
+    __table_args__ = (UniqueConstraint("campaign_id", "recipient_key", name="uq_campaign_delivery_recipient"),)
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id = Column(String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False, index=True)
+    recipient_key = Column(String(500), nullable=False)
+    policy_number = Column(String(100), nullable=True, index=True)
+    rfc = Column(String(20), nullable=True, index=True)
+    client_name = Column(String(500), nullable=False)
+    email = Column(String(320), nullable=True, index=True)
+    rendered_subject = Column(String(500), nullable=True)
+    rendered_body = Column(Text, nullable=True)
+    status = Column(String(40), nullable=False, index=True)
+    error_detail = Column(Text, nullable=True)
+    attempts = Column(Integer, default=0, nullable=False)
+    sent_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
 # 2. Insurer Model
 class Insurer(Base):
     __tablename__ = "insurers"
