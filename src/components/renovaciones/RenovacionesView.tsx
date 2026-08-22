@@ -157,6 +157,8 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         { header: 'Forma Pago', accessorKey: 'FORMA_PAGO' as keyof RenovacionVida },
         { header: 'Conducto Cobro', accessorKey: 'CONDUCTO_COBRO' as keyof RenovacionVida },
         { header: 'Agente', accessorKey: 'AGENTE' as keyof RenovacionVida },
+        { header: 'Nombre', accessorKey: 'NOMBRE' as keyof RenovacionVida },
+        { header: 'Promotoría', accessorKey: 'PROMOTORIA' as keyof RenovacionVida },
         {
             header: 'Prima Anual',
             accessorKey: (row: RenovacionVida) => {
@@ -204,6 +206,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         { header: 'Pagado Hasta', accessorKey: 'PAGADOHASTA' as keyof RenovacionGMM },
         { header: 'Agente', accessorKey: 'AGENTE' as keyof RenovacionGMM },
         { header: 'Nombre', accessorKey: 'NOMBRE' as keyof RenovacionGMM },
+        { header: 'Promotoría', accessorKey: 'PROMOTORIA' as keyof RenovacionGMM },
         { header: 'Estatus Renovación', accessorKey: 'ESTATUS_DE_RENOVACION' as keyof RenovacionGMM },
         {
             header: 'Expediente',

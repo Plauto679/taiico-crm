@@ -37,3 +37,29 @@ export interface ClientRegistryAudit {
     truncated: Record<string, boolean>;
     drive_folder_url: string;
 }
+
+export interface ClientIdentityCandidateMember {
+    id: string;
+    nombre: string;
+    rfc?: string | null;
+    correo?: string | null;
+    telefono?: string | null;
+    estado_identidad: string;
+    expediente_url?: string | null;
+    relaciones: Record<string, number>;
+}
+
+export interface ClientIdentityCandidateGroup {
+    group_id: string;
+    confidence: 'alta' | 'media';
+    reasons: string[];
+    conflicting_rfcs: boolean;
+    canonical_options: string[];
+    members: ClientIdentityCandidateMember[];
+}
+
+export interface ClientIdentityCandidatesResponse {
+    groups: ClientIdentityCandidateGroup[];
+    total_groups: number;
+    truncated: boolean;
+}

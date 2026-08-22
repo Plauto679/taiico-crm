@@ -33,6 +33,7 @@ from parsers.metlife_vida_renovaciones import PARSER_VERSION as METLIFE_VIDA_REN
 from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workbook
 from adapters.metlife_gmm_portal import MetLifeGmmPortalAdapter, MetLifeGmmPortalTask, result_to_dict, stable_chrome_profile_dir
 from services.mail_configuration import smtp_settings_for, smtp_ssl_context
+from services.metlife_agent_directory import normalize_agent_key, promotoria_by_agent_key
 from services.session_auth import current_username
 from drive.client import build_drive_service
 
@@ -122,6 +123,42 @@ def metlife_gmm_agents() -> dict[tuple[str, str], dict[str, str]]:
     workbook_path = Path(METLIFE_PATHS["RENOVACIONES_GMM"])
     stat = workbook_path.stat()
     return _cached_metlife_gmm_agents(
+        str(workbook_path),
+        stat.st_mtime_ns,
+        stat.st_size,
+    )
+
+
+@lru_cache(maxsize=4)
+def _cached_metlife_vida_agents(
+    workbook_path: str,
+    modified_time_ns: int,
+    size: int,
+) -> dict[tuple[str, str], dict[str, str]]:
+    """Index Vida agent fields from the current canonical workbook version."""
+    del modified_time_ns, size
+    parsed_rows, _issues = parse_metlife_vida_renewal_workbook(Path(workbook_path))
+    indexed: dict[tuple[str, str], dict[str, str]] = {}
+    for row in parsed_rows:
+        payload = row.normalized_payload
+        policy_number = str(payload.get("policy_number") or "").strip()
+        if not policy_number:
+            continue
+        renewal_deadline = payload.get("renewal_deadline")
+        deadline_key = renewal_deadline.isoformat() if renewal_deadline else ""
+        agent = {
+            "AGENTE": str(payload.get("agent_code") or ""),
+            "NOMBRE": str(payload.get("agent_name") or ""),
+        }
+        indexed[(policy_number, deadline_key)] = agent
+        indexed[(policy_number, "")] = agent
+    return indexed
+
+
+def metlife_vida_agents() -> dict[tuple[str, str], dict[str, str]]:
+    workbook_path = Path(METLIFE_PATHS["RENOVACIONES_VIDA"])
+    stat = workbook_path.stat()
+    return _cached_metlife_vida_agents(
         str(workbook_path),
         stat.st_mtime_ns,
         stat.st_size,
@@ -1407,8 +1444,14 @@ async def get_upcoming_renewals(
     try:
         results = []
         gmm_agents: dict[tuple[str, str], dict[str, str]] = {}
+        vida_agents: dict[tuple[str, str], dict[str, str]] = {}
+        promoterias: dict[str, str] = {}
         if insurer.lower() == "metlife" and type.upper() in {"ALL", "GMM"}:
             gmm_agents = await run_in_threadpool(metlife_gmm_agents)
+        if insurer.lower() == "metlife" and type.upper() in {"ALL", "VIDA"}:
+            vida_agents = await run_in_threadpool(metlife_vida_agents)
+        if insurer.lower() == "metlife":
+            promoterias = await run_in_threadpool(promotoria_by_agent_key)
         
         # Build base date range
         today = datetime.now().date()
@@ -1442,6 +1485,11 @@ async def get_upcoming_renewals(
             for ren in renewals:
                 pol = ren.original_policy
                 if pol.product_id == "prod_met_vida":
+                    agent = vida_agents.get(
+                        (str(pol.policy_number).strip(), format_date(ren.renewal_deadline)),
+                        vida_agents.get((str(pol.policy_number).strip(), ""), {}),
+                    )
+                    agent_code = agent.get("AGENTE", "")
                     results.append({
                         "POLIZA_ACTUAL": pol.policy_number,
                         "CONTRATANTE": pol.client.full_name if pol.client else "",
@@ -1449,7 +1497,9 @@ async def get_upcoming_renewals(
                         "FIN_VIG": format_date(ren.renewal_deadline),
                         "FORMA_PAGO": pol.payment_frequency.upper(),
                         "CONDUCTO_COBRO": "Conducto de Cobro",
-                        "AGENTE": "Pamela Asmara",
+                        "AGENTE": agent_code,
+                        "NOMBRE": agent.get("NOMBRE", ""),
+                        "PROMOTORIA": promoterias.get(normalize_agent_key(agent_code), ""),
                         "PRIMA_ANUAL": float(pol.premium_amount) if pol.premium_amount else 0.0,
                         "PRIMA_MODAL": float(pol.premium_amount / 12) if pol.premium_amount else 0.0,
                         "PAGADO_HASTA": format_date(pol.effective_end_date),
@@ -1462,6 +1512,7 @@ async def get_upcoming_renewals(
                         (str(pol.policy_number).strip(), format_date(ren.renewal_deadline)),
                         gmm_agents.get((str(pol.policy_number).strip(), ""), {}),
                     )
+                    agent_code = agent.get("AGENTE", "")
                     results.append({
                         "NPOLIZA": pol.policy_number,
                         "POLORIG": pol.policy_number,
@@ -1473,8 +1524,9 @@ async def get_upcoming_renewals(
                         "DEDUCIBLE": 0.0,
                         "PAGADOHASTA": format_date(pol.effective_end_date),
                         "COASEGURO": 0.0,
-                        "AGENTE": agent.get("AGENTE", ""),
+                        "AGENTE": agent_code,
                         "NOMBRE": agent.get("NOMBRE", ""),
+                        "PROMOTORIA": promoterias.get(normalize_agent_key(agent_code), ""),
                         "ESTATUS_DE_RENOVACION": ren.insurer_response,
                         "EXPEDIENTE": pol.document_link,
                         "Email": pol.client.email if pol.client else None

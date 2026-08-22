@@ -17,6 +17,7 @@ export function EditClientModal({ isOpen, onClose, client, onSave, onDelete }: E
     const [rfc, setRfc] = useState('');
     const [correo, setCorreo] = useState('');
     const [telefono, setTelefono] = useState('');
+    const [expedienteUrl, setExpedienteUrl] = useState('');
     const [isSaving, setIsSaving] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
 
@@ -26,6 +27,7 @@ export function EditClientModal({ isOpen, onClose, client, onSave, onDelete }: E
             setRfc(client.rfc || '');
             setCorreo(client.correo || '');
             setTelefono(client.telefono || '');
+            setExpedienteUrl(client.expediente_url || '');
         }
     }, [client]);
 
@@ -42,11 +44,12 @@ export function EditClientModal({ isOpen, onClose, client, onSave, onDelete }: E
                 rfc: rfc.trim().toUpperCase() || undefined,
                 correo: correo.trim() || undefined,
                 telefono: telefono.trim() || undefined,
+                expediente_url: expedienteUrl.trim() || null,
             });
             onClose();
         } catch (error) {
             console.error('Error updating client:', error);
-            alert('Error al actualizar el cliente');
+            alert(error instanceof Error ? error.message : 'Error al actualizar el cliente');
         } finally {
             setIsSaving(false);
         }
@@ -61,15 +64,15 @@ export function EditClientModal({ isOpen, onClose, client, onSave, onDelete }: E
             onClose();
         } catch (error) {
             console.error('Error deleting client:', error);
-            alert('Error al eliminar el cliente');
+            alert(error instanceof Error ? error.message : 'Error al eliminar el cliente');
         } finally {
             setIsDeleting(false);
         }
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm">
+            <div className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-medium text-gray-900">Editar Cliente</h3>
                     <button onClick={onClose} className="text-gray-400 hover:text-gray-500">
@@ -90,6 +93,21 @@ export function EditClientModal({ isOpen, onClose, client, onSave, onDelete }: E
                             onChange={(e) => setNombre(e.target.value)}
                             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
                         />
+                    </div>
+
+                    <div>
+                        <label htmlFor="edit-expediente" className="block text-sm font-medium text-gray-700">
+                            Liga del expediente único (Opcional)
+                        </label>
+                        <input
+                            type="url"
+                            id="edit-expediente"
+                            placeholder="https://drive.google.com/drive/folders/..."
+                            value={expedienteUrl}
+                            onChange={(e) => setExpedienteUrl(e.target.value)}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
+                        />
+                        <p className="mt-1 text-xs text-slate-500">Debe ser la carpeta única correspondiente al RFC del cliente.</p>
                     </div>
 
                     <div>

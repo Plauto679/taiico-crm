@@ -701,12 +701,23 @@ async def apply_metlife_gmm_base(token: str):
             manifest["candidate_sha256"],
             manifest["canonical_sha256"],
         )
+        try:
+            from services.renewal_ingestion import sync_local_canonical_renewals
+
+            renewal_sync = await run_in_threadpool(
+                sync_local_canonical_renewals,
+                "renovaciones.metlife_gmm",
+            )
+        except Exception as sync_exc:
+            logger.exception("Canonical workbook applied but renewal synchronization failed")
+            renewal_sync = {"status": "failed", "error": str(sync_exc)}
         shutil.rmtree(token_dir, ignore_errors=True)
         return {
             "applied": True,
             "filename": manifest["filename"],
             **manifest["preview"],
             **result,
+            "renewal_sync": renewal_sync,
         }
     except Exception as exc:
         logger.exception(

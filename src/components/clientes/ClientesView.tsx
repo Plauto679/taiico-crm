@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Cliente, ClientRegistryAudit } from '@/lib/types/clientes';
+import { Cliente, ClientIdentityCandidatesResponse, ClientRegistryAudit } from '@/lib/types/clientes';
 import { DataTable } from '@/components/ui/DataTable';
 import { AddClientModal } from './AddClientModal';
 import { EditClientModal } from './EditClientModal';
-import { addClient, updateClient, deleteClient, getClientRegistryAudit, syncClientFolderLinks } from '@/modules/clientes/service';
-import { AlertTriangle, ExternalLink, RefreshCw, Search, ShieldCheck, UserPlus } from 'lucide-react';
+import { ClientIdentityModal } from './ClientIdentityModal';
+import { addClient, updateClient, deleteClient, getClientIdentityCandidates, getClientRegistryAudit, mergeClients, syncClientFolderLinks } from '@/modules/clientes/service';
+import { AlertTriangle, ExternalLink, GitMerge, RefreshCw, Search, ShieldCheck, UserPlus } from 'lucide-react';
 
 interface ClientesViewProps {
     initialClients: Cliente[];
@@ -22,6 +23,9 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
     const [audit, setAudit] = useState<ClientRegistryAudit | null>(null);
     const [isAuditing, setIsAuditing] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [identityCandidates, setIdentityCandidates] = useState<ClientIdentityCandidatesResponse | null>(null);
+    const [isLoadingCandidates, setIsLoadingCandidates] = useState(false);
+    const [isMerging, setIsMerging] = useState(false);
 
     useEffect(() => setClients(initialClients), [initialClients]);
 
@@ -42,7 +46,12 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
     };
 
     const handleDeleteClient = async (nombre: string) => {
-        await deleteClient(selectedClient?.id, nombre);
+        const deletedId = selectedClient?.id;
+        const result = await deleteClient(deletedId, nombre);
+        setClients((current) => current.filter((client) => client.id !== deletedId));
+        if (result.result === 'archived') {
+            alert('El registro tenía información vinculada. Se archivó sin eliminar sus pólizas ni su historial.');
+        }
         router.refresh();
     };
 
@@ -64,6 +73,31 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
             setAudit(await getClientRegistryAudit());
         } finally {
             setIsSyncing(false);
+        }
+    };
+
+    const openIdentityCandidates = async () => {
+        setIsLoadingCandidates(true);
+        try {
+            setIdentityCandidates(await getClientIdentityCandidates());
+        } catch (error) {
+            alert(error instanceof Error ? error.message : 'No fue posible analizar los clientes.');
+        } finally {
+            setIsLoadingCandidates(false);
+        }
+    };
+
+    const mergeIdentityGroup = async (canonicalId: string, duplicateIds: string[]) => {
+        setIsMerging(true);
+        try {
+            const result = await mergeClients(canonicalId, duplicateIds);
+            alert(`${result.merged_count} registro(s) homologado(s) correctamente bajo el RFC ${result.canonical_rfc}.`);
+            setIdentityCandidates(await getClientIdentityCandidates());
+            router.refresh();
+        } catch (error) {
+            alert(error instanceof Error ? error.message : 'No fue posible homologar los clientes.');
+        } finally {
+            setIsMerging(false);
         }
     };
 
@@ -108,6 +142,9 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
                     />
                 </div>
                 <div className="flex flex-wrap gap-2">
+                    <button onClick={openIdentityCandidates} disabled={isLoadingCandidates} className="inline-flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">
+                        <GitMerge className="mr-2 h-5 w-5" /> {isLoadingCandidates ? 'Analizando…' : 'Homologar clientes'}
+                    </button>
                     <button onClick={runAudit} disabled={isAuditing} className="inline-flex items-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                         <ShieldCheck className="mr-2 h-5 w-5" /> {isAuditing ? 'Auditando...' : 'Auditar expedientes'}
                     </button>
@@ -172,6 +209,16 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
                 onSave={handleUpdateClient}
                 onDelete={handleDeleteClient}
             />
+
+            {identityCandidates && (
+                <ClientIdentityModal
+                    data={identityCandidates}
+                    clients={clients}
+                    isMerging={isMerging}
+                    onClose={() => setIdentityCandidates(null)}
+                    onMerge={mergeIdentityGroup}
+                />
+            )}
         </div>
     );
 }

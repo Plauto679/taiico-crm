@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from config import GOOGLE_DRIVE_SOURCE_FOLDERS
+from config import GOOGLE_DRIVE_SOURCE_FOLDERS, METLIFE_PATHS
 from database import (
     Client,
     DataQualityIssue,
@@ -52,6 +52,11 @@ SUPPORTED_SOURCES = {
     ),
 }
 
+LOCAL_CANONICAL_PATHS = {
+    "renovaciones.metlife_gmm": METLIFE_PATHS["RENOVACIONES_GMM"],
+    "renovaciones.metlife_vida": METLIFE_PATHS["RENOVACIONES_VIDA"],
+}
+
 
 class CanonicalRenewalIngestionRequest(BaseModel):
     source_key: str
@@ -81,6 +86,15 @@ def find_policy(db, policy_number: str | None):
     return db.query(Policy).filter(
         Policy.insurer_id == "metlife",
         Policy.policy_number == str(policy_number).strip(),
+    ).first()
+
+
+def find_policy_number_conflict(db, policy_number: str | None):
+    if not policy_number:
+        return None
+    return db.query(Policy).filter(
+        Policy.policy_number == str(policy_number).strip(),
+        Policy.insurer_id != "metlife",
     ).first()
 
 
@@ -195,14 +209,11 @@ def ingest_rows(db, source_document, parsed_rows, workbook_issues, parser_name, 
             IngestionRecord.row_number == row.row_number,
             IngestionRecord.row_hash == row.row_hash,
         ).first()
-        if existing_record:
-            run.rows_skipped += 1
-            continue
-
         payload = row.normalized_payload
         policy_number = payload.get("policy_number")
         deadline = payload.get("renewal_deadline")
         policy = find_policy(db, policy_number)
+        policy_number_conflict = find_policy_number_conflict(db, policy_number) if policy is None else None
         reconciliation_status = "matched" if policy else "unmatched"
         confidence = Decimal("1.00") if policy else Decimal("0.00")
         match_basis = "policy_number_exact" if policy else "policy_number_not_found"
@@ -210,6 +221,9 @@ def ingest_rows(db, source_document, parsed_rows, workbook_issues, parser_name, 
         if not policy_number or not deadline:
             reconciliation_status = "failed"
             match_basis = "missing_policy_number_or_renewal_deadline"
+        elif policy_number_conflict is not None:
+            reconciliation_status = "failed"
+            match_basis = "policy_number_used_by_another_insurer"
         elif policy is None and auto_create:
             policy = create_provisional_policy(db, payload, product_id)
             provisional_policies += 1
@@ -253,35 +267,45 @@ def ingest_rows(db, source_document, parsed_rows, workbook_issues, parser_name, 
             run.rows_failed += 1
 
         issue_summary = "; ".join(issue["issue_summary"] for issue in row.issues) if row.issues else None
-        record = IngestionRecord(
-            ingestion_run_id=run.id,
-            source_document_id=source_document.id,
-            sheet_name=row.sheet_name,
-            row_number=row.row_number,
-            row_hash=row.row_hash,
-            source_payload=json_ready(row.source_payload),
-            normalized_payload=json_ready(payload),
-            related_object_type="renewal" if renewal else None,
-            related_object_id=renewal.id if renewal else None,
-            reconciliation_status=reconciliation_status,
-            reconciliation_confidence=confidence,
-            issue_summary=issue_summary,
-        )
-        db.add(record)
-        db.flush()
-        db.add(ReconciliationMatch(
-            ingestion_record_id=record.id,
-            matched_object_type="policy",
-            matched_object_id=policy.id if policy else None,
-            match_basis=match_basis,
-            confidence=confidence,
-            status=reconciliation_status,
-        ))
+        if existing_record:
+            record = existing_record
+            record.source_payload = json_ready(row.source_payload)
+            record.normalized_payload = json_ready(payload)
+            record.related_object_type = "renewal" if renewal else None
+            record.related_object_id = renewal.id if renewal else None
+            record.reconciliation_status = reconciliation_status
+            record.reconciliation_confidence = confidence
+            record.issue_summary = issue_summary
+        else:
+            record = IngestionRecord(
+                ingestion_run_id=run.id,
+                source_document_id=source_document.id,
+                sheet_name=row.sheet_name,
+                row_number=row.row_number,
+                row_hash=row.row_hash,
+                source_payload=json_ready(row.source_payload),
+                normalized_payload=json_ready(payload),
+                related_object_type="renewal" if renewal else None,
+                related_object_id=renewal.id if renewal else None,
+                reconciliation_status=reconciliation_status,
+                reconciliation_confidence=confidence,
+                issue_summary=issue_summary,
+            )
+            db.add(record)
+            db.flush()
+            db.add(ReconciliationMatch(
+                ingestion_record_id=record.id,
+                matched_object_type="policy",
+                matched_object_id=policy.id if policy else None,
+                match_basis=match_basis,
+                confidence=confidence,
+                status=reconciliation_status,
+            ))
 
-        for issue in row.issues:
+        for issue in ([] if existing_record else row.issues):
             db.add(DataQualityIssue(ingestion_run_id=run.id, ingestion_record_id=record.id, **issue))
             issues_created += 1
-        if reconciliation_status in {"unmatched", "created_provisional"}:
+        if not existing_record and reconciliation_status in {"unmatched", "created_provisional"}:
             db.add(DataQualityIssue(
                 ingestion_run_id=run.id,
                 ingestion_record_id=record.id,
@@ -292,6 +316,20 @@ def ingest_rows(db, source_document, parsed_rows, workbook_issues, parser_name, 
                 issue_summary=(
                     f"Policy {policy_number} was created provisionally from the canonical renewal source."
                     if policy else f"Policy {policy_number} was not found and was not materialized."
+                ),
+            ))
+            issues_created += 1
+        if not existing_record and policy_number_conflict is not None:
+            db.add(DataQualityIssue(
+                ingestion_run_id=run.id,
+                ingestion_record_id=record.id,
+                related_object_type="policy",
+                related_object_id=policy_number_conflict.id,
+                severity="high",
+                issue_type="cross_insurer_policy_number_conflict",
+                issue_summary=(
+                    f"Policy {policy_number} could not be created for MetLife because the same number "
+                    f"is already assigned to insurer {policy_number_conflict.insurer_id}."
                 ),
             ))
             issues_created += 1
@@ -315,6 +353,56 @@ def ingest_rows(db, source_document, parsed_rows, workbook_issues, parser_name, 
         "rows_failed": run.rows_failed,
         "metadata": run.metadata_json,
     }
+
+
+def sync_local_canonical_renewals(
+    source_key: str,
+    *,
+    auto_create_missing_policies: bool = True,
+) -> dict:
+    """Reconcile the SQL read model with an installed local canonical workbook."""
+    spec = SUPPORTED_SOURCES.get(source_key)
+    canonical_path = LOCAL_CANONICAL_PATHS.get(source_key)
+    if not spec or not canonical_path:
+        raise ValueError(f"No canonical renewal parser is configured for {source_key}")
+    config = GOOGLE_DRIVE_SOURCE_FOLDERS.get(source_key) or {}
+    file_id = config.get("file_id")
+    if not file_id:
+        raise ValueError(f"Missing canonical Drive file ID for {source_key}")
+
+    parser, parser_name, parser_version, branch, product_id = spec
+    db = SessionLocal()
+    try:
+        source_document = db.query(SourceDocument).filter(
+            SourceDocument.google_drive_file_id == file_id,
+        ).first()
+        if not source_document:
+            raise ValueError("Canonical source must be registered before ingestion")
+        parsed_rows, workbook_issues = parser(canonical_path)
+        summary = summarize_rows(db, parsed_rows)
+        result = ingest_rows(
+            db,
+            source_document,
+            parsed_rows,
+            workbook_issues,
+            parser_name,
+            parser_version,
+            product_id,
+            auto_create_missing_policies,
+        )
+        db.commit()
+        return {
+            "source_key": source_key,
+            "product_branch": branch,
+            "workbook_issues": workbook_issues,
+            "run": result,
+            **summary,
+        }
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 @router.post("/canonical/run")

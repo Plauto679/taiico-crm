@@ -84,6 +84,20 @@ class ClientMergeTests(unittest.TestCase):
                 duplicate_id="duplicate",
             )
 
+    def test_merges_prospect_without_rfc_and_preserves_name_as_alias(self):
+        self.duplicate.rfc = None
+        self.db.commit()
+
+        merge_duplicate_client(
+            self.db,
+            canonical_id="canonical",
+            duplicate_id="duplicate",
+        )
+        self.db.commit()
+
+        canonical = self.db.query(Client).filter(Client.id == "canonical").one()
+        self.assertIn("VALVERDE ANDALON AXEL", canonical.metadata_json["name_aliases"])
+
 
 if __name__ == "__main__":
     unittest.main()

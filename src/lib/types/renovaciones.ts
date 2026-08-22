@@ -11,6 +11,7 @@ export interface RenovacionGMM {
     COASEGURO?: number; // Optional as it wasn't strictly in the display list but is useful
     AGENTE: string;
     NOMBRE: string;
+    PROMOTORIA: string;
     ESTATUS_DE_RENOVACION?: string;
     EXPEDIENTE?: string;
     Email?: string;
@@ -24,6 +25,8 @@ export interface RenovacionVida {
     FORMA_PAGO: string;
     CONDUCTO_COBRO: string;
     AGENTE: string;
+    NOMBRE: string;
+    PROMOTORIA: string;
     PRIMA_ANUAL: number;
     PRIMA_MODAL: number;
     PAGADO_HASTA: string; // Date YYYY-MM-DD

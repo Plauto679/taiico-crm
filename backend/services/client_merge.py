@@ -17,6 +17,11 @@ def _merge_metadata(canonical_value: Any, duplicate_value: Any, duplicate_id: st
     if duplicate_id not in merged_ids:
         merged_ids.append(duplicate_id)
     merged["merged_client_ids"] = merged_ids
+    aliases = list(merged.get("name_aliases") or [])
+    duplicate_name = duplicate.get("previous_full_name")
+    if duplicate_name and duplicate_name not in aliases:
+        aliases.append(duplicate_name)
+    merged["name_aliases"] = aliases
     merged["last_client_merge_at"] = datetime.datetime.utcnow().isoformat()
     return merged
 
@@ -32,8 +37,10 @@ def merge_duplicate_client(db, *, canonical_id: str, duplicate_id: str) -> dict:
 
     canonical_rfc = normalize_rfc(canonical.rfc)
     duplicate_rfc = normalize_rfc(duplicate.rfc)
-    if not canonical_rfc or canonical_rfc != duplicate_rfc:
-        raise ValueError("Solo se pueden consolidar clientes con el mismo RFC válido.")
+    if not canonical_rfc:
+        raise ValueError("El cliente maestro debe tener un RFC válido.")
+    if duplicate_rfc and canonical_rfc != duplicate_rfc:
+        raise ValueError("Solo se pueden consolidar registros con el mismo RFC; los RFC son distintos.")
 
     bind = db.get_bind()
     metadata = MetaData()
@@ -69,9 +76,19 @@ def merge_duplicate_client(db, *, canonical_id: str, duplicate_id: str) -> dict:
 
     canonical.rfc = canonical_rfc
     canonical.identity_status = "identified"
+    duplicate_metadata = dict(duplicate.metadata_json or {})
+    duplicate_metadata["previous_full_name"] = duplicate.full_name
+    if duplicate.drive_folder_id:
+        legacy_folders = list(duplicate_metadata.get("legacy_drive_folders") or [])
+        legacy_folders.append({
+            "id": duplicate.drive_folder_id,
+            "url": duplicate.drive_folder_url,
+            "name": duplicate.drive_folder_name,
+        })
+        duplicate_metadata["legacy_drive_folders"] = legacy_folders
     canonical.metadata_json = _merge_metadata(
         canonical.metadata_json,
-        duplicate.metadata_json,
+        duplicate_metadata,
         duplicate.id,
     )
     if duplicate.created_at and (
