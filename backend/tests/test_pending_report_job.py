@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from jobs.send_pending_report import configured_recipients, run, should_send
+from jobs.send_pending_report import configured_recipients, run, should_send, should_send_reminder
 
 
 class PendingReportJobTests(unittest.TestCase):
@@ -46,7 +46,15 @@ class PendingReportJobTests(unittest.TestCase):
         ):
             self.assertFalse(should_send(now, None))
 
-    def test_job_sends_restricted_assignment_report_to_central_team(self):
+    def test_reminder_runs_monday_once_after_10(self):
+        monday = datetime(2026, 7, 27, 10, 0, tzinfo=ZoneInfo("America/Mexico_City"))
+        with patch.dict(os.environ, {"PENDING_REMINDER_AUTOMATION_HOUR": "10"}):
+            self.assertTrue(should_send_reminder(monday, None))
+            self.assertFalse(should_send_reminder(monday, "2026-07-27"))
+            self.assertFalse(should_send_reminder(monday.replace(hour=9), None))
+            self.assertFalse(should_send_reminder(monday.replace(day=28), None))
+
+    def test_job_sends_only_the_daily_pending_report(self):
         with TemporaryDirectory() as directory, patch.dict(
             os.environ,
             {"PENDING_REPORT_AUTOMATION_STATE_FILE": f"{directory}/state.json"},
@@ -56,25 +64,11 @@ class PendingReportJobTests(unittest.TestCase):
                 "recipients": configured_recipients(),
                 "generated_on": "2026-07-28",
             },
-        ), patch(
-            "jobs.send_pending_report.deliver_assignment_inconsistency_report",
-            return_value={
-                "recipients": [
-                    "alberto.alfaro@taiico.com",
-                    "pamela.alfaro@taiico.com",
-                    "veronica.alfaro@taiico.com",
-                ],
-                "count": 7,
-            },
-        ) as inconsistency_delivery:
+        ) as daily_delivery:
             self.assertEqual(run(force=True), 0)
 
-        inconsistency_delivery.assert_called_once_with(
-            [
-                "alberto.alfaro@taiico.com",
-                "pamela.alfaro@taiico.com",
-                "veronica.alfaro@taiico.com",
-            ],
+        daily_delivery.assert_called_once_with(
+            configured_recipients(),
             sender_username="alberto.alfaro@taiico.com",
         )
 

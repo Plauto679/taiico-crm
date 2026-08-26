@@ -32,6 +32,12 @@ export interface PendingAccess {
     rfc: string;
     central_admin: boolean;
     agents: PendingAgentOption[];
+    admins: PendingAdminOption[];
+}
+
+export interface PendingAdminOption {
+    email: string;
+    label: string;
 }
 
 export interface PendingAgentOption {
@@ -61,8 +67,10 @@ export interface PendingClientOption {
 }
 
 export interface EmisionServiciosPendingInput {
+    request_id: string;
     client_id: string;
     asegurado: string;
+    insured_name: string;
     rfc: string;
     poliza: string;
     casificacion: 'Vida' | 'GMM';
@@ -70,23 +78,33 @@ export interface EmisionServiciosPendingInput {
     solicitud_de: string;
     promotoria: string;
     rfc_agente: string;
+    responsable: string;
+    recordatorio_futuro: string;
 }
 
 export interface SiniestrosPendingInput {
+    request_id: string;
     client_id: string;
     asegurado: string;
+    insured_name: string;
     rfc: string;
+    poliza: string;
     tipo_tramite: 'Cirugía Progamada' | 'Reembolso' | 'Programación de Medicamentos' | 'Programación de estudios/terapias';
     tramite: 'Complemento' | 'Reconsideración' | 'Garantías';
     estatus: 'En Proceso' | 'Pagado' | 'Rechazado' | 'Suspendido';
     promotoria: string;
     rfc_agente: string;
+    responsable: string;
+    recordatorio_futuro: string;
 }
 
 export interface PendingCreateResponse {
     created: boolean;
     row: PendingRow;
     folder_warning?: string | null;
+    notification_warning?: string | null;
+    notification_queued?: boolean;
+    deduplicated?: boolean;
 }
 
 export interface PendingFollowUpResponse {

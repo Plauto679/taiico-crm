@@ -15,7 +15,7 @@ const NAV_ITEMS = [
     { name: 'Cumpleaños', href: '/cumpleanos', icon: CakeSlice, module: 'cumpleanos' },
     { name: 'Cumpleaños de agentes', href: '/cumpleanos-agentes', icon: PartyPopper, module: 'cumpleanos_agentes' },
     { name: 'Pendientes', href: '/pendientes', icon: ClipboardList, module: 'pendientes' },
-    { name: 'Cartera', href: '/cartera', icon: Briefcase, module: 'cartera' },
+    { name: 'Cartera de Prospectadores', href: '/cartera', icon: Briefcase, module: 'cartera' },
     { name: 'Clientes', href: '/clientes', icon: Users, module: 'clientes' },
     { name: 'Recluta', href: '/recluta', icon: UserRoundSearch, module: 'recluta' },
     { name: 'Dashboards', href: '/dashboards', icon: BarChart3, module: 'dashboards' },

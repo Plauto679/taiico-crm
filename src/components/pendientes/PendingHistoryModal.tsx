@@ -103,9 +103,11 @@ export function PendingHistoryModal({ row, source, onUpdated, onDeleted, onClose
             const response = await uploadPendingDocument(source, row.source_row, documentName, file);
             setDocuments((current) => current ? {
                 ...current,
+                row: response.row,
                 folder_missing: false,
                 documents: [...current.documents.filter((item) => item.id !== response.document.id), response.document],
             } : current);
+            onUpdated(response.row);
             setAdditionalName('');
         } catch (requestError) {
             setError(requestError instanceof Error ? requestError.message : 'No fue posible cargar el archivo.');
@@ -345,7 +347,12 @@ function DetailTabContent({
     const rfcAgenteLabel = Object.keys(values).find(
         (label) => normalizeFieldLabel(label) === 'rfc agente',
     );
+    const responsableLabel = Object.keys(values).find(
+        (label) => normalizeFieldLabel(label) === 'responsable',
+    );
     const selectedPromotoria = promotoriaLabel ? values[promotoriaLabel] : '';
+    const selectedResponsable = responsableLabel ? values[responsableLabel].trim().toLocaleLowerCase('es-MX') : '';
+    const responsibleIsValid = (access.admins || []).some((admin) => admin.email === selectedResponsable);
     const hasChanges = [...dirtyFields].some(
         (key) => values[key] !== comparableDetailValue(key, row.summary[key] || ''),
     );
@@ -394,6 +401,24 @@ function DetailTabContent({
                                         required={false}
                                         className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
                                     />
+                                ) : normalizedLabel === 'responsable' ? (
+                                    <div className="mt-1">
+                                        <select
+                                            required
+                                            disabled={!canOperate}
+                                            value={(access.admins || []).some((admin) => admin.email === value.trim().toLocaleLowerCase('es-MX')) ? value.trim().toLocaleLowerCase('es-MX') : ''}
+                                            onChange={(event) => onChange(label, event.target.value)}
+                                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+                                        >
+                                            <option value="">Seleccionar administrador...</option>
+                                            {(access.admins || []).map((admin) => (
+                                                <option key={admin.email} value={admin.email}>{admin.label}</option>
+                                            ))}
+                                        </select>
+                                        {value && !(access.admins || []).some((admin) => admin.email === value.trim().toLocaleLowerCase('es-MX')) && (
+                                            <p className="mt-1 text-xs text-amber-700">Valor histórico: {value}. Selecciona un usuario Admin para guardar cambios.</p>
+                                        )}
+                                    </div>
                                 ) : source === 'emision-servicios' && normalizedLabel === 'estatus actual' ? (
                                     <PendingStatusSelect
                                         value={value}
@@ -444,7 +469,7 @@ function DetailTabContent({
                     })}
             </div>
             {canOperate && <div className="mt-4 flex justify-end">
-                <button type="button" onClick={onSave} disabled={saving || !hasChanges} className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+                <button type="button" onClick={onSave} disabled={saving || !hasChanges || !responsibleIsValid} className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
                     {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                     Guardar cambios
                 </button>
@@ -585,7 +610,8 @@ function normalizeFieldLabel(value: string): string {
 }
 
 function isDateField(label: string): boolean {
-    return normalizeFieldLabel(label) in DATE_TO_DAY_FIELD;
+    const normalized = normalizeFieldLabel(label);
+    return normalized in DATE_TO_DAY_FIELD || normalized === 'recordatorio futuro';
 }
 
 function isDerivedDayField(label: string): boolean {

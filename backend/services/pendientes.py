@@ -9,7 +9,7 @@ import time
 import unicodedata
 import zipfile
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 from xml.etree import ElementTree
@@ -20,7 +20,7 @@ import pandas as pd
 from services.performance import timed
 from services.data_cache import data_cache
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from google.auth import default
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 
 from database import Client, SessionLocal
-from services.auth import AccessProfile, PROMOTORIAS
+from services.auth import AccessProfile, PROMOTORIAS, list_access_profiles
 from services.authorization import current_access_profile, require_module_access
 from services.clientes import _assert_unique_rfc, _ensure_default_owner
 from services.client_folders import (
@@ -136,21 +136,28 @@ AUTOMATIC_START_DATE_HEADERS = {
 
 
 class EmisionServiciosCreateRequest(BaseModel):
+    request_id: str = ""
     client_id: str = ""
     asegurado: str
+    insured_name: str = ""
     rfc: str = ""
     poliza: str = ""
     casificacion: Literal["Vida", "GMM"]
     tipo_tramite: Literal["Servicios", "Emisión"]
     solicitud_de: str
-    promotoria: str = ""
-    rfc_agente: str = ""
+    promotoria: str = Field(min_length=1)
+    rfc_agente: str = Field(min_length=1)
+    responsable: str = ""
+    recordatorio_futuro: str = ""
 
 
 class SiniestrosCreateRequest(BaseModel):
+    request_id: str = ""
     client_id: str = ""
     asegurado: str
+    insured_name: str = ""
     rfc: str = ""
+    poliza: str = Field(min_length=1)
     tipo_tramite: Literal[
         "Cirugía Progamada",
         "Reembolso",
@@ -159,8 +166,10 @@ class SiniestrosCreateRequest(BaseModel):
     ]
     tramite: Literal["Complemento", "Reconsideración", "Garantías"]
     estatus: Literal["En Proceso", "Pagado", "Rechazado", "Suspendido"] = "En Proceso"
-    promotoria: str = ""
-    rfc_agente: str = ""
+    promotoria: str = Field(min_length=1)
+    rfc_agente: str = Field(min_length=1)
+    responsable: str = ""
+    recordatorio_futuro: str = ""
 
 
 class PendingFollowUpRequest(BaseModel):
@@ -194,7 +203,7 @@ SOURCES = {
         file_id_env="GOOGLE_DRIVE_PENDING_EMISION_SERVICIOS_FILE_ID",
         default_file_id=DEFAULT_EMISION_SERVICIOS_FILE_ID,
         sheet_name="Base1",
-        core_column_count=15,
+        core_column_count=21,
     ),
     "siniestros": PendingSource(
         key="siniestros",
@@ -202,13 +211,15 @@ SOURCES = {
         file_id_env="GOOGLE_DRIVE_PENDING_SINIESTROS_FILE_ID",
         default_file_id=DEFAULT_SINIESTROS_FILE_ID,
         sheet_name="Base",
-        core_column_count=12,
+        core_column_count=19,
     ),
 }
 
 _cache_lock = threading.Lock()
 _agent_cache_lock = threading.Lock()
 _write_lock = threading.Lock()
+_creation_requests: dict[str, dict] = {}
+_MAX_CREATION_REQUESTS = 500
 _cache: dict[str, tuple[float, dict]] = {}
 _agent_cache: tuple[float, list[dict[str, str]]] | None = None
 
@@ -461,7 +472,11 @@ def build_pending_report(
 
 def _report_identity(detail: dict, section_key: str) -> tuple[str, str, str]:
     summary = detail["summary"]
-    insured = _summary_value(summary, "Asegurado") or _summary_value(summary, "ASEGURADO")
+    insured = (
+        _summary_value(summary, "Contratante")
+        or _summary_value(summary, "Asegurado")
+        or _summary_value(summary, "ASEGURADO")
+    )
     rfc = _summary_value(summary, "RFC")
     request = (
         _summary_value(summary, "Solicitud de")
@@ -631,7 +646,7 @@ def _workbook_for_tabular_read(workbook: bytes, sheet_name: str) -> bytes:
     """
     with zipfile.ZipFile(io.BytesIO(workbook), "r") as archive:
         sheet_path = _worksheet_path(archive, sheet_name)
-        sheet_xml = archive.read(sheet_path).decode("utf-8")
+        sheet_xml = _normalize_spreadsheetml_namespace(archive.read(sheet_path).decode("utf-8"))
         sheet_data = re.search(r"(<sheetData>)(.*?)(</sheetData>)", sheet_xml, re.DOTALL)
         if not sheet_data:
             return workbook
@@ -707,7 +722,9 @@ def _inconsistency_rows(result: dict, source_label: str = "") -> list[dict]:
             ),
             "source_row": row["source_row"],
             "asegurado": clean_cell(
-                summary.get("Asegurado") or summary.get("ASEGURADO")
+                summary.get("Contratante")
+                or summary.get("Asegurado")
+                or summary.get("ASEGURADO")
             ),
             "poliza": clean_cell(summary.get("Póliza") or summary.get("POLIZA")),
             "promotoria": clean_cell(summary.get("Promotoria")),
@@ -743,6 +760,7 @@ def _filter_source_for_profile(result: dict, profile: AccessProfile) -> dict:
         "rfc": profile.rfc,
         "central_admin": profile.is_central_admin,
         "agents": [],
+        "admins": _admin_responsible_options(),
     }
     filtered["inconsistencies"] = (
         _inconsistency_rows(result) if profile.is_central_admin else []
@@ -763,6 +781,30 @@ def _assigned_promotoria(requested: str, profile: AccessProfile) -> str:
         raise HTTPException(
             status_code=422,
             detail="Selecciona una promotoría autorizada para tu usuario",
+        )
+    return selected
+
+
+def _admin_responsible_options() -> list[dict[str, str]]:
+    return [
+        {"email": profile.username, "label": profile.username}
+        for profile in sorted(list_access_profiles(), key=lambda item: item.username)
+        if profile.is_admin
+    ]
+
+
+def _assigned_responsible(requested: str) -> str:
+    selected = clean_cell(requested).casefold()
+    admin_emails = {
+        option["email"].casefold()
+        for option in _admin_responsible_options()
+    }
+    if not selected:
+        raise HTTPException(status_code=422, detail="Selecciona al responsable del pendiente")
+    if selected not in admin_emails:
+        raise HTTPException(
+            status_code=422,
+            detail="El responsable debe ser un usuario con perfil Admin",
         )
     return selected
 
@@ -894,7 +936,12 @@ def _rfc_from_row(row: dict) -> str:
 
 def _client_name_from_row(row: dict) -> str:
     summary = row.get("summary", {})
-    return clean_cell(summary.get("Asegurado") or summary.get("ASEGURADO") or "")
+    return clean_cell(
+        summary.get("Contratante")
+        or summary.get("Asegurado")
+        or summary.get("ASEGURADO")
+        or ""
+    )
 
 
 def _master_client_payload(client: Client) -> dict[str, str]:
@@ -1155,6 +1202,28 @@ def _download_workbook(file_id: str, service=None) -> bytes:
         return output.getvalue()
 
 
+def _normalize_spreadsheetml_namespace(xml: str) -> str:
+    """Convert a prefixed SpreadsheetML root namespace to the default namespace.
+
+    Excel accepts both ``<sheetData>`` and ``<s:sheetData>``.  The lightweight
+    XML writer below intentionally works with the former so it can preserve the
+    rest of the XLSX package byte-for-byte.  Normalize only the main spreadsheet
+    namespace; relationship and extension prefixes remain untouched.
+    """
+    namespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    match = re.search(rf'xmlns:([A-Za-z_][\w.-]*)="{re.escape(namespace)}"', xml)
+    if not match:
+        return xml
+    prefix = match.group(1)
+    xml = re.sub(
+        rf'xmlns:{re.escape(prefix)}="{re.escape(namespace)}"',
+        f'xmlns="{namespace}"',
+        xml,
+        count=1,
+    )
+    return xml.replace(f"<{prefix}:", "<").replace(f"</{prefix}:", "</")
+
+
 def append_pending_record(workbook: bytes, source: PendingSource, values: dict[str, str]) -> tuple[bytes, int]:
     parsed = parse_pending_workbook(workbook, source)
     candidate_row = max((row["source_row"] for row in parsed["rows"]), default=1) + 1
@@ -1172,7 +1241,9 @@ def append_pending_record(workbook: bytes, source: PendingSource, values: dict[s
 
 def _next_available_sheet_row(workbook: bytes, sheet_name: str, start_row: int) -> int:
     with zipfile.ZipFile(io.BytesIO(workbook), "r") as archive:
-        sheet_xml = archive.read(_worksheet_path(archive, sheet_name)).decode("utf-8")
+        sheet_xml = _normalize_spreadsheetml_namespace(
+            archive.read(_worksheet_path(archive, sheet_name)).decode("utf-8"),
+        )
     occupied_rows: set[int] = set()
     row_pattern = re.compile(
         r'<row\b(?=[^>]*\br="(\d+)")(?:[^>]*/>|[^>]*>.*?</row>)',
@@ -1300,12 +1371,12 @@ def delete_pending_record(
 
     with zipfile.ZipFile(io.BytesIO(workbook), "r") as archive:
         sheet_path = _worksheet_path(archive, source.sheet_name)
-        sheet_xml = archive.read(sheet_path).decode("utf-8")
+        sheet_xml = _normalize_spreadsheetml_namespace(archive.read(sheet_path).decode("utf-8"))
         replacements = {
             sheet_path: _delete_sheet_row(sheet_xml, source_row).encode("utf-8"),
         }
         for table_path in _related_table_paths(archive, sheet_path):
-            table_xml = archive.read(table_path).decode("utf-8")
+            table_xml = _normalize_spreadsheetml_namespace(archive.read(table_path).decode("utf-8"))
             replacements[table_path] = _shrink_table_after_row_delete(
                 table_xml,
                 source_row,
@@ -1417,7 +1488,7 @@ def _update_xlsx_cells(
 ) -> bytes:
     with zipfile.ZipFile(io.BytesIO(workbook), "r") as archive:
         sheet_path = _worksheet_path(archive, sheet_name)
-        sheet_xml = archive.read(sheet_path).decode("utf-8")
+        sheet_xml = _normalize_spreadsheetml_namespace(archive.read(sheet_path).decode("utf-8"))
         updated_xml = _upsert_sheet_cells(sheet_xml, updates)
         replacements = {sheet_path: updated_xml.encode("utf-8")}
         new_header = next(
@@ -1427,7 +1498,7 @@ def _update_xlsx_cells(
         if new_header:
             column_number, header_value = new_header
             for table_path in _related_table_paths(archive, sheet_path):
-                table_xml = archive.read(table_path).decode("utf-8")
+                table_xml = _normalize_spreadsheetml_namespace(archive.read(table_path).decode("utf-8"))
                 updated_table = _extend_table_definition(
                     table_xml,
                     column_number,
@@ -1555,7 +1626,7 @@ def _append_xlsx_row(
 ) -> bytes:
     with zipfile.ZipFile(io.BytesIO(workbook), "r") as archive:
         sheet_path = _worksheet_path(archive, sheet_name)
-        sheet_xml = archive.read(sheet_path).decode("utf-8")
+        sheet_xml = _normalize_spreadsheetml_namespace(archive.read(sheet_path).decode("utf-8"))
         updated_xml = _insert_sheet_row(sheet_xml, row_number, values)
         output = io.BytesIO()
         with zipfile.ZipFile(output, "w") as destination:
@@ -1814,6 +1885,122 @@ def normalize_report_recipients(values: list[str]) -> list[str]:
     return recipients
 
 
+def build_pending_reminder_report(
+    emision_servicios: dict,
+    siniestros: dict,
+    generated_on: date | None = None,
+    days_ahead: int = 15,
+) -> dict:
+    report_date = generated_on or datetime.now(ZoneInfo("America/Mexico_City")).date()
+    window_end = report_date + timedelta(days=days_ahead)
+    items: list[dict] = []
+    for source in (emision_servicios, siniestros):
+        for row in source.get("rows", []):
+            summary = row.get("summary", {})
+            reminder_value = _summary_value(summary, "Recordatorio Futuro")
+            reminder_date = _parse_pending_date(reminder_value)
+            if reminder_date is None or not report_date <= reminder_date <= window_end:
+                continue
+            items.append({
+                "source": source.get("title", "Pendientes"),
+                "source_row": row.get("source_row"),
+                "reminder_date": reminder_date.isoformat(),
+                "contratante": (
+                    _summary_value(summary, "Contratante")
+                    or _summary_value(summary, "Asegurado")
+                    or _summary_value(summary, "ASEGURADO")
+                ),
+                "asegurado": _summary_value(summary, "Asegurado"),
+                "rfc": _summary_value(summary, "RFC"),
+                "poliza": _summary_value(summary, "Póliza") or _summary_value(summary, "Poliza"),
+                "tramite": _summary_value(summary, "Solicitud de") or _summary_value(summary, "Trámite"),
+                "estatus": _summary_value(summary, "Estatus actual") or _summary_value(summary, "Estatus"),
+                "responsable": _summary_value(summary, "Responsable"),
+            })
+    items.sort(key=lambda item: (item["reminder_date"], item["source"], item["contratante"]))
+    return {
+        "generated_on": report_date.isoformat(),
+        "window_end": window_end.isoformat(),
+        "count": len(items),
+        "items": items,
+    }
+
+
+def pending_reminder_text(report: dict) -> str:
+    lines = [
+        "Recordatorio de Pendientes",
+        f"Periodo: {report['generated_on']} al {report['window_end']}",
+        "",
+    ]
+    if not report["items"]:
+        lines.append("No hay pendientes con recordatorio durante los próximos 15 días.")
+    for item in report["items"]:
+        lines.append(
+            f"- {item['reminder_date']} | {item['source']} | "
+            f"{item['contratante'] or '—'} | Póliza {item['poliza'] or '—'} | "
+            f"{item['tramite'] or '—'} | {item['estatus'] or '—'} | "
+            f"Responsable: {item['responsable'] or '—'}"
+        )
+    return "\n".join(lines)
+
+
+def pending_reminder_html(report: dict) -> str:
+    rows = "".join(
+        "<tr>"
+        f"<td>{escape(item['reminder_date'])}</td>"
+        f"<td>{escape(item['source'])}</td>"
+        f"<td>{escape(item['contratante'] or '—')}</td>"
+        f"<td>{escape(item['poliza'] or '—')}</td>"
+        f"<td>{escape(item['tramite'] or '—')}</td>"
+        f"<td>{escape(item['estatus'] or '—')}</td>"
+        f"<td>{escape(item['responsable'] or '—')}</td>"
+        "</tr>"
+        for item in report["items"]
+    )
+    if not rows:
+        rows = '<tr><td colspan="7">No hay pendientes con recordatorio durante los próximos 15 días.</td></tr>'
+    return (
+        '<div style="font-family:Arial,sans-serif;color:#172033">'
+        '<h1 style="color:#0b4a73">Recordatorio de Pendientes</h1>'
+        f"<p>Periodo: <strong>{escape(report['generated_on'])}</strong> al "
+        f"<strong>{escape(report['window_end'])}</strong></p>"
+        '<table style="border-collapse:collapse;width:100%"><thead><tr>'
+        '<th>Fecha</th><th>Módulo</th><th>Contratante</th><th>Póliza</th>'
+        '<th>Trámite</th><th>Estatus</th><th>Responsable</th></tr></thead>'
+        f"<tbody>{rows}</tbody></table></div>"
+    )
+
+
+def deliver_pending_reminder_report(
+    recipients: list[str],
+    *,
+    sender_username: str,
+) -> dict:
+    normalized_recipients = normalize_report_recipients(recipients)
+    service = build_pending_drive_service()
+    for source_key in SOURCES:
+        _clear_source_cache(source_key)
+    report = build_pending_reminder_report(
+        load_pending_source(SOURCES["emision-servicios"], service),
+        load_pending_source(SOURCES["siniestros"], service),
+    )
+    send_email_smtp(
+        subject="Recordatorio de Pendientes",
+        body=pending_reminder_text(report),
+        html_body=pending_reminder_html(report),
+        recipients=normalized_recipients,
+        cc_recipients=[],
+        settings=smtp_settings_for(sender_username),
+    )
+    return {
+        "sent": True,
+        "recipients": normalized_recipients,
+        "generated_on": report["generated_on"],
+        "window_end": report["window_end"],
+        "count": report["count"],
+    }
+
+
 def deliver_pending_report(
     recipients: list[str],
     *,
@@ -1978,6 +2165,7 @@ def pending_access_options(
         "rfc": profile.rfc,
         "central_admin": profile.is_central_admin,
         "agents": _agent_options_for_profile(profile),
+        "admins": _admin_responsible_options(),
     }
 
 
@@ -2006,6 +2194,7 @@ async def get_pending_source(
     try:
         filtered = _filter_source_for_profile(load_pending_source(source), profile)
         filtered["access"]["agents"] = _agent_options_for_profile(profile)
+        filtered["access"]["admins"] = _admin_responsible_options()
         return filtered
     except Exception as exc:
         raise HTTPException(
@@ -2017,6 +2206,7 @@ async def get_pending_source(
 @router.post("/emision-servicios")
 def create_emision_servicios_pending(
     request: EmisionServiciosCreateRequest,
+    background_tasks: BackgroundTasks,
     profile: AccessProfile = Depends(require_module_access("pendientes", operation=True)),
 ):
     allowed_requests = GMM_REQUEST_OPTIONS if request.casificacion == "GMM" else VIDA_REQUEST_OPTIONS
@@ -2046,7 +2236,8 @@ def create_emision_servicios_pending(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     promotoria = _assigned_promotoria(request.promotoria, profile)
     values = {
-        "Asegurado": master_client["nombre"],
+        "Contratante": master_client["nombre"],
+        "Asegurado": request.insured_name,
         "RFC": master_client["rfc"],
         "Póliza": request.poliza,
         "Casificacion": request.casificacion,
@@ -2054,18 +2245,24 @@ def create_emision_servicios_pending(
         "Solicitud de": ", ".join(selected_requests),
         "Promotoria": promotoria,
         "RFC Agente": _assigned_agent_rfc(request.rfc_agente, promotoria, profile),
+        "Responsable": _assigned_responsible(request.responsable),
+        "Recordatorio Futuro": request.recordatorio_futuro,
         **_automatic_creation_values(SOURCES["emision-servicios"]),
     }
     return _create_pending_record(
         SOURCES["emision-servicios"],
         values,
         master_client_id=master_client["id"],
+        created_by=profile.username,
+        request_id=request.request_id,
+        background_tasks=background_tasks,
     )
 
 
 @router.post("/siniestros")
 def create_siniestros_pending(
     request: SiniestrosCreateRequest,
+    background_tasks: BackgroundTasks,
     profile: AccessProfile = Depends(require_module_access("pendientes", operation=True)),
 ):
     try:
@@ -2080,20 +2277,72 @@ def create_siniestros_pending(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     promotoria = _assigned_promotoria(request.promotoria, profile)
     values = {
-        "ASEGURADO": master_client["nombre"],
+        "Contratante": master_client["nombre"],
+        "Asegurado": request.insured_name,
         "RFC": master_client["rfc"],
+        "Póliza": request.poliza,
         "Tipo de Trámite": request.tipo_tramite,
         "Trámite": request.tramite,
         "Estatus": request.estatus,
         "Promotoria": promotoria,
         "RFC Agente": _assigned_agent_rfc(request.rfc_agente, promotoria, profile),
+        "Responsable": _assigned_responsible(request.responsable),
+        "Recordatorio Futuro": request.recordatorio_futuro,
         **_automatic_creation_values(SOURCES["siniestros"]),
     }
     return _create_pending_record(
         SOURCES["siniestros"],
         values,
         master_client_id=master_client["id"],
+        created_by=profile.username,
+        request_id=request.request_id,
+        background_tasks=background_tasks,
     )
+
+
+def _notify_assigned_responsible(
+    source: PendingSource,
+    row: dict,
+    *,
+    created_by: str,
+) -> str | None:
+    summary = row.get("summary", {})
+    recipient = clean_cell(summary.get("Responsable")).casefold()
+    if not recipient:
+        return "El pendiente se guardó, pero no se encontró al responsable para notificarlo."
+    insured = clean_cell(
+        summary.get("Contratante")
+        or summary.get("Asegurado")
+        or summary.get("ASEGURADO")
+    ) or "Sin nombre"
+    policy = clean_cell(summary.get("Póliza") or summary.get("POLIZA")) or "Sin póliza"
+    request_name = clean_cell(summary.get("Solicitud de") or summary.get("Trámite")) or source.title
+    body = (
+        f"Hola,\n\n"
+        f"Se te asignó un nuevo pendiente en TAIICO CRM.\n\n"
+        f"Módulo: {source.title}\n"
+        f"Contratante: {insured}\n"
+        f"Póliza: {policy}\n"
+        f"Trámite: {request_name}\n"
+        f"Registrado por: {created_by or 'TAIICO CRM'}\n\n"
+        f"Ingresa a https://taiico-crm.com/pendientes para consultar el detalle y dar seguimiento.\n\n"
+        f"Saludos,\nTAIICO OS"
+    )
+    try:
+        settings = smtp_settings_for(created_by) if created_by else None
+        if not settings:
+            settings = smtp_settings_for("alberto.alfaro@taiico.com")
+        send_email_smtp(
+            subject=f"Nuevo pendiente asignado: {insured}",
+            body=body,
+            recipients=[recipient],
+            attachments=[],
+            cc_recipients=[],
+            settings=settings,
+        )
+        return None
+    except Exception as exc:
+        return f"El pendiente se guardó, pero no fue posible notificar a {recipient}: {exc}"
 
 
 def _create_pending_record(
@@ -2101,11 +2350,25 @@ def _create_pending_record(
     values: dict[str, str],
     *,
     master_client_id: str = "",
+    created_by: str = "",
+    request_id: str = "",
+    background_tasks: BackgroundTasks | None = None,
 ):
-    if not clean_cell(values.get("Asegurado") or values.get("ASEGURADO")):
-        raise HTTPException(status_code=422, detail="El nombre del asegurado es obligatorio")
+    client_name = clean_cell(
+        values.get("Contratante")
+        or values.get("Asegurado")
+        or values.get("ASEGURADO")
+    )
+    if not client_name:
+        raise HTTPException(status_code=422, detail="El nombre del contratante es obligatorio")
     try:
+        normalized_request_id = clean_cell(request_id)
         with _write_lock:
+            if normalized_request_id and normalized_request_id in _creation_requests:
+                return {
+                    **_creation_requests[normalized_request_id],
+                    "deduplicated": True,
+                }
             service = build_pending_drive_service()
             file_id = _source_file_id(source)
             updated, source_row = append_pending_record(
@@ -2117,9 +2380,21 @@ def _create_pending_record(
             _clear_source_cache(source.key)
             refreshed = load_pending_source(source, service)
             created = next((row for row in refreshed["rows"] if row["source_row"] == source_row), None)
-        if not created:
-            raise RuntimeError("El registro se guardó, pero no pudo releerse desde Drive")
-        folder_warning = None
+            if not created:
+                raise RuntimeError("El registro se guardó, pero no pudo releerse desde Drive")
+            response = {
+                "created": True,
+                "row": created,
+                "folder_warning": None,
+                "notification_warning": None,
+                "notification_queued": bool(background_tasks),
+                "deduplicated": False,
+            }
+            if normalized_request_id:
+                _creation_requests[normalized_request_id] = response
+                while len(_creation_requests) > _MAX_CREATION_REQUESTS:
+                    _creation_requests.pop(next(iter(_creation_requests)))
+
         if _rfc_from_row(created) and not created.get("folder_id"):
             try:
                 client_folder = _client_folder_for_row(service, created, create=True)
@@ -2128,8 +2403,23 @@ def _create_pending_record(
                 _create_folder_for_row(service, created)
                 _clear_source_cache(source.key)
             except Exception as exc:
-                folder_warning = f"El registro se guardó, pero no fue posible crear su carpeta: {exc}"
-        return {"created": True, "row": created, "folder_warning": folder_warning}
+                response["folder_warning"] = (
+                    f"El registro se guardó, pero no fue posible crear su carpeta: {exc}"
+                )
+        if background_tasks:
+            background_tasks.add_task(
+                _notify_assigned_responsible,
+                source,
+                created,
+                created_by=created_by,
+            )
+        else:
+            response["notification_warning"] = _notify_assigned_responsible(
+                source,
+                created,
+                created_by=created_by,
+            )
+        return response
     except HTTPException:
         raise
     except ValueError as exc:
@@ -2185,16 +2475,32 @@ def update_pending(
                     allow_empty=True,
                 )
                 merged_summary = {**original_row["summary"], **values}
+            responsible_header = next(
+                (
+                    header
+                    for header in merged_summary
+                    if _normalized_header(header) == "responsable"
+                ),
+                "Responsable",
+            )
+            assigned_responsible = _assigned_responsible(
+                clean_cell(merged_summary.get(responsible_header))
+            )
+            if any(_normalized_header(header) == "responsable" for header in values):
+                values[responsible_header] = assigned_responsible
+                merged_summary[responsible_header] = assigned_responsible
             history_values = dict(values)
             values.update(_derived_day_values(merged_summary))
             master_client = None
+            identity_name_headers = {"Contratante"}
             identity_fields_changed = bool(
-                {"RFC", "Asegurado", "ASEGURADO"}.intersection(history_values)
+                ({"RFC"} | identity_name_headers).intersection(history_values)
             )
             if identity_fields_changed:
                 master_client = _resolve_pending_master_client(
                     client_name=clean_cell(
-                        merged_summary.get("Asegurado")
+                        merged_summary.get("Contratante")
+                        or merged_summary.get("Asegurado")
                         or merged_summary.get("ASEGURADO")
                     ),
                     rfc=clean_cell(merged_summary.get("RFC")),
@@ -2416,7 +2722,7 @@ async def upload_pending_document(
 ):
     try:
         service = build_pending_drive_service()
-        _, row = _get_pending_row(source_key, source_row, service)
+        source, row = _get_pending_row(source_key, source_row, service)
         _ensure_row_access(row, profile, operation=True)
         if not row.get("folder_id"):
             raise HTTPException(status_code=409, detail="Primero debe crearse la carpeta del expediente")
@@ -2459,7 +2765,47 @@ async def upload_pending_document(
                 fields="id,name,mimeType,webViewLink,modifiedTime,size",
                 supportsAllDrives=True,
             ).execute()
-        return {"uploaded": True, "replaced": bool(existing_document), "document": saved}
+
+        required_names = {
+            _normalized_header(requirement)
+            for requirement in _requirements_for_row(row, source_key)
+        }
+        document_kind = (
+            "Documento requerido"
+            if _normalized_header(document_name) in required_names
+            else "Documento adicional"
+        )
+        action = "actualizado" if existing_document else "cargado"
+        history_comment = (
+            f"{document_kind} {action}: {clean_cell(saved.get('name'))}. "
+            f"Usuario: {profile.username}"
+        )
+        with _write_lock:
+            file_id = _source_file_id(source)
+            updated_workbook, date_header = add_pending_follow_up(
+                _download_workbook(file_id, service),
+                source,
+                source_row,
+                history_comment,
+            )
+            _upload_workbook(file_id, updated_workbook, service)
+            _clear_source_cache(source.key)
+            refreshed = load_pending_source(source, service)
+            updated_row = next(
+                (item for item in refreshed["rows"] if item["source_row"] == source_row),
+                None,
+            )
+        if not updated_row:
+            raise RuntimeError(
+                "El documento se cargó, pero el historial no pudo releerse desde Drive"
+            )
+        return {
+            "uploaded": True,
+            "replaced": bool(existing_document),
+            "document": saved,
+            "date_header": date_header,
+            "row": updated_row,
+        }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:

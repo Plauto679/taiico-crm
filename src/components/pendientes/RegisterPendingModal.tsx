@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, ClipboardPlus, Loader2, Plus, Search, UserRoundPlus, X } from 'lucide-react';
 
 import { PendingAccess, PendingClientOption, PendingRow } from '@/lib/types/pendientes';
@@ -73,6 +73,7 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
     const [loadingClients, setLoadingClients] = useState(true);
     const [selectedClient, setSelectedClient] = useState<PendingClientOption | null>(null);
     const [asegurado, setAsegurado] = useState('');
+    const [insuredName, setInsuredName] = useState('');
     const [rfc, setRfc] = useState('');
     const [poliza, setPoliza] = useState('');
     const [casificacion, setCasificacion] = useState<'Vida' | 'GMM' | ''>('');
@@ -86,6 +87,10 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
         access.promotorias.length === 1 ? access.promotorias[0] : '',
     );
     const [rfcAgente, setRfcAgente] = useState('');
+    const [responsable, setResponsable] = useState('');
+    const [recordatorioFuturo, setRecordatorioFuturo] = useState('');
+    const requestId = useRef<string | null>(null);
+    const submissionInProgress = useRef(false);
 
     useEffect(() => {
         let active = true;
@@ -121,13 +126,18 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
+        if (submissionInProgress.current) return;
+        submissionInProgress.current = true;
+        requestId.current ||= crypto.randomUUID();
         setSaving(true);
         setError(null);
         try {
             const response = source === 'emision-servicios'
                 ? await createEmisionServiciosPending({
+                    request_id: requestId.current,
                     client_id: selectedClient?.id || '',
                     asegurado,
+                    insured_name: insuredName,
                     rfc,
                     poliza,
                     casificacion: casificacion as 'Vida' | 'GMM',
@@ -135,21 +145,32 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                     solicitud_de: solicitudesDe.filter(Boolean).join(', '),
                     promotoria,
                     rfc_agente: rfcAgente,
+                    responsable,
+                    recordatorio_futuro: recordatorioFuturo,
                 })
                 : await createSiniestrosPending({
+                    request_id: requestId.current,
                     client_id: selectedClient?.id || '',
                     asegurado,
+                    insured_name: insuredName,
                     rfc,
+                    poliza,
                     tipo_tramite: tipoTramite as 'Cirugía Progamada' | 'Reembolso' | 'Programación de Medicamentos' | 'Programación de estudios/terapias',
                     tramite: tramite as 'Complemento' | 'Reconsideración' | 'Garantías',
                     estatus: estatusSiniestro as 'En Proceso' | 'Pagado' | 'Rechazado' | 'Suspendido',
                     promotoria,
                     rfc_agente: rfcAgente,
+                    responsable,
+                    recordatorio_futuro: recordatorioFuturo,
                 });
+            if (response.notification_warning) {
+                window.alert(response.notification_warning);
+            }
             onCreated(response.row);
         } catch (submissionError) {
             setError(submissionError instanceof Error ? submissionError.message : 'No fue posible registrar el pendiente.');
         } finally {
+            submissionInProgress.current = false;
             setSaving(false);
         }
     };
@@ -187,14 +208,14 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                         <div className="grid gap-4 sm:grid-cols-2">
                             <div className="sm:col-span-2 rounded-xl border border-blue-200 bg-blue-50/60 p-4">
                                 <div className="mb-3">
-                                    <p className="font-bold text-slate-900">Cliente o prospecto</p>
+                                    <p className="font-bold text-slate-900">Contratante o prospecto</p>
                                     <p className="text-sm text-slate-600">Busca primero en el registro maestro por nombre o RFC. Si no existe, escribe su nombre para registrarlo como prospecto.</p>
                                 </div>
                                 {selectedClient ? (
                                     <div className="rounded-lg border border-emerald-200 bg-white p-3">
                                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                             <div>
-                                                <p className="flex items-center gap-2 font-semibold text-emerald-800"><CheckCircle2 className="h-4 w-4" /> Cliente seleccionado</p>
+                                                <p className="flex items-center gap-2 font-semibold text-emerald-800"><CheckCircle2 className="h-4 w-4" /> Contratante seleccionado</p>
                                                 <p className="mt-1 font-bold text-slate-900">{selectedClient.nombre}</p>
                                                 <p className="text-sm text-slate-600">{selectedClient.rfc || 'Prospecto sin RFC'}</p>
                                             </div>
@@ -210,7 +231,7 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                                 ) : (
                                     <div className="relative">
                                         <label className="block">
-                                            <span className="text-sm font-medium text-slate-700">Buscar o capturar nombre</span>
+                                            <span className="text-sm font-medium text-slate-700">Buscar o capturar contratante</span>
                                             <div className="relative mt-1.5">
                                                 <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                                                 <input required autoComplete="off" value={asegurado} onChange={(event) => setAsegurado(event.target.value)} placeholder="Nombre o RFC del cliente" className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
@@ -256,8 +277,19 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                                     className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
                                 />
                             </label>
+                            <SelectField
+                                label="Responsable"
+                                value={responsable}
+                                onChange={setResponsable}
+                                options={(access.admins || []).map((admin) => admin.email)}
+                            />
+                            <label className="block">
+                                <span className="text-sm font-medium text-slate-700">Recordatorio Futuro <span className="font-normal text-slate-400">(opcional)</span></span>
+                                <input type="date" value={recordatorioFuturo} onChange={(event) => setRecordatorioFuturo(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                            </label>
                             {source === 'emision-servicios' ? (
                                 <>
+                                    <TextField label="Asegurado" value={insuredName} onChange={setInsuredName} required={false} />
                                     <TextField label="Póliza" value={poliza} onChange={setPoliza} required={false} />
                                     <SelectField label="Casificación" value={casificacion} onChange={(value) => { setCasificacion(value as 'Vida' | 'GMM'); setSolicitudesDe(['']); }} options={['Vida', 'GMM']} />
                                     <SelectField label="Tipo de Trámite" value={tipoTramite} onChange={setTipoTramite} options={['Emisión', 'Servicios']} />
@@ -298,6 +330,8 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                                 </>
                             ) : (
                                 <>
+                                    <TextField label="Asegurado" value={insuredName} onChange={setInsuredName} required={false} />
+                                    <TextField label="Póliza" value={poliza} onChange={setPoliza} />
                                     <SelectField label="Tipo de Trámite" value={tipoTramite} onChange={setTipoTramite} options={['Cirugía Progamada', 'Reembolso', 'Programación de Medicamentos', 'Programación de estudios/terapias']} />
                                     <SelectField label="Trámite" value={tramite} onChange={setTramite} options={['Complemento', 'Reconsideración', 'Garantías']} />
                                     <SelectField label="Estatus" value={estatusSiniestro} onChange={setEstatusSiniestro} options={['En Proceso', 'Pagado', 'Rechazado', 'Suspendido']} />

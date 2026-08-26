@@ -29,9 +29,14 @@ from services.pendientes import (
     _filter_source_for_profile,
     _assigned_agent_rfc,
     _assigned_promotoria,
+    _assigned_responsible,
+    _notify_assigned_responsible,
+    _insert_sheet_row,
+    _normalize_spreadsheetml_namespace,
     add_pending_follow_up,
     append_pending_record,
     build_pending_report,
+    build_pending_reminder_report,
     delete_pending_record,
     pending_report_html,
     pending_report_text,
@@ -76,6 +81,23 @@ def workbook_with_table(sheet_name, headers, rows):
 
 
 class PendingWorkbookTests(unittest.TestCase):
+    def test_prefixed_spreadsheet_namespace_can_be_normalized_before_append(self):
+        xml = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<s:worksheet xmlns:s="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<s:sheetData><s:row r="1"><s:c r="A1" t="inlineStr">'
+            '<s:is><s:t>Contratante</s:t></s:is></s:c></s:row></s:sheetData>'
+            '</s:worksheet>'
+        )
+
+        normalized = _normalize_spreadsheetml_namespace(xml)
+        updated = _insert_sheet_row(normalized, 2, {1: "Alberto Alfaro"})
+
+        self.assertIn('<sheetData>', updated)
+        self.assertIn('<row r="2">', updated)
+        self.assertIn('Alberto Alfaro', updated)
+        self.assertNotIn('<s:sheetData>', updated)
+
     def test_pending_rows_are_scoped_by_promotoria_or_agent_rfc(self):
         source = {
             "source": "emision-servicios",
@@ -413,21 +435,77 @@ class PendingWorkbookTests(unittest.TestCase):
             "Nueva Persona",
         )
 
-    def test_create_requests_allow_missing_rfc_and_policy(self):
+    def test_create_requests_allow_missing_rfc_and_emision_policy(self):
         emision = EmisionServiciosCreateRequest(
             asegurado="Cliente",
             casificacion="GMM",
             tipo_tramite="Servicios",
             solicitud_de="Rehabilitación GMM",
+            promotoria="TAIICO",
+            rfc_agente="AAMA950203I52",
         )
         siniestro = SiniestrosCreateRequest(
             asegurado="Cliente",
+            poliza="123456",
             tipo_tramite="Reembolso",
             tramite="Complemento",
+            promotoria="TAIICO",
+            rfc_agente="AAMA950203I52",
         )
         self.assertEqual(emision.rfc, "")
         self.assertEqual(emision.poliza, "")
         self.assertEqual(siniestro.rfc, "")
+        self.assertEqual(siniestro.poliza, "123456")
+
+    def test_create_requests_require_promotoria_and_agent(self):
+        with self.assertRaises(Exception):
+            EmisionServiciosCreateRequest(
+                asegurado="Cliente",
+                casificacion="GMM",
+                tipo_tramite="Servicios",
+                solicitud_de="Rehabilitación GMM",
+            )
+        with self.assertRaises(Exception):
+            SiniestrosCreateRequest(
+                asegurado="Cliente",
+                poliza="123456",
+                tipo_tramite="Reembolso",
+                tramite="Complemento",
+            )
+
+    def test_responsible_must_be_an_admin_user(self):
+        profiles = (
+            AccessProfile("admin@taiico.com", "admin", ("TAIICO",), "", ("*",), {}),
+            AccessProfile("agent@taiico.com", "agente", ("TAIICO",), "RFC", ("*",), {}),
+        )
+        with patch("services.pendientes.list_access_profiles", return_value=profiles):
+            self.assertEqual(_assigned_responsible("ADMIN@TAIICO.COM"), "admin@taiico.com")
+            with self.assertRaises(Exception):
+                _assigned_responsible("agent@taiico.com")
+
+    def test_new_pending_notifies_assigned_responsible(self):
+        row = {
+            "summary": {
+                "Responsable": "admin@taiico.com",
+                "ASEGURADO": "Cliente Prueba",
+                "Póliza": "123456",
+                "Trámite": "Complemento",
+            }
+        }
+        with (
+            patch("services.pendientes.smtp_settings_for", return_value={"sender": "test"}),
+            patch("services.pendientes.send_email_smtp") as send_email,
+        ):
+            warning = _notify_assigned_responsible(
+                SOURCES["siniestros"],
+                row,
+                created_by="creator@taiico.com",
+            )
+
+        self.assertIsNone(warning)
+        self.assertEqual(send_email.call_args.kwargs["recipients"], ["admin@taiico.com"])
+        self.assertIn("Cliente Prueba", send_email.call_args.kwargs["subject"])
+        self.assertIn("Póliza: 123456", send_email.call_args.kwargs["body"])
 
     def test_update_pending_record_updates_and_clears_core_values(self):
         source = PendingSource("test", "Test", "TEST_ID", "file", "Base", 3)
@@ -897,6 +975,29 @@ class PendingWorkbookTests(unittest.TestCase):
         self.assertIn("Verde (0-5)", html)
         self.assertIn("Cliente &lt;Uno&gt;", html)
         self.assertNotIn("Cliente <Uno>", html)
+
+    def test_future_reminder_includes_next_15_days_regardless_of_status(self):
+        emision = {
+            "title": "Emisión y Servicios",
+            "rows": [
+                {"source_row": 2, "summary": {"Contratante": "Hoy", "Estatus actual": "Concluido", "Recordatorio Futuro": "2026-07-23"}},
+                {"source_row": 3, "summary": {"Contratante": "Límite", "Recordatorio Futuro": "07/08/2026"}},
+                {"source_row": 4, "summary": {"Contratante": "Fuera", "Recordatorio Futuro": "2026-08-08"}},
+            ],
+        }
+        siniestros = {
+            "title": "Siniestros",
+            "rows": [
+                {"source_row": 2, "summary": {"Contratante": "Pagado", "Estatus": "Pagado", "Recordatorio Futuro": "2026-07-30"}},
+                {"source_row": 3, "summary": {"Contratante": "Anterior", "Recordatorio Futuro": "2026-07-22"}},
+            ],
+        }
+
+        report = build_pending_reminder_report(emision, siniestros, date(2026, 7, 23))
+
+        self.assertEqual(report["window_end"], "2026-08-07")
+        self.assertEqual([item["contratante"] for item in report["items"]], ["Hoy", "Pagado", "Límite"])
+        self.assertEqual(report["count"], 3)
 
     def test_report_recipients_accept_multiple_separators_and_remove_duplicates(self):
         self.assertEqual(

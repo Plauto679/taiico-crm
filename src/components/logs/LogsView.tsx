@@ -6,7 +6,7 @@ import { AuditLogEntry, syncAuditLogs } from '@/modules/logs/service';
 
 const MODULE_LABELS: Record<string, string> = {
   accesos: 'Accesos', base_loads: 'Carga de bases', carga_bases: 'Carga de bases',
-  cartera: 'Cartera', clientes: 'Clientes', cobranza: 'Cobranza', cotizaciones: 'Cotizaciones',
+  cartera: 'Cartera de Prospectadores', clientes: 'Clientes', cobranza: 'Cobranza', cotizaciones: 'Cotizaciones',
   pendientes: 'Pendientes', recluta: 'Recluta', renovaciones: 'Renovaciones', configuracion_mail: 'Configuración de Mail',
 };
 

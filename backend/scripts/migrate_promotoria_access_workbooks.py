@@ -6,6 +6,7 @@ import re
 import zipfile
 from copy import copy
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 from openpyxl import load_workbook
 
@@ -157,35 +158,40 @@ def column_letter(number: int) -> str:
     return value
 
 
-def migrate_pending_low_level(
+def insert_pending_columns_low_level(
     path: Path,
     insert_column: int,
+    headers: tuple[str, ...],
     *,
     sheet_path: str = "xl/worksheets/sheet1.xml",
 ) -> None:
-    """Insert assignment columns without loading worksheets with styled million-row ranges."""
+    """Insert columns without loading worksheets with styled million-row ranges."""
+    if not headers:
+        return
+    amount = len(headers)
     with zipfile.ZipFile(path, "r") as archive:
         names = archive.namelist()
         sheet_xml = archive.read(sheet_path).decode("utf-8")
-        if "Promotoria" in sheet_xml and "RFC Agente" in sheet_xml:
+        if all(f"<t>{escape(header)}</t>" in sheet_xml for header in headers):
             return
 
         def shift_reference(match: re.Match[str]) -> str:
             letters, row = match.groups()
             number = column_number(letters)
-            return f'r="{column_letter(number + 2 if number >= insert_column else number)}{row}"'
+            return f'r="{column_letter(number + amount if number >= insert_column else number)}{row}"'
 
         sheet_xml = re.sub(r'r="([A-Z]+)(\d+)"', shift_reference, sheet_xml)
         row_one = re.search(r'<row\b[^>]*\br="1"[^>]*>.*?</row>', sheet_xml, re.DOTALL)
         if not row_one:
             raise ValueError("No se encontró la fila de encabezados")
-        insertion_ref = f"{column_letter(insert_column + 2)}1"
+        insertion_ref = f"{column_letter(insert_column + amount)}1"
         position = row_one.group(0).find(f'<c r="{insertion_ref}"')
         if position < 0:
             position = row_one.group(0).rfind("</row>")
-        new_cells = (
-            f'<c r="{column_letter(insert_column)}1" t="inlineStr"><is><t>Promotoria</t></is></c>'
-            f'<c r="{column_letter(insert_column + 1)}1" t="inlineStr"><is><t>RFC Agente</t></is></c>'
+        new_cells = "".join(
+            f'<c r="{column_letter(insert_column + offset)}1" t="inlineStr">'
+            f"<is><t>{escape(header)}</t></is></c>"
+            for offset, header in enumerate(headers)
         )
         updated_row = row_one.group(0)[:position] + new_cells + row_one.group(0)[position:]
         sheet_xml = sheet_xml[:row_one.start()] + updated_row + sheet_xml[row_one.end():]
@@ -194,7 +200,7 @@ def migrate_pending_low_level(
             start, end_letters, end_row = match.groups()
             return (
                 f'<dimension ref="{start}:'
-                f'{column_letter(column_number(end_letters) + 2)}{end_row}"'
+                f'{column_letter(column_number(end_letters) + amount)}{end_row}"'
             )
 
         sheet_xml = re.sub(
@@ -220,13 +226,13 @@ def migrate_pending_low_level(
         }
         for table_path in table_paths:
             table_xml = archive.read(table_path).decode("utf-8")
-            if "Promotoria" in table_xml:
+            if all(f'name="{escape(header)}"' in table_xml for header in headers):
                 continue
             table_xml = re.sub(
                 r'(<table\b[^>]*\bref="[A-Z]+\d+:)([A-Z]+)(\d+")',
                 lambda match: (
                     f"{match.group(1)}"
-                    f"{column_letter(column_number(match.group(2)) + 2)}"
+                    f"{column_letter(column_number(match.group(2)) + amount)}"
                     f"{match.group(3)}"
                 ),
                 table_xml,
@@ -236,7 +242,7 @@ def migrate_pending_low_level(
                 r'(<autoFilter\b[^>]*\bref="[A-Z]+\d+:)([A-Z]+)(\d+")',
                 lambda match: (
                     f"{match.group(1)}"
-                    f"{column_letter(column_number(match.group(2)) + 2)}"
+                    f"{column_letter(column_number(match.group(2)) + amount)}"
                     f"{match.group(3)}"
                 ),
                 table_xml,
@@ -249,17 +255,128 @@ def migrate_pending_low_level(
                     default=len(columns),
                 )
                 insertion = columns[insert_column - 2].end() if insert_column > 1 else columns[0].start()
-                new_columns = (
-                    f'<tableColumn id="{max_id + 1}" name="Promotoria"/>'
-                    f'<tableColumn id="{max_id + 2}" name="RFC Agente"/>'
+                new_columns = "".join(
+                    f'<tableColumn id="{max_id + offset + 1}" name="{escape(header)}"/>'
+                    for offset, header in enumerate(headers)
                 )
                 table_xml = table_xml[:insertion] + new_columns + table_xml[insertion:]
                 table_xml = re.sub(
                     r'(<tableColumns\b[^>]*\bcount=")(\d+)(")',
-                    lambda match: f"{match.group(1)}{int(match.group(2)) + 2}{match.group(3)}",
+                    lambda match: f"{match.group(1)}{int(match.group(2)) + amount}{match.group(3)}",
                     table_xml,
                     count=1,
                 )
+            replacements[table_path] = table_xml.encode("utf-8")
+
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as destination:
+            for item in archive.infolist():
+                destination.writestr(item, replacements.get(item.filename, archive.read(item.filename)))
+    path.write_bytes(repair_workbook_integrity(output.getvalue()))
+
+
+def migrate_pending_low_level(
+    path: Path,
+    insert_column: int,
+    *,
+    sheet_path: str = "xl/worksheets/sheet1.xml",
+) -> None:
+    insert_pending_columns_low_level(
+        path,
+        insert_column,
+        ("Promotoria", "RFC Agente"),
+        sheet_path=sheet_path,
+    )
+
+
+def rename_pending_column_low_level(
+    path: Path,
+    old_header: str,
+    new_header: str,
+    *,
+    sheet_path: str = "xl/worksheets/sheet1.xml",
+) -> None:
+    """Rename a header and its table column without expanding styled worksheets."""
+    with zipfile.ZipFile(path, "r") as archive:
+        names = archive.namelist()
+        sheet_xml = archive.read(sheet_path).decode("utf-8")
+        old_cell = f"<t>{escape(old_header)}</t>"
+        new_cell = f"<t>{escape(new_header)}</t>"
+        if new_cell in sheet_xml and old_cell not in sheet_xml:
+            return
+        replacements: dict[str, bytes] = {}
+        if old_cell in sheet_xml:
+            sheet_xml = sheet_xml.replace(old_cell, new_cell, 1)
+        else:
+            shared_path = "xl/sharedStrings.xml"
+            if shared_path not in names:
+                raise ValueError(f"No se encontró la columna {old_header}")
+            shared_xml = archive.read(shared_path).decode("utf-8")
+            shared_items = list(re.finditer(r"<si\b[^>]*>.*?</si>", shared_xml, re.DOTALL))
+            old_index = next(
+                (
+                    index
+                    for index, match in enumerate(shared_items)
+                    if "".join(re.findall(r"<t\b[^>]*>(.*?)</t>", match.group(0), re.DOTALL))
+                    == escape(old_header)
+                ),
+                None,
+            )
+            if old_index is None:
+                raise ValueError(f"No se encontró la columna {old_header}")
+            header_row = re.search(r'<row\b[^>]*\br="1"[^>]*>.*?</row>', sheet_xml, re.DOTALL)
+            if not header_row:
+                raise ValueError("No se encontró la fila de encabezados")
+            cell_pattern = re.compile(
+                rf'(<c\b[^>]*\bt="s"[^>]*>\s*<v>){old_index}(</v>\s*</c>)'
+            )
+            updated_header, substitutions = cell_pattern.subn(
+                rf"\g<1>{len(shared_items)}\g<2>",
+                header_row.group(0),
+                count=1,
+            )
+            if not substitutions:
+                raise ValueError(f"No se encontró la celda de encabezado {old_header}")
+            sheet_xml = (
+                sheet_xml[:header_row.start()]
+                + updated_header
+                + sheet_xml[header_row.end():]
+            )
+            shared_xml = shared_xml.replace(
+                "</sst>",
+                f"<si><t>{escape(new_header)}</t></si></sst>",
+                1,
+            )
+            shared_xml = re.sub(
+                r'(<sst\b[^>]*\buniqueCount=")(\d+)(")',
+                lambda match: f'{match.group(1)}{int(match.group(2)) + 1}{match.group(3)}',
+                shared_xml,
+                count=1,
+            )
+            replacements[shared_path] = shared_xml.encode("utf-8")
+        replacements[sheet_path] = sheet_xml.encode("utf-8")
+
+        sheet_filename = sheet_path.rsplit("/", 1)[-1]
+        relations_path = f"xl/worksheets/_rels/{sheet_filename}.rels"
+        relation_xml = (
+            archive.read(relations_path).decode("utf-8")
+            if relations_path in names
+            else ""
+        )
+        table_paths = {
+            "xl/" + target.removeprefix("../")
+            for target in re.findall(
+                r'<Relationship\b[^>]*\bType="[^"]*/table"[^>]*\bTarget="([^"]+)"',
+                relation_xml,
+            )
+        }
+        for table_path in table_paths:
+            table_xml = archive.read(table_path).decode("utf-8")
+            table_xml = table_xml.replace(
+                f'name="{escape(old_header)}"',
+                f'name="{escape(new_header)}"',
+                1,
+            )
             replacements[table_path] = table_xml.encode("utf-8")
 
         output = io.BytesIO()

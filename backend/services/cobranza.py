@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from database import SessionLocal, Payment, Policy, Client, PaymentEvidenceRecord
 from typing import Optional
 from datetime import datetime
+from services.cartera import prospector_commission_is_expired
 
 router = APIRouter(prefix="/cobranza", tags=["cobranza"])
 
@@ -251,7 +252,7 @@ async def get_cobranza_vida(
             payments = query.all()
             for pay in payments:
                 pol = pay.policy
-                pct = float(pol.commission_percentage) if pol.commission_percentage else 0.0
+                pct = 0.0 if prospector_commission_is_expired(pol) else (float(pol.commission_percentage) if pol.commission_percentage else 0.0)
                 com = float(pay.paid_amount) * (pct / 100.0) if pay.paid_amount else 0.0
                 
                 results.append({
@@ -271,7 +272,7 @@ async def get_cobranza_vida(
             payments = query.all()
             for pay in payments:
                 pol = pay.policy
-                pct = float(pol.commission_percentage) if pol.commission_percentage else 0.0
+                pct = 0.0 if prospector_commission_is_expired(pol) else (float(pol.commission_percentage) if pol.commission_percentage else 0.0)
                 com = float(pay.paid_amount) * pct if pay.paid_amount else 0.0 # Sura percentage is often absolute decimal
                 
                 results.append({
@@ -302,7 +303,7 @@ async def get_cobranza_vida(
             payments = query.all()
             for pay in payments:
                 pol = pay.policy
-                pct = float(pol.commission_percentage) if pol.commission_percentage else 0.0
+                pct = 0.0 if prospector_commission_is_expired(pol) else (float(pol.commission_percentage) if pol.commission_percentage else 0.0)
                 com = float(pay.paid_amount) * (pct / 100.0) if pay.paid_amount else 0.0
                 prospectador = pol.client.metadata_json.get("prospectador", "") if pol.client else ""
                 
@@ -356,7 +357,7 @@ async def get_cobranza_gmm(
             payments = query.all()
             for pay in payments:
                 pol = pay.policy
-                pct = float(pol.commission_percentage) if pol.commission_percentage else 0.0
+                pct = 0.0 if prospector_commission_is_expired(pol) else (float(pol.commission_percentage) if pol.commission_percentage else 0.0)
                 com = float(pay.paid_amount) * (pct / 100.0) if pay.paid_amount else 0.0
                 
                 results.append({
@@ -378,7 +379,7 @@ async def get_cobranza_gmm(
             payments = query.all()
             for pay in payments:
                 pol = pay.policy
-                pct = float(pol.commission_percentage) if pol.commission_percentage else 0.0
+                pct = 0.0 if prospector_commission_is_expired(pol) else (float(pol.commission_percentage) if pol.commission_percentage else 0.0)
                 com = float(pay.paid_amount) * pct if pay.paid_amount else 0.0
                 
                 results.append({

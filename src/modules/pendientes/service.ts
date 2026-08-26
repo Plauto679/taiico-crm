@@ -50,7 +50,7 @@ export function uploadPendingDocument(
     sourceRow: number,
     documentName: string,
     document: File,
-): Promise<{ uploaded: boolean; document: PendingDocument }> {
+): Promise<{ uploaded: boolean; replaced: boolean; document: PendingDocument; date_header: string; row: PendingDocumentsResponse['row'] }> {
     const body = new FormData();
     body.append('document_name', documentName);
     body.append('document', document);

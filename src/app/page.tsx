@@ -99,8 +99,8 @@ export default async function Home() {
               <Briefcase className="h-8 w-8" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold text-gray-900">Cartera</h2>
-              <p className="text-gray-500 mt-2">Perfiles de clientes y pólizas</p>
+              <h2 className="text-2xl font-bold text-gray-900">Cartera de Prospectadores</h2>
+              <p className="text-gray-500 mt-2">Asignación de prospectadores por póliza</p>
             </div>
           </div>
         </SmartLink>

@@ -83,6 +83,7 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
             setSiniestrosData((current) => ({ ...current, rows: [...current.rows, row] }));
         }
         setShowRegisterModal(false);
+        setNotice('Pendiente registrado correctamente. Se notificará al responsable asignado.');
     };
 
     const handleUpdated = (row: PendingRow) => {

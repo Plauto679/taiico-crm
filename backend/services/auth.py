@@ -89,7 +89,7 @@ MODULE_LABELS = {
     "cumpleanos": "Cumpleaños",
     "cumpleanos_agentes": "Cumpleaños de agentes",
     "pendientes": "Pendientes",
-    "cartera": "Cartera",
+    "cartera": "Cartera de Prospectadores",
     "clientes": "Clientes",
     "recluta": "Recluta",
     "dashboards": "Dashboards",
@@ -668,6 +668,13 @@ def get_access_profile(username: str) -> AccessProfile:
     if profile is None:
         raise KeyError("El usuario no tiene un perfil de acceso configurado")
     return profile
+
+
+def list_access_profiles() -> tuple[AccessProfile, ...]:
+    """Return the cached canonical access directory without downloading it twice."""
+    _load_credentials()
+    with _cache_lock:
+        return tuple((_cached_profiles or {}).values())
 
 
 def verify_credentials(username, password) -> bool:
