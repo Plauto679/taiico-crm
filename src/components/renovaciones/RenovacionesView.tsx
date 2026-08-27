@@ -129,7 +129,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
     };
 
     const handleEmailSent = async () => {
-        updateSelectedRenewal({ ESTATUS_DE_RENOVACION: 'Enviado' });
+        updateSelectedRenewal({ ESTATUS_DE_RENOVACION: 'Enviada Manual' });
         router.refresh();
     };
 

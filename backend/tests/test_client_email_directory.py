@@ -15,6 +15,8 @@ from services.client_email_directory import (
     parse_email_directory,
 )
 from services.renovaciones import (
+    MANUAL_RENEWAL_EMAIL_STATUS,
+    RENEWAL_STATUS_OPTIONS,
     build_metlife_gmm_renewal_email_body,
     renewal_email_cc_recipients,
     renewal_email_recipients,
@@ -28,6 +30,11 @@ def workbook_bytes(rows):
 
 
 class ClientEmailDirectoryTests(unittest.TestCase):
+    def test_manual_email_status_uses_the_current_dropdown_label(self):
+        self.assertEqual(MANUAL_RENEWAL_EMAIL_STATUS, "Enviada Manual")
+        self.assertIn(MANUAL_RENEWAL_EMAIL_STATUS, RENEWAL_STATUS_OPTIONS)
+        self.assertNotIn("Enviada al cliente", RENEWAL_STATUS_OPTIONS)
+
     def test_name_matching_ignores_accents_case_and_repeated_spaces(self):
         self.assertEqual(
             normalize_client_name("  DÁNTE   Morales Nájera "),

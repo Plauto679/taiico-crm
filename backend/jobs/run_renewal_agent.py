@@ -13,6 +13,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
+from sqlalchemy import and_, or_
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -27,6 +28,11 @@ from adapters.metlife_gmm_portal import (  # noqa: E402
     ensure_persistent_chrome,
     result_to_dict,
     stable_chrome_profile_dir,
+)
+from adapters.metlife_gmm_collection import (  # noqa: E402
+    COLLECTION_FAILURE_DATE,
+    check_metlife_gmm_collection,
+    collection_result_to_dict,
 )
 from adapters.metlife_gmm_old_portal import (  # noqa: E402
     OLD_PORTAL_ADAPTER_NAME,
@@ -48,6 +54,7 @@ from services.renovaciones import (  # noqa: E402
     persist_adapter_steps,
     renewal_email_cc_recipients,
     renewal_email_recipients,
+    renewal_smtp_settings,
     send_email_smtp,
 )
 
@@ -68,6 +75,34 @@ MAX_ATTACHMENT_COUNT = 100
 # This daily job intentionally has no WhatsApp dependency. Re-enabling WhatsApp
 # requires an explicit code change and review, not merely refreshing a token.
 WHATSAPP_ENABLED = False
+
+AUTOMATION_PROTECTED_RENEWAL_STATUSES = {
+    "renovado automatico",
+    "renovada automaticamente",
+    "renovada manual",
+    "enviada manual",
+    "enviada al cliente",
+    "enviado al cliente",
+    "enviado a cliente",
+    "enviado automaticamente",
+    "enviado",
+    "revision manual necesaria",
+}
+
+
+def renewal_status_blocks_automation(value: str | None) -> bool:
+    normalized = str(value or "").strip().lower()
+    normalized = normalized.translate(str.maketrans("áéíóúüñ", "aeiouun"))
+    return normalized in AUTOMATION_PROTECTED_RENEWAL_STATUSES
+
+
+def should_check_collection_after_failure(detail: str | None) -> bool:
+    normalized = str(detail or "").strip().lower()
+    normalized = normalized.translate(str.maketrans("áéíóúüñ", "aeiouun"))
+    return (
+        "timeout 90000ms exceeded" in normalized
+        or "se espero una poliza original" in normalized
+    )
 
 
 def emit(event: str, **payload) -> None:
@@ -144,6 +179,17 @@ def internal_recipients() -> list[str]:
             result.append(email)
             seen.add(normalized)
     return result
+
+
+def send_internal_renewal_email(*, subject: str, body: str) -> None:
+    """Send batch lifecycle notices from the dedicated renewals mailbox."""
+    send_email_smtp(
+        subject=subject,
+        body=body,
+        recipients=internal_recipients(),
+        cc_recipients=[],
+        settings=renewal_smtp_settings(),
+    )
 
 
 def target_drive_folder_id() -> str:
@@ -279,8 +325,63 @@ def update_crm_renewal_fields(
         )
         db.add(renewal)
         db.flush()
-    renewal.insurer_response = "Pendiente de envío"
+    renewal.insurer_response = "Enviado Automáticamente"
     renewal.updated_at = datetime.utcnow()
+
+
+def persist_collection_check(
+    task_id: str,
+    *,
+    paid_until: date,
+    succeeded: bool,
+    error: str | None = None,
+) -> bool:
+    """Store collection evidence and return whether manual review was assigned."""
+    db = SessionLocal()
+    try:
+        task = db.get(PolicyDocumentRetrievalTask, task_id)
+        if task is None:
+            raise RuntimeError(f"No existe la tarea de renovación {task_id}")
+        payload = dict(task.normalized_payload or {})
+        payload["paid_until_date"] = paid_until.isoformat()
+        payload["collection_check"] = {
+            "status": "completed" if succeeded else "failed",
+            "paid_until": paid_until.isoformat(),
+            "error": error,
+            "checked_at": datetime.utcnow().isoformat(),
+        }
+        task.normalized_payload = payload
+
+        policy = db.query(Policy).filter(
+            Policy.policy_number == str(task.policy_number).strip()
+        ).first()
+        manual_review_assigned = False
+        if policy is not None:
+            renewal = db.query(Renewal).filter(
+                Renewal.original_policy_id == policy.id
+            ).first()
+            if renewal is None:
+                renewal = Renewal(
+                    original_policy_id=policy.id,
+                    client_id=policy.client_id,
+                    renewal_deadline=policy.effective_end_date,
+                    status="in_progress",
+                )
+                db.add(renewal)
+                db.flush()
+            renewal.paid_until = paid_until
+            if (
+                succeeded
+                and paid_until >= task.renewal_deadline
+                and not str(renewal.insurer_response or "").strip()
+            ):
+                renewal.insurer_response = "Revision Manual Necesaria"
+                manual_review_assigned = True
+            renewal.updated_at = datetime.utcnow()
+        db.commit()
+        return manual_review_assigned
+    finally:
+        db.close()
 
 
 def record_action(
@@ -350,7 +451,13 @@ def selected_tasks(
             .filter(
                 PolicyDocumentRetrievalTask.insurer_id == "metlife",
                 PolicyDocumentRetrievalTask.product_branch == "GMM",
-                PolicyDocumentRetrievalTask.status == "approved",
+                or_(
+                    PolicyDocumentRetrievalTask.status == "approved",
+                    and_(
+                        PolicyDocumentRetrievalTask.status == "queued",
+                        PolicyDocumentRetrievalTask.attempt_count > 0,
+                    ),
+                ),
                 PolicyDocumentRetrievalTask.renewal_deadline <= cutoff,
             )
             .order_by(
@@ -370,12 +477,23 @@ def selected_tasks(
             .all()
             if action.input_payload and action.input_payload.get("task_id")
         }
+        protected_policy_numbers = {
+            str(policy_number).strip()
+            for policy_number, renewal_status in (
+                db.query(Policy.policy_number, Renewal.insurer_response)
+                .join(Renewal, Renewal.original_policy_id == Policy.id)
+                .filter(Renewal.insurer_response.isnot(None))
+                .all()
+            )
+            if renewal_status_blocks_automation(renewal_status)
+        }
         for task in tasks:
             db.expunge(task)
         eligible_tasks = [
             task
             for task in tasks
             if task.id not in protected_task_ids
+            and str(task.policy_number).strip() not in protected_policy_numbers
             and task_agent_code(task) in TAIICO_AGENT_CODES
         ]
         effective_process_date = process_date or local_now().date()
@@ -560,14 +678,12 @@ def finish_run(
         )
     lines.extend(["", "Saludos,", "TAIICO OS"])
     subject_prefix = "ALERTA: " if aborted else ""
-    send_email_smtp(
+    send_internal_renewal_email(
         subject=(
             f"{subject_prefix}Cierre renovaciones MetLife GMM - "
             f"{process_date.isoformat()}"
         ),
         body="\n".join(lines),
-        recipients=internal_recipients(),
-        cc_recipients=[],
     )
     emit("batch_finished", **summary)
     return summary
@@ -624,6 +740,59 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
     data = result_to_dict(result)
     if result.status != "completed":
         detail = result.error_message or result.status
+        collection_data = None
+        collection_handled_failure = False
+        manual_review_assigned = False
+        if should_check_collection_after_failure(detail):
+            emit(
+                "collection_check_started",
+                policy=task.policy_number,
+                rfc=task.rfc,
+            )
+            collection_result = check_metlife_gmm_collection(
+                MetLifeGmmPortalTask(
+                    id=task.id,
+                    policy_number=task.policy_number,
+                    original_policy_number=task.original_policy_number,
+                    rfc=task.rfc or "",
+                    client_name=task.client_name,
+                    renewal_deadline=task.renewal_deadline,
+                ),
+                headless=False,
+            )
+            collection_data = collection_result_to_dict(collection_result)
+            data["steps"] = [
+                *(data.get("steps") or []),
+                *(collection_data.get("steps") or []),
+            ]
+            paid_until = collection_result.paid_until or COLLECTION_FAILURE_DATE
+            collection_handled_failure = collection_result.status == "completed"
+            manual_review_assigned = persist_collection_check(
+                task.id,
+                paid_until=paid_until,
+                succeeded=collection_handled_failure,
+                error=collection_result.error_message,
+            )
+            if collection_handled_failure:
+                detail = (
+                    f"{detail} | Cobranza: Pagado Hasta "
+                    f"{paid_until.strftime('%d/%m/%Y')}"
+                )
+                if manual_review_assigned:
+                    detail += " | CRM: Revision Manual Necesaria"
+            else:
+                detail = (
+                    f"{detail} | Falló consulta de cobranza: "
+                    f"{collection_result.error_message or 'error desconocido'} | "
+                    "Pagado Hasta: 01/01/2000"
+                )
+            emit(
+                "collection_check_finished",
+                policy=task.policy_number,
+                status=collection_result.status,
+                paid_until=paid_until.isoformat(),
+                manual_review=manual_review_assigned,
+            )
         persist_result(
             run_id,
             task.id,
@@ -635,7 +804,12 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
         record_action(
             task=task,
             status="failed",
-            output={"adapter_result": result.status, "error": detail},
+            output={
+                "adapter_result": result.status,
+                "error": detail,
+                "collection_check": collection_data,
+                "manual_review_assigned": manual_review_assigned,
+            },
             duration_ms=int((time.monotonic() - started) * 1000),
         )
         emit("task_failed", policy=task.policy_number, detail=detail)
@@ -644,7 +818,7 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
             "client": task.client_name or "-",
             "status": "failed",
             "detail": detail,
-        }, is_portal_failure(data)
+        }, is_portal_failure(data) and not collection_handled_failure
 
     delivery_steps: list[dict] = []
     try:
@@ -714,6 +888,7 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
             recipients=recipients,
             attachments=attachments,
             cc_recipients=cc_recipients,
+            settings=renewal_smtp_settings(),
         )
         delivery_steps.append(
             step(
@@ -945,6 +1120,14 @@ def execute_batch(now: datetime, *, limit: int | None = None) -> dict:
     if limit is not None:
         tasks = tasks[:limit]
     run_id = create_run(tasks, cutoff)
+    send_internal_renewal_email(
+        subject=f"Inicio renovaciones MetLife GMM - {now.date().isoformat()}",
+        body=summary_body(
+            "Inicia el proceso diario de renovaciones MetLife GMM.",
+            tasks,
+            now.date(),
+        ),
+    )
     emit(
         "batch_started",
         run_id=run_id,

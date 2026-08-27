@@ -32,12 +32,36 @@ from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
 from parsers.metlife_vida_renovaciones import PARSER_VERSION as METLIFE_VIDA_RENEWAL_PARSER_VERSION
 from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workbook
 from adapters.metlife_gmm_portal import MetLifeGmmPortalAdapter, MetLifeGmmPortalTask, result_to_dict, stable_chrome_profile_dir
-from services.mail_configuration import smtp_settings_for, smtp_ssl_context
+from services.mail_configuration import smtp_settings_for_email_address, smtp_ssl_context
 from services.metlife_agent_directory import normalize_agent_key, promotoria_by_agent_key
 from services.session_auth import current_username
 from drive.client import build_drive_service
 
 router = APIRouter(prefix="/renovaciones", tags=["renovaciones"])
+
+DEFAULT_RENEWAL_SENDER_ADDRESS = "clientes@taiico.com"
+MANUAL_RENEWAL_EMAIL_STATUS = "Enviada Manual"
+RENEWAL_STATUS_OPTIONS = {
+    "Renovado Automático",
+    "Renovada Manual",
+    MANUAL_RENEWAL_EMAIL_STATUS,
+    "Enviado Automáticamente",
+    "Revision Manual Necesaria",
+}
+
+
+def renewal_smtp_settings() -> dict:
+    sender_address = os.getenv(
+        "RENEWAL_EMAIL_SENDER_ADDRESS",
+        DEFAULT_RENEWAL_SENDER_ADDRESS,
+    ).strip().casefold()
+    settings = smtp_settings_for_email_address(sender_address)
+    if not settings:
+        raise RuntimeError(
+            "No existe una configuración SMTP verificada para el remitente de "
+            f"renovaciones {sender_address}."
+        )
+    return settings
 
 DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 DRIVE_SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
@@ -1522,7 +1546,11 @@ async def get_upcoming_renewals(
                         "IVA": float(pol.premium_amount) * 0.16 if pol.premium_amount else 0.0,
                         "NOMBREL": pol.client.full_name if pol.client else "",
                         "DEDUCIBLE": 0.0,
-                        "PAGADOHASTA": format_date(pol.effective_end_date),
+                        "PAGADOHASTA": (
+                            ren.paid_until.strftime("%d/%m/%Y")
+                            if ren.paid_until
+                            else ""
+                        ),
                         "COASEGURO": 0.0,
                         "AGENTE": agent_code,
                         "NOMBRE": agent.get("NOMBRE", ""),
@@ -1640,7 +1668,14 @@ async def update_renewal_status(
             db.flush()
             
         if new_status is not None:
-            renewal.insurer_response = new_status
+            cleaned_status = new_status.strip()
+            existing_status = str(renewal.insurer_response or "").strip()
+            if cleaned_status and cleaned_status not in RENEWAL_STATUS_OPTIONS and cleaned_status != existing_status:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Selecciona un estatus de renovación válido",
+                )
+            renewal.insurer_response = cleaned_status or None
             
         if expediente is not None:
             policy.document_link = expediente
@@ -1737,14 +1772,21 @@ async def send_renewal_email_endpoint(
                 
         # Send Email
         recipients = renewal_email_recipients(recipient_email)
-        user_smtp_settings = smtp_settings_for(username)
-        send_email_smtp(subject, body, recipients, attachments, settings=user_smtp_settings)
+        renewal_settings = renewal_smtp_settings()
+        send_email_smtp(subject, body, recipients, attachments, settings=renewal_settings)
         
         # Update database status
         renewal = db.query(Renewal).filter(Renewal.original_policy_id == policy.id).first()
-        if renewal:
-            renewal.insurer_response = "Enviado"
-            db.commit()
+        if renewal is None:
+            renewal = Renewal(
+                original_policy_id=policy.id,
+                client_id=policy.client_id,
+                renewal_deadline=policy.effective_end_date,
+                status="in_progress",
+            )
+            db.add(renewal)
+        renewal.insurer_response = MANUAL_RENEWAL_EMAIL_STATUS
+        db.commit()
             
         return {
             "message": "Correo de renovación enviado",
@@ -1752,7 +1794,8 @@ async def send_renewal_email_endpoint(
             "cc_recipients": renewal_email_cc_recipients(recipients),
             "intended_client_email": recipient_email,
             "internal_only": os.getenv("RENEWAL_EMAIL_INTERNAL_ONLY", "true").lower() in {"1", "true", "yes"},
-            "sender_source": "user_configuration" if user_smtp_settings else "server_fallback",
+            "sender_address": renewal_settings["sender"],
+            "sender_source": "renewal_configuration",
             "attachment_count": len(attachments),
         }
         

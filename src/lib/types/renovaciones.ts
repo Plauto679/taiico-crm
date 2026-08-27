@@ -7,7 +7,7 @@ export interface RenovacionGMM {
     IVA: number;
     NOMBREL: string; // Asegurado
     DEDUCIBLE: number;
-    PAGADOHASTA: string; // Date YYYY-MM-DD
+    PAGADOHASTA: string; // Date DD/MM/YYYY
     COASEGURO?: number; // Optional as it wasn't strictly in the display list but is useful
     AGENTE: string;
     NOMBRE: string;

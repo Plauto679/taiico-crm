@@ -77,6 +77,29 @@ def configuration_for(username: str) -> UserMailConfiguration | None:
 
 def smtp_settings_for(username: str) -> dict | None:
     item = configuration_for(username)
+    return _smtp_settings(item)
+
+
+def smtp_settings_for_email_address(email_address: str) -> dict | None:
+    """Resolve a stored SMTP account by its actual From address."""
+    normalized = str(email_address or "").strip().casefold()
+    if not normalized:
+        return None
+    db = SessionLocal()
+    try:
+        item = (
+            db.query(UserMailConfiguration)
+            .filter(UserMailConfiguration.email_address == normalized)
+            .first()
+        )
+        if item:
+            db.expunge(item)
+    finally:
+        db.close()
+    return _smtp_settings(item)
+
+
+def _smtp_settings(item: UserMailConfiguration | None) -> dict | None:
     if not item:
         return None
     return {

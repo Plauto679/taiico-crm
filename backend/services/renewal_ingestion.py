@@ -252,7 +252,13 @@ def ingest_rows(db, source_document, parsed_rows, workbook_issues, parser_name, 
                 )
                 db.add(renewal)
             renewal.renewal_quote_amount = payload.get("premium_amount")
-            renewal.insurer_response = payload.get("renewal_status_source")
+            source_renewal_status = str(
+                payload.get("renewal_status_source") or ""
+            ).strip()
+            # The canonical workbook is authoritative when it contains a value,
+            # but an empty cell must not erase a status produced by automation.
+            if source_renewal_status:
+                renewal.insurer_response = source_renewal_status
             renewal.risk_level = payload.get("risk_level") or "none"
             if payload.get("expediente_link") and not policy.document_link:
                 policy.document_link = payload["expediente_link"]

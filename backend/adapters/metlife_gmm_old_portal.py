@@ -18,6 +18,7 @@ from adapters.metlife_gmm_portal import (
     chrome_cdp_url,
     ensure_persistent_chrome,
     now_iso,
+    portal_page,
     policy_digits,
     sanitize_drive_name,
 )
@@ -208,7 +209,7 @@ class MetLifeGmmOldPortalAdapter(MetLifeGmmPortalAdapter):
                 ensure_persistent_chrome(self.session_profile_dir)
                 browser = playwright.chromium.connect_over_cdp(chrome_cdp_url())
                 context = browser.contexts[0]
-                page = context.pages[-1] if context.pages else context.new_page()
+                page = portal_page(context, METLIFE_OLD_PORTAL_URL)
 
                 step = self.record_step("open_old_portal", url=METLIFE_OLD_PORTAL_URL)
                 page.goto(METLIFE_OLD_PORTAL_URL, wait_until="domcontentloaded", timeout=90_000)

@@ -281,6 +281,7 @@ class Renewal(Base):
     client_id = Column(String(36), ForeignKey("clients.id"), nullable=False)
     status = Column(String(50), default="not_started", nullable=False) # not_started, approaching, in_progress, renewed, etc.
     renewal_deadline = Column(Date, nullable=False)
+    paid_until = Column(Date, nullable=True)
     renewal_quote_amount = Column(Numeric(12, 2), nullable=True)
     renewal_policy_id = Column(String(36), ForeignKey("policies.id"), nullable=True)
     requested_modifications = Column(JSON, default={})

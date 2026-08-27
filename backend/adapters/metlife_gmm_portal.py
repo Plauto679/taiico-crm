@@ -10,6 +10,7 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any, Literal
 
@@ -98,6 +99,17 @@ def chrome_server_ready() -> bool:
         return False
 
 
+def portal_page(context, target_url: str):
+    """Reuse one persistent tab per portal host, creating it when absent."""
+    target_host = urlparse(target_url).netloc.casefold()
+    for page in context.pages:
+        if urlparse(page.url or "").netloc.casefold() == target_host:
+            return page
+    page = context.new_page()
+    page.goto(target_url, wait_until="domcontentloaded", timeout=90_000)
+    return page
+
+
 def ensure_persistent_chrome(profile_dir: Path) -> None:
     if chrome_server_ready():
         return
@@ -149,6 +161,44 @@ def policy_matches_text(policy_number: str, text: str) -> bool:
     wanted = policy_digits(policy_number)
     found = policy_digits(text)
     return bool(wanted and wanted in found)
+
+
+def policy_candidate_match_score(
+    candidate_text: str,
+    current_policy_number: str,
+    *original_policy_numbers: str,
+) -> int:
+    """Rank a Clientes Beta policy label without treating the ramo as policy data.
+
+    MetLife renders labels such as ``02006 0000560034 MEDICALIFE``.  The first
+    number is the ramo and the second is the policy.  On some renewals MetLife
+    also replaces the leading renewal/consecutive digit, so the stable original
+    policy is used as a suffix only when it contains at least five digits.
+    """
+    candidate_tokens = [
+        token.lstrip("0") or "0"
+        for token in re.findall(r"\d+", candidate_text or "")
+    ]
+    current = policy_digits(current_policy_number).lstrip("0") or "0"
+    if current in candidate_tokens:
+        return 3
+
+    originals = {
+        policy_digits(value).lstrip("0") or "0"
+        for value in original_policy_numbers
+        if policy_digits(value)
+    }
+    if any(original in candidate_tokens for original in originals):
+        return 2
+    if any(
+        len(original) >= 5
+        and len(token) > len(original)
+        and token.endswith(original)
+        for original in originals
+        for token in candidate_tokens
+    ):
+        return 1
+    return 0
 
 
 def ensure_credentials(username: str | None = None, password: str | None = None) -> tuple[str, str]:
@@ -268,7 +318,7 @@ class MetLifeGmmPortalAdapter:
                 ensure_persistent_chrome(self.session_profile_dir)
                 browser = p.chromium.connect_over_cdp(chrome_cdp_url())
                 context = browser.contexts[0]
-                page = context.pages[-1] if context.pages else context.new_page()
+                page = portal_page(context, METLIFE_PORTAL_URL)
 
                 if resume_mfa:
                     step = self.record_step("continue_mfa", code_supplied=bool(mfa_code))
@@ -420,7 +470,11 @@ class MetLifeGmmPortalAdapter:
         page.wait_for_selector("text=Clientes Beta", timeout=120_000)
 
     def open_clientes_beta(self, page):
-        page.get_by_role("button", name="Clientes Beta", exact=True).first.click()
+        buttons = page.get_by_role("button", name="Clientes Beta", exact=True)
+        if buttons.count() and buttons.first.is_visible():
+            buttons.first.click()
+        else:
+            page.get_by_text("Clientes Beta", exact=True).last.click()
         page.wait_for_load_state("networkidle", timeout=60_000)
         page.wait_for_url(re.compile(r".*/graph-clients.*|.*/clients.*"), timeout=60_000)
 
@@ -439,25 +493,42 @@ class MetLifeGmmPortalAdapter:
         page.wait_for_load_state("networkidle", timeout=60_000)
         page.wait_for_selector(f"text={rfc}", timeout=60_000)
 
-    def open_matching_policy(self, page, policy_number: str):
-        wanted = policy_digits(policy_number)
-        cards = page.locator("text=/PÓLIZAS|POLIZAS/i").locator("xpath=ancestor::*[contains(@class, 'card') or contains(@class, 'mat-card') or self::div][1]")
-        count = cards.count()
-        candidates = []
-        for index in range(count):
-            card = cards.nth(index)
-            text = card.inner_text(timeout=5_000)
-            if policy_matches_text(wanted, text):
-                candidates.append((index, text))
-        if not candidates:
-            # Fallback: find any visible text containing policy digits and click its nearest card/container.
-            match = page.get_by_text(re.compile(wanted)).first
-            match.wait_for(timeout=15_000)
-            match.click()
-        else:
-            cards.nth(candidates[0][0]).click()
+    def select_matching_policy(self, page, *policy_numbers: str):
+        supplied = [value for value in policy_numbers if policy_digits(value)]
+        if not supplied:
+            raise MetLifePortalAdapterError("No policy number was supplied for the portal search.")
 
+        # Clientes Beta is React/Material UI.  The policy itself is the clickable
+        # span; the surrounding card has generated MuiPaper/jss class names.
+        labels = page.locator("span").filter(has_text=re.compile("MEDICALIFE", re.I))
+        candidates: list[tuple[int, Any]] = []
+        for index in range(labels.count()):
+            label = labels.nth(index)
+            if not label.is_visible():
+                continue
+            text = label.inner_text(timeout=5_000)
+            score = policy_candidate_match_score(text, supplied[0], *supplied[1:])
+            if score:
+                candidates.append((score, label))
+
+        best_score = max((score for score, _ in candidates), default=0)
+        best = [label for score, label in candidates if score == best_score]
+        if len(best) != 1:
+            wanted = ", ".join(
+                policy_digits(value).lstrip("0") or "0" for value in supplied
+            )
+            raise MetLifePortalAdapterError(
+                "Expected one matching GMM policy label for "
+                f"{wanted}; found {len(best)} matches."
+            )
+        best[0].click()
         page.wait_for_load_state("networkidle", timeout=60_000)
+        page.get_by_text("Cobranza", exact=True).last.wait_for(
+            state="visible", timeout=60_000
+        )
+
+    def open_matching_policy(self, page, policy_number: str):
+        self.select_matching_policy(page, policy_number)
         page.get_by_text("Documentos de la póliza", exact=True).click()
         page.wait_for_load_state("networkidle", timeout=60_000)
         page.get_by_text(re.compile(r"^Nombre del documento$", re.I)).last.wait_for(
