@@ -39,6 +39,26 @@ PROMOTORIA_SURA_PATHS = {
 
 CLIENT_EMAILS_PATH = BASE_DIR / "Correos de los clientes" / "Clientes Correos Taiico.xlsx"
 
+# Finanzas keeps the historical CSV files as external canonical sources.  The
+# database is a query index plus controlled enrichment layer; these paths can be
+# overridden on hosts where Google Drive is mounted elsewhere.
+FINANCE_ROOT = Path(os.getenv("FINANCE_ROOT", str(BASE_DIR / "Finanzas"))).expanduser()
+FINANCE_SOURCE_PATHS = {
+    "tla_amex": Path(os.getenv("FINANCE_TLA_AMEX_CSV", str(FINANCE_ROOT / "TLA" / "Estados Mensuales Amex" / "Amex_historico.csv"))).expanduser(),
+    "tla_bbva": Path(os.getenv("FINANCE_TLA_BBVA_CSV", str(FINANCE_ROOT / "TLA" / "Estados Mensuales BBVA" / "BBVA_historico.csv"))).expanduser(),
+    "tla_banorte": Path(os.getenv("FINANCE_TLA_BANORTE_CSV", str(FINANCE_ROOT / "TLA" / "Estados Mensuales Banorte" / "Banorte_historico.csv"))).expanduser(),
+    "ts_bbva": Path(os.getenv("FINANCE_TS_BBVA_CSV", str(FINANCE_ROOT / "TS" / "Estados Mensuales BBVA" / "BBVA_historico.csv"))).expanduser(),
+}
+# Production can read the canonical histories directly from Drive when the
+# desktop volume is not mounted. A local path still takes precedence.
+FINANCE_SOURCE_FILE_IDS = {
+    "tla_amex": os.getenv("GOOGLE_DRIVE_FINANCE_TLA_AMEX_FILE_ID", "1sYfWjDirbSngNGvx-sCtFVAYxkGEQ5In"),
+    "tla_bbva": os.getenv("GOOGLE_DRIVE_FINANCE_TLA_BBVA_FILE_ID", "1sp_Scq_hGZKnJYE_ylNG4UxHumiHksDp"),
+    "tla_banorte": os.getenv("GOOGLE_DRIVE_FINANCE_TLA_BANORTE_FILE_ID", "1thHRMd4tOxKuQoaH8WFzhYsU984xXuMQ"),
+    "ts_bbva": os.getenv("GOOGLE_DRIVE_FINANCE_TS_BBVA_FILE_ID", "1nGsYcV4hptrKUKs09_TNOzsXcDDXQjQj"),
+}
+FINANCE_INVOICES_PATH = Path(os.getenv("FINANCE_INVOICES_PATH", str(FINANCE_ROOT / "Facturas Generales"))).expanduser()
+
 USERS_DB = BASE_DIR / "Users" / "Users & Passwords.xlsx"
 
 SHEET_NAMES = {

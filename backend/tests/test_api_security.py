@@ -51,6 +51,7 @@ class ApiSecurityTests(unittest.TestCase):
                 "/pendientes",
                 "/mail-configuration",
                 "/recluta",
+                "/finanzas",
             )) and main.current_username not in calls:
                 unprotected.append(route.path)
         self.assertEqual(unprotected, [])

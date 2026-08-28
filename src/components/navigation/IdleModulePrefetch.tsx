@@ -10,6 +10,7 @@ const FREQUENT_MODULES = [
   { href: '/cobranza', module: 'cobranza' },
   { href: '/clientes', module: 'clientes' },
   { href: '/cotizaciones', module: 'cotizaciones' },
+  { href: '/finanzas', module: 'finanzas' },
 ];
 
 type ConnectionLike = { saveData?: boolean; effectiveType?: string };

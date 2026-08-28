@@ -704,6 +704,196 @@ class DataQualityIssue(Base):
     assigned_user = relationship("User", foreign_keys=[assigned_user_id])
 
 
+# Finance module. External CSV histories remain canonical; these tables provide
+# a fast query index and durable, audited enrichment/decision state.
+class FinanceSourceState(Base):
+    __tablename__ = "finance_source_states"
+
+    key = Column(String(50), primary_key=True)
+    company = Column(String(20), nullable=False, index=True)
+    bank = Column(String(50), nullable=False)
+    source_path = Column(Text, nullable=False)
+    available = Column(Boolean, default=False, nullable=False)
+    content_hash = Column(String(64), nullable=True)
+    row_count = Column(Integer, default=0, nullable=False)
+    last_modified_at = Column(DateTime, nullable=True)
+    last_synced_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+
+
+class FinanceMovement(Base):
+    __tablename__ = "finance_movements"
+    __table_args__ = (UniqueConstraint("source_key", "external_id", name="uq_finance_movement_source_external"),)
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_key = Column(String(50), ForeignKey("finance_source_states.key", ondelete="CASCADE"), nullable=False, index=True)
+    external_id = Column(String(255), nullable=False, index=True)
+    company = Column(String(20), nullable=False, index=True)
+    bank = Column(String(50), nullable=False, index=True)
+    account_type = Column(String(100), nullable=True)
+    account_nature = Column(String(50), nullable=True)
+    account = Column(String(100), nullable=True)
+    clabe = Column(String(40), nullable=True)
+    currency = Column(String(10), nullable=False, default="MXN")
+    operation_date = Column(Date, nullable=False, index=True)
+    settlement_date = Column(Date, nullable=True)
+    original_description = Column(Text, nullable=False)
+    reference = Column(String(500), nullable=True)
+    counterparty = Column(String(500), nullable=True)
+    debit = Column(Numeric(16, 2), default=0, nullable=False)
+    credit = Column(Numeric(16, 2), default=0, nullable=False)
+    net_amount = Column(Numeric(16, 2), nullable=False, index=True)
+    balance = Column(Numeric(16, 2), nullable=True)
+    holder = Column(String(500), nullable=True)
+    source_category = Column(String(255), nullable=True)
+    source_subcategory = Column(String(255), nullable=True)
+    category_override = Column(String(255), nullable=True, index=True)
+    subcategory_override = Column(String(255), nullable=True)
+    recurring = Column(Boolean, default=False, nullable=False)
+    tax = Column(Boolean, default=False, nullable=False)
+    payroll = Column(Boolean, default=False, nullable=False)
+    requires_invoice = Column(Boolean, default=False, nullable=False)
+    invoice_uuid = Column(String(64), nullable=True, index=True)
+    invoice_reconciliation_status = Column(String(50), nullable=True, index=True)
+    review_status = Column(String(50), nullable=True, index=True)
+    statement_period = Column(String(20), nullable=True, index=True)
+    source_filename = Column(String(500), nullable=True)
+    source_page = Column(Integer, nullable=True)
+    source_hash = Column(String(64), nullable=True, index=True)
+    enrichment_updated_by = Column(String(320), nullable=True)
+    enrichment_updated_at = Column(DateTime, nullable=True)
+    indexed_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+
+class FinanceRecurringDecision(Base):
+    __tablename__ = "finance_recurring_decisions"
+
+    fingerprint = Column(String(64), primary_key=True)
+    company = Column(String(20), nullable=False, index=True)
+    label = Column(String(500), nullable=False)
+    status = Column(String(30), nullable=False, index=True)
+    note = Column(Text, nullable=True)
+    decided_by = Column(String(320), nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+
+class FinanceInvoice(Base):
+    __tablename__ = "finance_invoices"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    file_path = Column(Text, nullable=False, unique=True)
+    file_hash = Column(String(64), nullable=False, index=True)
+    file_type = Column(String(10), nullable=False)
+    uuid = Column(String(64), nullable=True, index=True)
+    issuer_rfc = Column(String(20), nullable=True, index=True)
+    receiver_rfc = Column(String(20), nullable=True, index=True)
+    issued_at = Column(DateTime, nullable=True, index=True)
+    total = Column(Numeric(16, 2), nullable=True)
+    currency = Column(String(10), nullable=True)
+    payment_method = Column(String(50), nullable=True)
+    status = Column(String(40), default="sin_conciliar", nullable=False, index=True)
+    parse_error = Column(Text, nullable=True)
+    indexed_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+
+class FinanceInvoiceMatch(Base):
+    __tablename__ = "finance_invoice_matches"
+    __table_args__ = (UniqueConstraint("invoice_id", "movement_id", name="uq_finance_invoice_movement"),)
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    invoice_id = Column(String(36), ForeignKey("finance_invoices.id", ondelete="CASCADE"), nullable=False, index=True)
+    movement_id = Column(String(36), ForeignKey("finance_movements.id", ondelete="CASCADE"), nullable=False, index=True)
+    confidence = Column(Numeric(5, 2), nullable=True)
+    status = Column(String(30), nullable=False, index=True)
+    rationale = Column(Text, nullable=True)
+    confirmed_by = Column(String(320), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+
+class FinanceProjection(Base):
+    __tablename__ = "finance_projections"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    company = Column(String(20), nullable=False, index=True)
+    due_date = Column(Date, nullable=False, index=True)
+    concept = Column(String(500), nullable=False)
+    amount = Column(Numeric(16, 2), nullable=False)
+    scenario = Column(String(30), default="base", nullable=False, index=True)
+    status = Column(String(30), default="activa", nullable=False, index=True)
+    source = Column(String(50), default="manual", nullable=False)
+    created_by = Column(String(320), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+
+class FinanceClassificationRule(Base):
+    __tablename__ = "finance_classification_rules"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String(255), nullable=False)
+    priority = Column(Integer, default=100, nullable=False, index=True)
+    field = Column(String(50), nullable=False)
+    operator = Column(String(30), nullable=False)
+    value = Column(String(500), nullable=False)
+    company = Column(String(20), nullable=True, index=True)
+    category = Column(String(255), nullable=False)
+    subcategory = Column(String(255), nullable=True)
+    enabled = Column(Boolean, default=True, nullable=False, index=True)
+    exclusion = Column(Boolean, default=False, nullable=False)
+    created_by = Column(String(320), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+
+class FinanceRuleApplication(Base):
+    __tablename__ = "finance_rule_applications"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id = Column(String(36), nullable=False, index=True)
+    rule_id = Column(String(36), ForeignKey("finance_classification_rules.id", ondelete="CASCADE"), nullable=False, index=True)
+    movement_id = Column(String(36), ForeignKey("finance_movements.id", ondelete="CASCADE"), nullable=False, index=True)
+    before_category = Column(String(255), nullable=True)
+    before_subcategory = Column(String(255), nullable=True)
+    before_review_status = Column(String(50), nullable=True)
+    applied_by = Column(String(320), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    reverted_at = Column(DateTime, nullable=True)
+
+
+class FinanceBudgetItem(Base):
+    __tablename__ = "finance_budget_items"
+    __table_args__ = (UniqueConstraint("company", "month", "category", name="uq_finance_budget_company_month_category"),)
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    company = Column(String(20), nullable=False, index=True)
+    month = Column(Date, nullable=False, index=True)
+    category = Column(String(255), nullable=False, index=True)
+    amount = Column(Numeric(16, 2), nullable=False)
+    created_by = Column(String(320), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+
+class FinanceIngestion(Base):
+    __tablename__ = "finance_ingestions"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_key = Column(String(50), nullable=False, index=True)
+    filename = Column(String(500), nullable=False)
+    file_hash = Column(String(64), nullable=False, index=True)
+    status = Column(String(30), nullable=False, index=True)
+    row_count = Column(Integer, default=0, nullable=False)
+    new_rows = Column(Integer, default=0, nullable=False)
+    duplicate_rows = Column(Integer, default=0, nullable=False)
+    error_detail = Column(Text, nullable=True)
+    staging_path = Column(Text, nullable=True)
+    backup_path = Column(Text, nullable=True)
+    created_by = Column(String(320), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    published_at = Column(DateTime, nullable=True)
+    reverted_at = Column(DateTime, nullable=True)
+
+
 # Helper block to create local SQLite database for development
 def create_all_tables():
     """Initializes the database schema."""
