@@ -321,13 +321,17 @@ def _derived_day_values(summary: dict[str, str], today: date | None = None) -> d
 
 def _automatic_creation_values(
     source: PendingSource,
-    today: date | None = None,
+    created_at: date | datetime | None = None,
 ) -> dict[str, str]:
     header = AUTOMATIC_START_DATE_HEADERS.get(source.key)
     if not header:
         return {}
-    current_date = today or datetime.now(ZoneInfo("America/Mexico_City")).date()
-    return {header: current_date.isoformat()}
+    current = created_at or datetime.now(ZoneInfo("America/Mexico_City"))
+    if isinstance(current, datetime):
+        timestamp = current.strftime("%Y-%m-%d %H:%M")
+    else:
+        timestamp = f"{current.isoformat()} 00:00"
+    return {header: timestamp}
 
 
 def _summary_value(summary: dict[str, str], label: str) -> str:
@@ -1057,10 +1061,44 @@ def _folder_descriptor_from_row(row: dict) -> str:
     )
 
 
-def _folder_name_for_row(row: dict) -> str:
-    _folder_name_for_rfc(_rfc_from_row(row))
+def _folder_timestamp_from_row(row: dict) -> str:
+    summary = row.get("summary", {})
+    value = next(
+        (
+            _summary_value(summary, header)
+            for header in AUTOMATIC_START_DATE_HEADERS.values()
+            if _summary_value(summary, header)
+        ),
+        "",
+    )
+    if not value:
+        return ""
+    text = clean_cell(value)
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        try:
+            parsed = datetime(1899, 12, 30) + pd.to_timedelta(float(text), unit="D")
+        except (OverflowError, ValueError):
+            return ""
+    else:
+        parsed = pd.to_datetime(text, dayfirst=not bool(re.match(r"^\d{4}-", text)), errors="coerce")
+        if pd.isna(parsed):
+            return ""
+    has_time = bool(re.search(r"(?:T|\s)\d{1,2}:\d{2}", text)) or (
+        re.fullmatch(r"\d+(?:\.\d+)?", text) is not None and float(text) % 1 != 0
+    )
+    return parsed.strftime("%Y-%m-%d %H-%M" if has_time else "%Y-%m-%d")
+
+
+def _legacy_folder_name_for_row(row: dict) -> str:
     descriptor = re.sub(r"[\\/:*?\"<>|]+", "-", _folder_descriptor_from_row(row))
     return f"Pendiente - {descriptor}"[:180] if descriptor else "Pendiente"
+
+
+def _folder_name_for_row(row: dict) -> str:
+    _folder_name_for_rfc(_rfc_from_row(row))
+    legacy_name = _legacy_folder_name_for_row(row)
+    timestamp = _folder_timestamp_from_row(row)
+    return f"{timestamp} {legacy_name}"[:180] if timestamp else legacy_name
 
 
 def _document_name_for(value: str, original_filename: str) -> str:
@@ -1082,7 +1120,7 @@ def _list_child_folders(service, parent_id: str) -> list[dict]:
                 f"'{parent_id}' in parents and "
                 f"mimeType = '{FOLDER_MIME_TYPE}' and trashed = false"
             ),
-            fields="nextPageToken,files(id,name,webViewLink,modifiedTime)",
+            fields="nextPageToken,files(id,name,webViewLink,createdTime,modifiedTime)",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
             pageSize=1000,
@@ -1129,18 +1167,28 @@ def _decorate_rows_with_folders(result: dict, service) -> dict:
         for folder in _list_child_folders(service, _documents_root_id())
         if valid_client_rfc(_client_folder_rfc(folder))
     }
-    pending_folders_by_client: dict[str, dict[str, dict]] = {}
+    pending_folders_by_client: dict[str, dict[str, list[dict]]] = {}
     for row in result["rows"]:
         rfc = _rfc_from_row(row)
         folder_name = _folder_name_for_row(row) if rfc else ""
         client_folder = client_folders.get(rfc)
         if client_folder and rfc not in pending_folders_by_client:
-            pending_folders_by_client[rfc] = {
-                clean_cell(folder.get("name", "")).casefold(): folder
-                for folder in _list_child_folders(service, client_folder["id"])
-            }
-        folder = pending_folders_by_client.get(rfc, {}).get(folder_name.casefold()) if folder_name else None
-        row["folder_name"] = folder_name
+            grouped: dict[str, list[dict]] = {}
+            for folder in _list_child_folders(service, client_folder["id"]):
+                grouped.setdefault(clean_cell(folder.get("name", "")).casefold(), []).append(folder)
+            for folders in grouped.values():
+                folders.sort(key=lambda folder: clean_cell(folder.get("createdTime")))
+            pending_folders_by_client[rfc] = grouped
+        folders = pending_folders_by_client.get(rfc, {})
+        matches = folders.get(folder_name.casefold(), []) if folder_name else []
+        folder = matches.pop(0) if matches else None
+        # Before timestamps were added, identical pending types shared one folder.
+        # A legacy folder may belong to only one row; later rows remain unlinked
+        # and receive their own folder when requested.
+        if not folder and folder_name:
+            legacy_matches = folders.get(_legacy_folder_name_for_row(row).casefold(), [])
+            folder = legacy_matches.pop(0) if legacy_matches else None
+        row["folder_name"] = clean_cell(folder.get("name")) if folder else folder_name
         row["folder_id"] = folder.get("id") if folder else None
         row["folder_url"] = folder.get("webViewLink") if folder else None
     result["documents_folder_id"] = _documents_root_id()
@@ -1152,25 +1200,15 @@ def _create_folder_for_row(service, row: dict) -> dict:
     folder_name = _folder_name_for_row(row)
     client_folder = _client_folder_for_row(service, row, create=True)
     assert client_folder is not None
-    existing = next(
-        (
-            folder for folder in _list_child_folders(service, client_folder["id"])
-            if clean_cell(folder.get("name", "")).casefold() == folder_name.casefold()
-        ),
-        None,
-    )
-    if existing:
-        folder = existing
-    else:
-        folder = service.files().create(
-            body={
-                "name": folder_name,
-                "parents": [client_folder["id"]],
-                "mimeType": FOLDER_MIME_TYPE,
-            },
-            fields="id,name,webViewLink",
-            supportsAllDrives=True,
-        ).execute()
+    folder = service.files().create(
+        body={
+            "name": folder_name,
+            "parents": [client_folder["id"]],
+            "mimeType": FOLDER_MIME_TYPE,
+        },
+        fields="id,name,webViewLink",
+        supportsAllDrives=True,
+    ).execute()
     row["folder_name"] = folder_name
     row["folder_id"] = folder.get("id")
     row["folder_url"] = folder.get("webViewLink")

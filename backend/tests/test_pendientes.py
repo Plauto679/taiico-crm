@@ -2,7 +2,7 @@ import io
 import sys
 import unittest
 import zipfile
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,6 +25,7 @@ from services.pendientes import (
     PendingSource,
     _derived_day_values,
     _automatic_creation_values,
+    _decorate_rows_with_folders,
     _folder_name_for_row,
     _filter_source_for_profile,
     _assigned_agent_rfc,
@@ -622,14 +623,14 @@ class PendingWorkbookTests(unittest.TestCase):
             )
 
     def test_creation_dates_are_assigned_automatically_by_source(self):
-        today = date(2026, 8, 10)
+        created_at = datetime(2026, 8, 10, 14, 35)
         self.assertEqual(
-            _automatic_creation_values(SOURCES["emision-servicios"], today),
-            {"Fecha Inicio": "2026-08-10"},
+            _automatic_creation_values(SOURCES["emision-servicios"], created_at),
+            {"Fecha Inicio": "2026-08-10 14:35"},
         )
         self.assertEqual(
-            _automatic_creation_values(SOURCES["siniestros"], today),
-            {"Fecha de registro de siniestro": "2026-08-10"},
+            _automatic_creation_values(SOURCES["siniestros"], created_at),
+            {"Fecha de registro de siniestro": "2026-08-10 14:35"},
         )
 
     def test_automatic_creation_dates_cannot_be_edited(self):
@@ -721,9 +722,97 @@ class PendingWorkbookTests(unittest.TestCase):
                 "summary": {
                     "RFC": "aama950203i52",
                     "Solicitud de": "Rehabilitación póliza",
+                    "Fecha Inicio": "2026-08-27 14:35",
                 },
             }),
-            "Pendiente - Rehabilitación póliza",
+            "2026-08-27 14-35 Pendiente - Rehabilitación póliza",
+        )
+
+    def test_folder_names_distinguish_equal_claims_created_at_different_minutes(self):
+        base_summary = {
+            "RFC": "TLA180122DQ2",
+            "Trámite": "Complemento",
+        }
+        first = _folder_name_for_row({
+            "summary": {**base_summary, "Fecha de registro de siniestro": "2026-08-27 14:35"},
+        })
+        second = _folder_name_for_row({
+            "summary": {**base_summary, "Fecha de registro de siniestro": "2026-08-27 14:36"},
+        })
+        self.assertEqual(first, "2026-08-27 14-35 Pendiente - Complemento")
+        self.assertEqual(second, "2026-08-27 14-36 Pendiente - Complemento")
+        self.assertNotEqual(first, second)
+
+    def test_historical_folder_name_uses_date_without_inventing_a_time(self):
+        self.assertEqual(
+            _folder_name_for_row({
+                "summary": {
+                    "RFC": "TLA180122DQ2",
+                    "Trámite": "Complemento",
+                    "Fecha de registro de siniestro": "2026-08-27",
+                },
+            }),
+            "2026-08-27 Pendiente - Complemento",
+        )
+
+    def test_one_legacy_folder_is_never_shared_by_two_pending_rows(self):
+        class Request:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def execute(self):
+                return self.payload
+
+        class Files:
+            def __init__(self):
+                self.calls = 0
+
+            def list(self, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return Request({"files": [{"id": "client", "name": "TLA180122DQ2 - T&M2"}]})
+                return Request({"files": [{
+                    "id": "legacy",
+                    "name": "Pendiente - Complemento",
+                    "webViewLink": "https://drive.test/legacy",
+                    "createdTime": "2026-08-24T10:00:00Z",
+                }]})
+
+        class Service:
+            def __init__(self):
+                self.api = Files()
+
+            def files(self):
+                return self.api
+
+        result = {
+            "rows": [
+                {
+                    "source_row": 21,
+                    "summary": {
+                        "RFC": "TLA180122DQ2",
+                        "Trámite": "Complemento",
+                        "Fecha de registro de siniestro": "2026-08-24",
+                    },
+                },
+                {
+                    "source_row": 32,
+                    "summary": {
+                        "RFC": "TLA180122DQ2",
+                        "Trámite": "Complemento",
+                        "Fecha de registro de siniestro": "2026-08-27",
+                    },
+                },
+            ],
+        }
+
+        decorated = _decorate_rows_with_folders(result, Service())
+
+        self.assertEqual(decorated["rows"][0]["folder_id"], "legacy")
+        self.assertIsNone(decorated["rows"][1]["folder_id"])
+        self.assertEqual(
+            decorated["rows"][1]["folder_name"],
+            "2026-08-27 Pendiente - Complemento",
         )
 
     def test_request_options_are_classification_specific(self):

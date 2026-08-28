@@ -258,7 +258,7 @@ export function PendingHistoryModal({ row, source, onUpdated, onDeleted, onClose
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div>
                                     <h3 className="text-lg font-semibold text-slate-900">Expediente {row.summary.RFC || ''}</h3>
-                                    <p className="text-sm text-slate-500">La carpeta de Drive se identifica por RFC y tipo de solicitud.</p>
+                                    <p className="text-sm text-slate-500">Cada registro tiene una carpeta propia, identificada por RFC, fecha, hora y tipo de solicitud.</p>
                                 </div>
                                 {folderUrl && <a href={folderUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-blue-600 hover:bg-slate-50">Abrir carpeta <ExternalLink className="h-4 w-4" /></a>}
                             </div>
@@ -302,7 +302,7 @@ export function PendingHistoryModal({ row, source, onUpdated, onDeleted, onClose
                                     {canOperate && <div className="mt-6 rounded-xl border border-slate-200 p-4">
                                         <h4 className="font-semibold text-slate-900">Agregar documento adicional</h4>
                                         <div className="mt-3 flex flex-col gap-3 sm:flex-row">
-                                            <input value={additionalName} onChange={(event) => setAdditionalName(event.target.value)} placeholder="Nombre del documento" className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                                            <input value={additionalName} onChange={(event) => setAdditionalName(event.target.value)} placeholder="Nombre del documento" className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black placeholder:text-slate-400" />
                                             <label className={`inline-flex items-center justify-center gap-1 rounded-lg px-4 py-2 text-sm font-semibold text-white ${additionalName.trim() ? 'cursor-pointer bg-blue-600 hover:bg-blue-700' : 'cursor-not-allowed bg-slate-300'}`}>
                                                 <Upload className="h-4 w-4" /> Seleccionar archivo
                                                 <input type="file" className="hidden" disabled={!additionalName.trim() || Boolean(uploadingName)} onChange={(event) => handleFileSelection(event, additionalName, upload)} />
@@ -455,7 +455,7 @@ function DetailTabContent({
                                     <textarea disabled={!canOperate} value={value} onChange={(event) => onChange(label, event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100" />
                                 ) : (
                                     <input
-                                        type={isDateField(label) ? 'date' : 'text'}
+                                        type={isDateField(label) && !automaticDate ? 'date' : 'text'}
                                         value={value}
                                         readOnly={derived || automaticDate}
                                         disabled={!canOperate}
@@ -625,6 +625,11 @@ function isAutomaticStartDateField(source: PendingSourceKey, label: string): boo
         : normalizedLabel === 'fecha de registro de siniestro';
 }
 
+function isAutomaticallyAssignedDateField(label: string): boolean {
+    const normalizedLabel = normalizeFieldLabel(label);
+    return normalizedLabel === 'fecha inicio' || normalizedLabel === 'fecha de registro de siniestro';
+}
+
 function toDateInputValue(value: string): string {
     const text = value.trim();
     const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
@@ -643,7 +648,7 @@ function toDateInputValue(value: string): string {
 }
 
 function comparableDetailValue(label: string, value: string): string {
-    return isDateField(label) ? toDateInputValue(value) : value;
+    return isDateField(label) && !isAutomaticallyAssignedDateField(label) ? toDateInputValue(value) : value;
 }
 
 function editableDetailValues(summary: Record<string, string>): Record<string, string> {
