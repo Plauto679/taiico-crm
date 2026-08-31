@@ -178,7 +178,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         {
             header: 'Expediente',
             accessorKey: 'EXPEDIENTE' as keyof RenovacionVida,
-            cell: (info: any) => renderExpedienteLink(info.row.original)
+            cell: (row: RenovacionVida) => renderExpedienteLink(row)
         },
         { header: 'Email', accessorKey: 'Email' as keyof RenovacionVida }
     ];
@@ -211,7 +211,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         {
             header: 'Expediente',
             accessorKey: 'EXPEDIENTE' as keyof RenovacionGMM,
-            cell: (info: any) => renderExpedienteLink(info.row.original)
+            cell: (row: RenovacionGMM) => renderExpedienteLink(row)
         },
         { header: 'Email', accessorKey: 'Email' as keyof RenovacionGMM }
     ];
@@ -235,7 +235,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         {
             header: 'Expediente',
             accessorKey: 'EXPEDIENTE' as keyof RenovacionSura,
-            cell: (info: any) => renderExpedienteLink(info.row.original)
+            cell: (row: RenovacionSura) => renderExpedienteLink(row)
         },
         { header: 'Email', accessorKey: 'Email' as keyof RenovacionSura }
     ];
@@ -263,7 +263,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         {
             header: 'Expediente',
             accessorKey: 'EXPEDIENTE' as keyof RenovacionAarco,
-            cell: (info: any) => renderExpedienteLink(info.row.original)
+            cell: (row: RenovacionAarco) => renderExpedienteLink(row)
         },
         { header: 'Email', accessorKey: 'Email' as keyof RenovacionAarco }
     ];
@@ -291,7 +291,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         {
             header: 'Expediente',
             accessorKey: 'EXPEDIENTE' as keyof RenovacionPromotoriaSura,
-            cell: (info: any) => renderExpedienteLink(info.row.original)
+            cell: (row: RenovacionPromotoriaSura) => renderExpedienteLink(row)
         },
         { header: 'Email', accessorKey: 'Email' as keyof RenovacionPromotoriaSura }
     ];
