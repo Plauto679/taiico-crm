@@ -181,6 +181,16 @@ function formatSummaryValue(header: string, value = ''): string {
         .replace(/[\u0300-\u036f]/g, '')
         .trim()
         .toLocaleLowerCase('es-MX');
+    if (normalizedHeader === 'monto') {
+        if (!value.trim()) return '';
+        const amount = Number(value.replace(/[$,\s]/g, ''));
+        if (!Number.isFinite(amount)) return value;
+        return new Intl.NumberFormat('es-MX', {
+            style: 'currency',
+            currency: 'MXN',
+            minimumFractionDigits: 2,
+        }).format(amount);
+    }
     if (normalizedHeader !== 'fecha inicio') return value;
 
     const isoDate = value.trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);

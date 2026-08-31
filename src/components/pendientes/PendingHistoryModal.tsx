@@ -456,7 +456,9 @@ function DetailTabContent({
                                 ) : (
                                     <input
                                         type={isDateField(label) && !automaticDate ? 'date' : 'text'}
+                                        inputMode={normalizedLabel === 'monto' ? 'decimal' : undefined}
                                         value={value}
+                                        placeholder={normalizedLabel === 'monto' ? '0.00 MXN' : undefined}
                                         readOnly={derived || automaticDate}
                                         disabled={!canOperate}
                                         onChange={(event) => onChange(label, label === 'RFC' ? event.target.value.toUpperCase() : event.target.value)}

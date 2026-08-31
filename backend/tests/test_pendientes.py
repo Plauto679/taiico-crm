@@ -42,6 +42,7 @@ from services.pendientes import (
     pending_report_html,
     pending_report_text,
     normalize_report_recipients,
+    normalize_pending_amount,
     parse_pending_workbook,
     parse_agents_workbook,
     update_pending_record,
@@ -82,6 +83,52 @@ def workbook_with_table(sheet_name, headers, rows):
 
 
 class PendingWorkbookTests(unittest.TestCase):
+    def test_non_contiguous_monto_column_is_core_and_not_history(self):
+        source = PendingSource(
+            "emision-servicios",
+            "Emisión y Servicios",
+            "TEST_ID",
+            "file",
+            "Base",
+            2,
+            ("Monto",),
+        )
+        original = workbook_bytes(
+            "Base",
+            ["Contratante", "Recordatorio Futuro", "Fecha Hoy", "31-ago-26", "Monto", "01-sep-26"],
+            [["Cliente", "", "", "Primer avance", "1234.50", "Último avance"]],
+        )
+
+        parsed = parse_pending_workbook(original, source)
+
+        self.assertEqual(parsed["core_headers"], ["Contratante", "Recordatorio Futuro", "Monto"])
+        self.assertEqual(parsed["rows"][0]["summary"]["Monto"], "1234.50")
+        self.assertEqual(
+            parsed["rows"][0]["history"],
+            [
+                {"date": "31-ago-26", "update": "Primer avance"},
+                {"date": "01-sep-26", "update": "Último avance"},
+            ],
+        )
+
+        updated = update_pending_record(
+            original,
+            source,
+            2,
+            {"Monto": "2500.00"},
+        )
+        self.assertEqual(
+            parse_pending_workbook(updated, source)["rows"][0]["summary"]["Monto"],
+            "2500.00",
+        )
+
+    def test_pending_amount_normalizes_common_mexican_currency_inputs(self):
+        self.assertEqual(normalize_pending_amount("$1,234.5"), "1234.50")
+        self.assertEqual(normalize_pending_amount("(250)"), "-250.00")
+        self.assertEqual(normalize_pending_amount(""), "")
+        with self.assertRaisesRegex(ValueError, "cantidad válida"):
+            normalize_pending_amount("mil pesos")
+
     def test_prefixed_spreadsheet_namespace_can_be_normalized_before_append(self):
         xml = (
             '<?xml version="1.0" encoding="utf-8"?>'

@@ -80,6 +80,7 @@ export interface EmisionServiciosPendingInput {
     rfc_agente: string;
     responsable: string;
     recordatorio_futuro: string;
+    monto: string;
 }
 
 export interface SiniestrosPendingInput {

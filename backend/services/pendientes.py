@@ -10,6 +10,7 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Literal
 from xml.etree import ElementTree
@@ -24,7 +25,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from google.auth import default
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func
 
 from database import Client, SessionLocal
@@ -149,6 +150,12 @@ class EmisionServiciosCreateRequest(BaseModel):
     rfc_agente: str = Field(min_length=1)
     responsable: str = ""
     recordatorio_futuro: str = ""
+    monto: str = ""
+
+    @field_validator("monto")
+    @classmethod
+    def validate_monto(cls, value: str) -> str:
+        return normalize_pending_amount(value)
 
 
 class SiniestrosCreateRequest(BaseModel):
@@ -194,6 +201,7 @@ class PendingSource:
     default_file_id: str
     sheet_name: str
     core_column_count: int
+    extra_core_headers: tuple[str, ...] = ()
 
 
 SOURCES = {
@@ -204,6 +212,7 @@ SOURCES = {
         default_file_id=DEFAULT_EMISION_SERVICIOS_FILE_ID,
         sheet_name="Base1",
         core_column_count=21,
+        extra_core_headers=("Monto",),
     ),
     "siniestros": PendingSource(
         key="siniestros",
@@ -243,6 +252,23 @@ def clean_cell(value: object) -> str:
     return " ".join(str(value).replace("\xa0", " ").strip().split())
 
 
+def normalize_pending_amount(value: object) -> str:
+    text = clean_cell(value)
+    if not text:
+        return ""
+    negative = text.startswith("(") and text.endswith(")")
+    normalized = text.strip("()").replace("$", "").replace(",", "").replace(" ", "")
+    try:
+        amount = Decimal(normalized)
+    except InvalidOperation as exc:
+        raise ValueError("Monto debe ser una cantidad válida en pesos mexicanos") from exc
+    if not amount.is_finite():
+        raise ValueError("Monto debe ser una cantidad válida en pesos mexicanos")
+    if negative:
+        amount = -amount
+    return format(amount.quantize(Decimal("0.01")), "f")
+
+
 def _normalized_header(value: str) -> str:
     return " ".join(
         unicodedata.normalize("NFKD", clean_cell(value))
@@ -272,6 +298,26 @@ def _core_count_for_headers(source: PendingSource, headers: list[str]) -> int:
         ),
         source.core_column_count,
     )
+
+
+def _core_header_layout(source: PendingSource, headers: list[str]) -> list[tuple[int, str]]:
+    core_column_count = _core_count_for_headers(source, headers)
+    layout = list(enumerate(headers[:core_column_count]))
+    included_indexes = {index for index, _ in layout}
+    for configured_header in source.extra_core_headers:
+        normalized = _normalized_header(configured_header)
+        match = next(
+            (
+                (index, header)
+                for index, header in enumerate(headers)
+                if index not in included_indexes and _normalized_header(header) == normalized
+            ),
+            None,
+        )
+        if match:
+            layout.append(match)
+            included_indexes.add(match[0])
+    return layout
 
 
 DATE_COUNTER_PAIRS = (
@@ -593,25 +639,31 @@ def parse_pending_workbook(
         keep_default_na=False,
     )
     headers = [clean_cell(column) for column in table.columns]
-    core_column_count = _core_count_for_headers(source, headers)
-    if len(headers) <= core_column_count:
+    core_layout = _core_header_layout(source, headers)
+    core_indexes = {index for index, _ in core_layout}
+    if len(headers) <= len(core_layout):
         raise ValueError(
             f"{source.title} sheet {source.sheet_name} must contain more than "
-            f"{core_column_count} columns"
+            f"{len(core_layout)} columns"
         )
 
-    core_headers = headers[:core_column_count]
-    history_headers = headers[core_column_count:]
+    core_headers = [header for _, header in core_layout]
+    history_layout = [
+        (index, header)
+        for index, header in enumerate(headers)
+        if index not in core_indexes
+    ]
+    history_headers = [header for _, header in history_layout]
     latest_header = history_headers[-1]
     rows = []
 
     for index, (_, series) in enumerate(table.iterrows(), start=2):
         values = [clean_cell(value) for value in series.tolist()]
-        core_values = values[:core_column_count]
+        core_values = [values[index] for index, _ in core_layout]
         if not any(core_values):
             continue
 
-        history_values = values[core_column_count:]
+        history_values = [values[index] for index, _ in history_layout]
         history = [
             {"date": header, "update": value}
             for header, value in zip(history_headers, history_values)
@@ -633,6 +685,9 @@ def parse_pending_workbook(
         "title": source.title,
         "sheet_name": source.sheet_name,
         "core_headers": core_headers,
+        "_core_header_columns": {
+            header: index + 1 for index, header in core_layout
+        },
         "latest_update_header": latest_header,
         "rows": rows,
     }
@@ -1266,7 +1321,7 @@ def append_pending_record(workbook: bytes, source: PendingSource, values: dict[s
     parsed = parse_pending_workbook(workbook, source)
     candidate_row = max((row["source_row"] for row in parsed["rows"]), default=1) + 1
     next_row = _next_available_sheet_row(workbook, source.sheet_name, candidate_row)
-    header_columns = {header: index + 1 for index, header in enumerate(parsed["core_headers"])}
+    header_columns = parsed["_core_header_columns"]
     missing = sorted(set(values).difference(header_columns))
     if missing:
         raise ValueError("La base no contiene las columnas: " + ", ".join(missing))
@@ -1321,7 +1376,7 @@ def update_pending_record(
     )
     if not current_row:
         raise ValueError(f"La fila {source_row} no existe en el archivo canónico")
-    header_columns = {header: index + 1 for index, header in enumerate(parsed["core_headers"])}
+    header_columns = parsed["_core_header_columns"]
     missing = sorted(set(values).difference(header_columns))
     if missing:
         raise ValueError("La base no contiene las columnas: " + ", ".join(missing))
@@ -2156,6 +2211,7 @@ def load_pending_source(source: PendingSource, service=None) -> dict:
         workbook = _download_workbook(file_id, active_service)
         with timed("excel"):
             result = parse_pending_workbook(workbook, source)
+        result.pop("_core_header_columns", None)
         _decorate_rows_with_folders(result, active_service)
         result["source_file_id"] = file_id
         return result
@@ -2285,6 +2341,7 @@ def create_emision_servicios_pending(
         "RFC Agente": _assigned_agent_rfc(request.rfc_agente, promotoria, profile),
         "Responsable": _assigned_responsible(request.responsable),
         "Recordatorio Futuro": request.recordatorio_futuro,
+        "Monto": request.monto,
         **_automatic_creation_values(SOURCES["emision-servicios"]),
     }
     return _create_pending_record(
@@ -2493,6 +2550,10 @@ def update_pending(
     values = {clean_cell(key): clean_cell(value) for key, value in request.values.items()}
     if "RFC" in values:
         values["RFC"] = values["RFC"].upper()
+    if source.key == "emision-servicios":
+        for header in tuple(values):
+            if _normalized_header(header) == "monto":
+                values[header] = normalize_pending_amount(values[header])
     try:
         with _write_lock:
             service = build_pending_drive_service()

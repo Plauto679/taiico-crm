@@ -89,6 +89,7 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
     const [rfcAgente, setRfcAgente] = useState('');
     const [responsable, setResponsable] = useState('');
     const [recordatorioFuturo, setRecordatorioFuturo] = useState('');
+    const [monto, setMonto] = useState('');
     const requestId = useRef<string | null>(null);
     const submissionInProgress = useRef(false);
 
@@ -147,6 +148,7 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                     rfc_agente: rfcAgente,
                     responsable,
                     recordatorio_futuro: recordatorioFuturo,
+                    monto,
                 })
                 : await createSiniestrosPending({
                     request_id: requestId.current,
@@ -287,6 +289,15 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                                 <span className="text-sm font-medium text-slate-700">Recordatorio Futuro <span className="font-normal text-slate-400">(opcional)</span></span>
                                 <input type="date" value={recordatorioFuturo} onChange={(event) => setRecordatorioFuturo(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                             </label>
+                            {source === 'emision-servicios' && (
+                                <label className="block">
+                                    <span className="text-sm font-medium text-slate-700">Monto <span className="font-normal text-slate-400">(opcional, MXN)</span></span>
+                                    <div className="relative mt-1.5">
+                                        <span className="pointer-events-none absolute left-3 top-2 text-sm text-slate-500">$</span>
+                                        <input inputMode="decimal" value={monto} onChange={(event) => setMonto(event.target.value)} placeholder="0.00" className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-7 pr-3 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                                    </div>
+                                </label>
+                            )}
                             {source === 'emision-servicios' ? (
                                 <>
                                     <TextField label="Asegurado" value={insuredName} onChange={setInsuredName} required={false} />
