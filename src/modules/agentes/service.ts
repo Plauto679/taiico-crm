@@ -11,6 +11,8 @@ export type Agent = {
   clave_definitiva: string;
   promotoria: string;
   rfc: string;
+  telefono_particular: string;
+  correo_personal: string;
   inicio_vigencia_cedula: string;
   fin_vigencia_cedula: string;
   clasificacion_comercial: string;

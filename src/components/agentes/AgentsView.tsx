@@ -19,6 +19,8 @@ const EMPTY_AGENT: AgentInput = {
   clave_definitiva: '',
   promotoria: '',
   rfc: '',
+  telefono_particular: '',
+  correo_personal: '',
   inicio_vigencia_cedula: '',
   fin_vigencia_cedula: '',
   clasificacion_comercial: '',
@@ -43,6 +45,8 @@ export function AgentsView({ initialDirectory }: { initialDirectory: AgentDirect
       agent.clave_arranque,
       agent.clave_definitiva,
       agent.promotoria,
+      agent.correo_personal,
+      agent.telefono_particular,
       agent.clasificacion_comercial,
       agent.estatus_met,
     ].some((value) => value.toLocaleLowerCase('es').includes(query)));
@@ -83,6 +87,20 @@ export function AgentsView({ initialDirectory }: { initialDirectory: AgentDirect
       cell: (agent: Agent) => <span className="font-mono">{agent.rfc || '—'}</span>,
     },
     {
+      header: 'Correo personal',
+      accessorKey: 'correo_personal' as keyof Agent,
+      filterValue: (agent: Agent) => agent.correo_personal || 'Sin correo personal',
+      cell: (agent: Agent) => agent.correo_personal
+        ? <a href={`mailto:${agent.correo_personal}`} onClick={(event) => event.stopPropagation()} className="text-blue-600 hover:underline">{agent.correo_personal}</a>
+        : '—',
+    },
+    {
+      header: 'Teléfono particular',
+      accessorKey: 'telefono_particular' as keyof Agent,
+      filterValue: (agent: Agent) => agent.telefono_particular || 'Sin teléfono particular',
+      cell: (agent: Agent) => agent.telefono_particular || '—',
+    },
+    {
       header: 'Inicio vigencia cédula',
       accessorKey: 'inicio_vigencia_cedula' as keyof Agent,
       filterValue: (agent: Agent) => agent.inicio_vigencia_cedula ? formatDate(agent.inicio_vigencia_cedula) : 'Sin fecha de inicio',
@@ -119,6 +137,8 @@ export function AgentsView({ initialDirectory }: { initialDirectory: AgentDirect
       clave_definitiva: agent.clave_definitiva,
       promotoria: agent.promotoria,
       rfc: agent.rfc,
+      telefono_particular: agent.telefono_particular,
+      correo_personal: agent.correo_personal,
       inicio_vigencia_cedula: agent.inicio_vigencia_cedula,
       fin_vigencia_cedula: agent.fin_vigencia_cedula,
       clasificacion_comercial: agent.clasificacion_comercial,
@@ -174,7 +194,7 @@ export function AgentsView({ initialDirectory }: { initialDirectory: AgentDirect
 
     <div className="relative">
       <Search className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-      <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nombre, RFC, clave, promotoría o estatus..." className="w-full rounded-xl border border-white/20 bg-white py-3 pl-10 pr-4 text-slate-900 shadow outline-none focus:ring-2 focus:ring-blue-300" />
+      <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nombre, RFC, correo, teléfono, clave, promotoría o estatus..." className="w-full rounded-xl border border-white/20 bg-white py-3 pl-10 pr-4 text-slate-900 shadow outline-none focus:ring-2 focus:ring-blue-300" />
     </div>
 
     <div className="min-h-[360px] flex-1 overflow-hidden rounded-xl bg-white shadow">
@@ -201,6 +221,8 @@ export function AgentsView({ initialDirectory }: { initialDirectory: AgentDirect
           <Field label="Clave definitiva" value={form.clave_definitiva} set={(value) => setForm({...form, clave_definitiva: value})} />
           <Field label="Promotoría *" value={form.promotoria} set={(value) => setForm({...form, promotoria: value})} list="agent-promotorias" />
           <Field label="RFC" value={form.rfc} set={(value) => setForm({...form, rfc: value.toUpperCase()})} />
+          <Field label="Correo personal" type="email" value={form.correo_personal} set={(value) => setForm({...form, correo_personal: value})} />
+          <Field label="Teléfono particular" type="tel" value={form.telefono_particular} set={(value) => setForm({...form, telefono_particular: value})} />
           <Field label="Inicio vigencia cédula" type="date" value={form.inicio_vigencia_cedula} set={(value) => setForm({...form, inicio_vigencia_cedula: value})} />
           <Field label="Fin vigencia cédula" type="date" value={form.fin_vigencia_cedula} set={(value) => setForm({...form, fin_vigencia_cedula: value})} />
           <Field label="Clasificación comercial" value={form.clasificacion_comercial} set={(value) => setForm({...form, clasificacion_comercial: value})} list="agent-classifications" />

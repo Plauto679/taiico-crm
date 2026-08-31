@@ -23,6 +23,8 @@ HEADERS = [
     "Apellido_Materno",
     "Promotoria",
     "RFC",
+    "Telefono_Particular",
+    "Correo_Personal",
     "Inicio_Vigencia_Cedula",
     "Fin_Vigencia_Cedula",
     "Clasificación Comercial",
@@ -45,14 +47,16 @@ def workbook_bytes() -> bytes:
         "DIAZ",
         "TAIICO",
         "LODA900101AB1",
+        "5512345678",
+        "ANA.LOPEZ@EXAMPLE.COM",
         dt.date(2026, 1, 15),
         dt.date(2029, 1, 15),
         "CONSOLIDADO",
         "ACTIVO",
         "CONSERVAR",
     ])
-    sheet["I2"].number_format = "dd/mm/yyyy"
-    sheet["J2"].number_format = "dd/mm/yyyy"
+    sheet["K2"].number_format = "dd/mm/yyyy"
+    sheet["L2"].number_format = "dd/mm/yyyy"
     output = io.BytesIO()
     workbook.save(output)
     return output.getvalue()
@@ -64,6 +68,8 @@ class AgentsDirectoryTests(unittest.TestCase):
         self.assertTrue(result["can_operate"])
         self.assertEqual(result["agents"][0]["clave_arranque"], "00123")
         self.assertEqual(result["agents"][0]["clave_definitiva"], "00456")
+        self.assertEqual(result["agents"][0]["telefono_particular"], "5512345678")
+        self.assertEqual(result["agents"][0]["correo_personal"], "ana.lopez@example.com")
         self.assertEqual(result["agents"][0]["inicio_vigencia_cedula"], "2026-01-15")
         self.assertEqual(result["agents"][0]["fin_vigencia_cedula"], "2029-01-15")
 
@@ -79,6 +85,8 @@ class AgentsDirectoryTests(unittest.TestCase):
             clave_definitiva="00456",
             promotoria="TAIICO",
             rfc="loda900101ab1",
+            telefono_particular="55 8765 4321",
+            correo_personal="ANA.NUEVA@EXAMPLE.COM",
             inicio_vigencia_cedula=dt.date(2026, 2, 20),
             fin_vigencia_cedula=dt.date(2029, 2, 20),
             clasificacion_comercial="ELITE",
@@ -95,8 +103,10 @@ class AgentsDirectoryTests(unittest.TestCase):
         self.assertEqual(sheet["C2"].value, "ANA MARIA")
         self.assertEqual(sheet["D2"].value, "ANA MARIA LOPEZ DIAZ")
         self.assertEqual(sheet["H2"].value, "LODA900101AB1")
-        self.assertEqual(sheet["M2"].value, "CONSERVAR")
-        self.assertEqual(sheet["I2"].number_format, "dd/mm/yyyy")
+        self.assertEqual(sheet["O2"].value, "CONSERVAR")
+        self.assertEqual(sheet["I2"].value, "55 8765 4321")
+        self.assertEqual(sheet["J2"].value, "ana.nueva@example.com")
+        self.assertEqual(sheet["K2"].number_format, "dd/mm/yyyy")
 
     def test_append_adds_agent_without_changing_previous_row(self):
         payload = AgentFields(

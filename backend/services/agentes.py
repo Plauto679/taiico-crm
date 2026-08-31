@@ -38,6 +38,8 @@ SOURCE_COLUMNS = {
     "clave_definitiva": "CLAVE_DEFINITIVA",
     "promotoria": "Promotoria",
     "rfc": "RFC",
+    "telefono_particular": "Telefono_Particular",
+    "correo_personal": "Correo_Personal",
     "inicio_vigencia_cedula": "Inicio_Vigencia_Cedula",
     "fin_vigencia_cedula": "Fin_Vigencia_Cedula",
     "clasificacion_comercial": "Clasificación Comercial",
@@ -54,6 +56,8 @@ class AgentFields(BaseModel):
     clave_definitiva: str = Field(default="", max_length=50)
     promotoria: str = Field(min_length=1, max_length=100)
     rfc: str = Field(default="", max_length=20)
+    telefono_particular: str = Field(default="", max_length=40)
+    correo_personal: str = Field(default="", max_length=320)
     inicio_vigencia_cedula: dt.date | None = None
     fin_vigencia_cedula: dt.date | None = None
     clasificacion_comercial: str = Field(default="", max_length=120)
@@ -167,6 +171,8 @@ def _agent_from_row(context: WorkbookContext, row_number: int) -> dict:
         "clave_definitiva": normalize_agent_key(get(SOURCE_COLUMNS["clave_definitiva"])),
         "promotoria": _clean_text(get(SOURCE_COLUMNS["promotoria"])),
         "rfc": _clean_text(get(SOURCE_COLUMNS["rfc"])).upper().replace(" ", ""),
+        "telefono_particular": _clean_text(get(SOURCE_COLUMNS["telefono_particular"])),
+        "correo_personal": _clean_text(get(SOURCE_COLUMNS["correo_personal"])).lower(),
         "inicio_vigencia_cedula": _date_to_iso(
             get(SOURCE_COLUMNS["inicio_vigencia_cedula"]), epoch=context.workbook.epoch
         ),
@@ -203,11 +209,12 @@ def build_agent_directory(workbook_bytes: bytes, *, can_operate: bool = False) -
 
 def _normalized_payload(payload: AgentFields) -> dict[str, object]:
     values = payload.model_dump()
-    for field in ("nombres", "apellido_paterno", "apellido_materno", "promotoria", "clasificacion_comercial", "estatus_met"):
+    for field in ("nombres", "apellido_paterno", "apellido_materno", "promotoria", "telefono_particular", "correo_personal", "clasificacion_comercial", "estatus_met"):
         values[field] = _clean_text(values[field])
     values["clave_arranque"] = normalize_agent_key(values["clave_arranque"])
     values["clave_definitiva"] = normalize_agent_key(values["clave_definitiva"])
     values["rfc"] = _clean_text(values["rfc"]).upper().replace(" ", "")
+    values["correo_personal"] = str(values["correo_personal"]).lower()
     return values
 
 
