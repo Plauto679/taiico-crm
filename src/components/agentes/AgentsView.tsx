@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { BadgeCheck, ExternalLink, KeyRound, Plus, Search, UserRoundCog, X } from 'lucide-react';
+import { DataTable } from '@/components/ui/DataTable';
 import {
   Agent,
   AgentDirectory,
@@ -49,6 +50,63 @@ export function AgentsView({ initialDirectory }: { initialDirectory: AgentDirect
 
   const active = directory.agents.filter((agent) => isActiveStatus(agent.estatus_met)).length;
   const withoutDefinitiveKey = directory.agents.filter((agent) => !agent.clave_definitiva).length;
+
+  const columns = useMemo(() => [
+    {
+      header: 'Agente',
+      accessorKey: 'nombre' as keyof Agent,
+      filterValue: (agent: Agent) => agent.nombre || 'Sin nombre',
+      cell: (agent: Agent) => <span className="font-semibold text-slate-900">{agent.nombre || '—'}</span>,
+    },
+    {
+      header: 'Clave arranque',
+      accessorKey: 'clave_arranque' as keyof Agent,
+      filterValue: (agent: Agent) => agent.clave_arranque || 'Sin clave de arranque',
+      cell: (agent: Agent) => <span className="font-mono">{agent.clave_arranque || '—'}</span>,
+    },
+    {
+      header: 'Clave definitiva',
+      accessorKey: 'clave_definitiva' as keyof Agent,
+      filterValue: (agent: Agent) => agent.clave_definitiva || 'Sin clave definitiva',
+      cell: (agent: Agent) => <span className="font-mono">{agent.clave_definitiva || '—'}</span>,
+    },
+    {
+      header: 'Promotoría',
+      accessorKey: 'promotoria' as keyof Agent,
+      filterValue: (agent: Agent) => agent.promotoria || 'Sin promotoría',
+      cell: (agent: Agent) => agent.promotoria || '—',
+    },
+    {
+      header: 'RFC',
+      accessorKey: 'rfc' as keyof Agent,
+      filterValue: (agent: Agent) => agent.rfc || 'Sin RFC',
+      cell: (agent: Agent) => <span className="font-mono">{agent.rfc || '—'}</span>,
+    },
+    {
+      header: 'Inicio vigencia cédula',
+      accessorKey: 'inicio_vigencia_cedula' as keyof Agent,
+      filterValue: (agent: Agent) => agent.inicio_vigencia_cedula ? formatDate(agent.inicio_vigencia_cedula) : 'Sin fecha de inicio',
+      cell: (agent: Agent) => formatDate(agent.inicio_vigencia_cedula),
+    },
+    {
+      header: 'Fin vigencia cédula',
+      accessorKey: 'fin_vigencia_cedula' as keyof Agent,
+      filterValue: (agent: Agent) => agent.fin_vigencia_cedula ? formatDate(agent.fin_vigencia_cedula) : 'Sin fecha de fin',
+      cell: (agent: Agent) => formatDate(agent.fin_vigencia_cedula),
+    },
+    {
+      header: 'Clasificación comercial',
+      accessorKey: 'clasificacion_comercial' as keyof Agent,
+      filterValue: (agent: Agent) => agent.clasificacion_comercial || 'Sin clasificación',
+      cell: (agent: Agent) => agent.clasificacion_comercial || '—',
+    },
+    {
+      header: 'Estatus Met',
+      accessorKey: 'estatus_met' as keyof Agent,
+      filterValue: (agent: Agent) => agent.estatus_met || 'Sin estatus',
+      cell: (agent: Agent) => <Status value={agent.estatus_met} />,
+    },
+  ], []);
 
   function openAgent(agent?: Agent) {
     if (!directory.can_operate) return;
@@ -119,26 +177,14 @@ export function AgentsView({ initialDirectory }: { initialDirectory: AgentDirect
       <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nombre, RFC, clave, promotoría o estatus..." className="w-full rounded-xl border border-white/20 bg-white py-3 pl-10 pr-4 text-slate-900 shadow outline-none focus:ring-2 focus:ring-blue-300" />
     </div>
 
-    <div className="min-h-[360px] overflow-auto rounded-xl bg-white shadow">
-      <table className="min-w-[1450px] w-full text-left text-sm">
-        <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase text-slate-500">
-          <tr>{['Agente', 'Clave arranque', 'Clave definitiva', 'Promotoría', 'RFC', 'Inicio vigencia cédula', 'Fin vigencia cédula', 'Clasificación comercial', 'Estatus Met'].map((heading) => <th key={heading} className="whitespace-nowrap px-4 py-3">{heading}</th>)}</tr>
-        </thead>
-        <tbody className="divide-y">
-          {filtered.map((agent) => <tr key={agent.row_number} onClick={() => openAgent(agent)} className={`text-slate-700 ${directory.can_operate ? 'cursor-pointer hover:bg-blue-50' : ''}`}>
-            <td className="px-4 py-3 font-semibold text-slate-900">{agent.nombre || '—'}</td>
-            <td className="px-4 py-3 font-mono">{agent.clave_arranque || '—'}</td>
-            <td className="px-4 py-3 font-mono">{agent.clave_definitiva || '—'}</td>
-            <td className="px-4 py-3">{agent.promotoria || '—'}</td>
-            <td className="px-4 py-3 font-mono">{agent.rfc || '—'}</td>
-            <td className="px-4 py-3">{formatDate(agent.inicio_vigencia_cedula)}</td>
-            <td className="px-4 py-3">{formatDate(agent.fin_vigencia_cedula)}</td>
-            <td className="px-4 py-3">{agent.clasificacion_comercial || '—'}</td>
-            <td className="px-4 py-3"><Status value={agent.estatus_met} /></td>
-          </tr>)}
-        </tbody>
-      </table>
-      {!filtered.length && <div className="p-12 text-center text-slate-500">No se encontraron agentes con esos criterios.</div>}
+    <div className="min-h-[360px] flex-1 overflow-hidden rounded-xl bg-white shadow">
+      <DataTable
+        data={filtered}
+        columns={columns}
+        filterMode="multi-select"
+        className="h-full max-w-full overflow-auto border-0 shadow-none"
+        onRowClick={directory.can_operate ? openAgent : undefined}
+      />
     </div>
 
     {modalOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-3 sm:p-6">

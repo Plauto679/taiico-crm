@@ -8,6 +8,7 @@ import { ArrowUp, ArrowDown, ArrowUpDown, Check, ChevronDown, Search, X } from '
 interface Column<T> {
     header: string;
     accessorKey: keyof T | ((row: T) => React.ReactNode);
+    cell?: (row: T) => React.ReactNode;
     filterValue?: (row: T) => string | number;
     className?: string;
     enableSorting?: boolean;
@@ -204,7 +205,9 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
                             >
                                 {columns.map((col, colIdx) => (
                                     <td key={colIdx} className="px-4 py-2 text-gray-700 whitespace-nowrap">
-                                        {typeof col.accessorKey === 'function'
+                                        {col.cell
+                                            ? col.cell(row)
+                                            : typeof col.accessorKey === 'function'
                                             ? col.accessorKey(row)
                                             : (row[col.accessorKey] as React.ReactNode)}
                                     </td>
