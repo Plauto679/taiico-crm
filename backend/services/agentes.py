@@ -207,6 +207,14 @@ def build_agent_directory(workbook_bytes: bytes, *, can_operate: bool = False) -
     }
 
 
+def load_agents_directory(*, can_operate: bool = False) -> dict:
+    """Load the canonical shared Agents workbook without using the web cache."""
+    return build_agent_directory(
+        _download_workbook(_file_id()),
+        can_operate=can_operate,
+    )
+
+
 def _normalized_payload(payload: AgentFields) -> dict[str, object]:
     values = payload.model_dump()
     for field in ("nombres", "apellido_paterno", "apellido_materno", "promotoria", "telefono_particular", "correo_personal", "clasificacion_comercial", "estatus_met"):

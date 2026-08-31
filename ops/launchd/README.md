@@ -24,10 +24,12 @@ mkdir -p .runtime/logs ~/Library/LaunchAgents
 cp ops/launchd/com.taiico.crm.backend.plist ~/Library/LaunchAgents/
 cp ops/launchd/com.taiico.crm.frontend.plist ~/Library/LaunchAgents/
 cp ops/launchd/com.taiico.crm.pending-report.plist ~/Library/LaunchAgents/
+cp ops/launchd/com.taiico.crm.agent-license-report.plist ~/Library/LaunchAgents/
 cp ops/launchd/com.taiico.crm.renewal-agent.plist ~/Library/LaunchAgents/
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.backend.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.frontend.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.pending-report.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.agent-license-report.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.renewal-agent.plist
 ```
 
@@ -37,6 +39,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.renewal-a
 launchctl print gui/$(id -u)/com.taiico.crm.backend
 launchctl print gui/$(id -u)/com.taiico.crm.frontend
 launchctl print gui/$(id -u)/com.taiico.crm.pending-report
+launchctl print gui/$(id -u)/com.taiico.crm.agent-license-report
 launchctl print gui/$(id -u)/com.taiico.crm.renewal-agent
 ```
 
@@ -48,6 +51,7 @@ Antes de reiniciar el frontend, ejecutar `npm run build`.
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.backend
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.frontend
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.pending-report
+launchctl kickstart -k gui/$(id -u)/com.taiico.crm.agent-license-report
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.renewal-agent
 ```
 
@@ -82,6 +86,12 @@ Estos agentes mantienen disponibles la interfaz web y la API. El agente
 `com.taiico.crm.pending-report` comprueba cada cinco minutos la hora de
 `America/Mexico_City` y envía el informe una sola vez por día después de las
 19:00.
+
+El agente `com.taiico.crm.agent-license-report` comprueba cada cinco minutos la
+fecha y hora de Ciudad de México. Sólo el día 1 de cada mes, después de las
+10:00, envía a los mismos destinatarios del informe de Pendientes la lista de
+agentes cuya cédula vence entre ese día y los tres meses calendario siguientes.
+Un archivo de estado evita duplicar el correo durante el mismo mes.
 
 El agente `com.taiico.crm.renewal-agent` realiza la misma comprobación y comienza
 una sola corrida diaria de renovaciones MetLife GMM después de las 09:00 de
