@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Cliente, ClientIdentityCandidatesResponse, ClientRegistryAudit } from '@/lib/types/clientes';
 import { DataTable } from '@/components/ui/DataTable';
@@ -8,7 +8,7 @@ import { AddClientModal } from './AddClientModal';
 import { EditClientModal } from './EditClientModal';
 import { ClientIdentityModal } from './ClientIdentityModal';
 import { addClient, updateClient, deleteClient, getClientIdentityCandidates, getClientRegistryAudit, mergeClients, syncClientFolderLinks } from '@/modules/clientes/service';
-import { AlertTriangle, ExternalLink, GitMerge, RefreshCw, Search, ShieldCheck, UserPlus } from 'lucide-react';
+import { AlertTriangle, Download, ExternalLink, GitMerge, RefreshCw, Search, ShieldCheck, UserPlus } from 'lucide-react';
 
 interface ClientesViewProps {
     initialClients: Cliente[];
@@ -17,7 +17,9 @@ interface ClientesViewProps {
 export function ClientesView({ initialClients }: ClientesViewProps) {
     const router = useRouter();
     const [clients, setClients] = useState<Cliente[]>(initialClients);
+    const [visibleClients, setVisibleClients] = useState<Cliente[]>(initialClients);
     const [searchTerm, setSearchTerm] = useState('');
+    const [isExporting, setIsExporting] = useState(false);
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [selectedClient, setSelectedClient] = useState<Cliente | null>(null);
     const [audit, setAudit] = useState<ClientRegistryAudit | null>(null);
@@ -27,13 +29,16 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
     const [isLoadingCandidates, setIsLoadingCandidates] = useState(false);
     const [isMerging, setIsMerging] = useState(false);
 
-    useEffect(() => setClients(initialClients), [initialClients]);
+    useEffect(() => {
+        const update = window.setTimeout(() => setClients(initialClients), 0);
+        return () => window.clearTimeout(update);
+    }, [initialClients]);
 
-    const filteredClients = clients.filter(client =>
+    const filteredClients = useMemo(() => clients.filter(client =>
         client.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (client.rfc && client.rfc.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (client.correo && client.correo.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
+    ), [clients, searchTerm]);
 
     const handleAddClient = async (newClient: Cliente) => {
         await addClient(newClient);
@@ -101,7 +106,41 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
         }
     };
 
-    const columns = [
+    const exportClients = async () => {
+        if (!visibleClients.length || isExporting) return;
+        setIsExporting(true);
+        try {
+            const XLSX = await import('xlsx');
+            const rows = visibleClients.map((client) => ({
+                Nombre: client.nombre,
+                RFC: client.rfc || '',
+                Correo: client.correo || '',
+                Teléfono: client.telefono || '',
+                Estado: client.estado_identidad === 'identified' ? 'Cliente identificado' : 'Prospecto',
+                Expediente: client.expediente_url || '',
+                'Nombre del expediente': client.expediente_nombre || '',
+                'Expediente verificado': client.expediente_verificado || '',
+            }));
+            const worksheet = XLSX.utils.json_to_sheet(rows);
+            worksheet['!cols'] = [
+                { wch: 40 },
+                { wch: 18 },
+                { wch: 34 },
+                { wch: 18 },
+                { wch: 22 },
+                { wch: 60 },
+                { wch: 42 },
+                { wch: 24 },
+            ];
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, 'Clientes');
+            XLSX.writeFile(workbook, `clientes-${new Date().toISOString().slice(0, 10)}.xlsx`);
+        } finally {
+            setIsExporting(false);
+        }
+    };
+
+    const columns = useMemo(() => [
         { header: 'Nombre', accessorKey: 'nombre' as keyof Cliente },
         { header: 'RFC', accessorKey: 'rfc' as keyof Cliente },
         { header: 'Correo', accessorKey: 'correo' as keyof Cliente },
@@ -124,7 +163,7 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
                 </a>
             ) : <span className="text-slate-400">Sin vincular</span>,
         },
-    ];
+    ], []);
 
     return (
         <div className="flex h-full min-h-0 flex-col gap-6 overflow-hidden">
@@ -142,6 +181,9 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
                     />
                 </div>
                 <div className="flex flex-wrap gap-2">
+                    <button onClick={exportClients} disabled={!visibleClients.length || isExporting} className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50">
+                        <Download className="mr-2 h-5 w-5" /> {isExporting ? 'Exportando…' : 'Exportar a Excel'}
+                    </button>
                     <button onClick={openIdentityCandidates} disabled={isLoadingCandidates} className="inline-flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">
                         <GitMerge className="mr-2 h-5 w-5" /> {isLoadingCandidates ? 'Analizando…' : 'Homologar clientes'}
                     </button>
@@ -191,6 +233,7 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
                     data={filteredClients}
                     columns={columns}
                     filterMode="multi-select"
+                    onProcessedDataChange={setVisibleClients}
                     className="h-full max-w-full overflow-auto border-0 shadow-none"
                     onRowClick={(row) => setSelectedClient(row)}
                 />
