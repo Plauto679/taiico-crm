@@ -56,6 +56,7 @@ MODULES = (
     "renovaciones",
     "cumpleanos",
     "cumpleanos_agentes",
+    "agentes",
     "pendientes",
     "cartera",
     "clientes",
@@ -76,6 +77,7 @@ MODULE_COLUMNS = {
 }
 MODULE_COLUMNS["configuracion_mail"] = "Permiso_Configuracion_Mail"
 MODULE_COLUMNS["cumpleanos_agentes"] = "Permiso_Cumpleanos_Agentes"
+MODULE_COLUMNS["agentes"] = "Permiso_Agentes"
 MODULE_COLUMNS["carga_bases"] = "Permiso_Carga_Bases"
 MODULE_COLUMNS["accesos"] = "Permiso_Accesos"
 MODULE_COLUMNS["cotizaciones"] = "Permiso_Cotizaciones"
@@ -90,6 +92,7 @@ MODULE_LABELS = {
     "renovaciones": "Renovaciones",
     "cumpleanos": "Cumpleaños",
     "cumpleanos_agentes": "Cumpleaños de agentes",
+    "agentes": "Agentes",
     "pendientes": "Pendientes",
     "cartera": "Cartera de Prospectadores",
     "clientes": "Clientes",
@@ -241,6 +244,7 @@ def _default_module_permissions(role: str, promotorias: tuple[str, ...]) -> dict
     # New modules must be explicitly enabled in the access workbook.
     permissions["cumpleanos"] = "ninguno"
     permissions["cumpleanos_agentes"] = "ninguno"
+    permissions["agentes"] = "ninguno"
     permissions["carga_bases"] = "ninguno"
     permissions["accesos"] = "ninguno"
     permissions["cotizaciones"] = "ninguno"

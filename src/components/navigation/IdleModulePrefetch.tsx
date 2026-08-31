@@ -9,6 +9,7 @@ const FREQUENT_MODULES = [
   { href: '/renovaciones', module: 'renovaciones' },
   { href: '/cobranza', module: 'cobranza' },
   { href: '/clientes', module: 'clientes' },
+  { href: '/agentes', module: 'agentes' },
   { href: '/cotizaciones', module: 'cotizaciones' },
   { href: '/finanzas', module: 'finanzas' },
 ];

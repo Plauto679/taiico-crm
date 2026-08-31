@@ -17,6 +17,12 @@ _cache_lock = threading.RLock()
 _cache: tuple[float, list[dict[str, str]]] | None = None
 
 
+def clear_agent_directory_cache() -> None:
+    global _cache
+    with _cache_lock:
+        _cache = None
+
+
 def normalize_agent_key(value: object) -> str:
     text = str(value or "").strip()
     if text.endswith(".0") and text[:-2].isdigit():

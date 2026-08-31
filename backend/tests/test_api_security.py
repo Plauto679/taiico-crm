@@ -41,6 +41,7 @@ class ApiSecurityTests(unittest.TestCase):
                 "/renovaciones",
                 "/cumpleanos",
                 "/cumpleanos-agentes",
+                "/agentes",
                 "/cartera",
                 "/clientes",
                 "/ingestion",

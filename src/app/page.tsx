@@ -1,6 +1,6 @@
 import { SmartLink } from '@/components/navigation/SmartLink';
 import { redirect } from 'next/navigation';
-import { DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone } from 'lucide-react';
+import { DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, UserRoundCog } from 'lucide-react';
 import { fetchFromApi } from '@/lib/api';
 
 export default async function Home() {
@@ -77,6 +77,15 @@ export default async function Home() {
                 <h2 className="text-2xl font-bold text-gray-900">Cumpleaños de agentes</h2>
                 <p className="text-gray-500 mt-2">Agentes, claves y promotorías</p>
               </div>
+            </div>
+          </SmartLink>
+        )}
+
+        {['lectura', 'operacion'].includes(session.module_permissions.agentes || '') && (
+          <SmartLink href="/agentes" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-blue-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className="rounded-full bg-blue-100 p-4 text-blue-700 group-hover:bg-blue-700 group-hover:text-white transition-colors duration-300"><UserRoundCog className="h-8 w-8" /></div>
+              <div><h2 className="text-2xl font-bold text-gray-900">Agentes</h2><p className="text-gray-500 mt-2">Claves, cédulas y estatus MetLife</p></div>
             </div>
           </SmartLink>
         )}

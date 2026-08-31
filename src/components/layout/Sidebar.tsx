@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, Menu, X, Landmark } from 'lucide-react';
+import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, Menu, X, Landmark, UserRoundCog } from 'lucide-react';
 import { SmartLink } from '@/components/navigation/SmartLink';
 import { IdleModulePrefetch } from '@/components/navigation/IdleModulePrefetch';
 
@@ -14,6 +14,7 @@ const NAV_ITEMS = [
     { name: 'Renovaciones', href: '/renovaciones', icon: Calendar, module: 'renovaciones' },
     { name: 'Cumpleaños', href: '/cumpleanos', icon: CakeSlice, module: 'cumpleanos' },
     { name: 'Cumpleaños de agentes', href: '/cumpleanos-agentes', icon: PartyPopper, module: 'cumpleanos_agentes' },
+    { name: 'Agentes', href: '/agentes', icon: UserRoundCog, module: 'agentes' },
     { name: 'Pendientes', href: '/pendientes', icon: ClipboardList, module: 'pendientes' },
     { name: 'Cartera de Prospectadores', href: '/cartera', icon: Briefcase, module: 'cartera' },
     { name: 'Clientes', href: '/clientes', icon: Users, module: 'clientes' },
