@@ -37,3 +37,23 @@ def require_module_access(module: str, *, operation: bool = False):
         return profile
 
     return dependency
+
+
+def normalize_promotoria(value: object) -> str:
+    return " ".join(str(value or "").strip().upper().split())
+
+
+def profile_allows_promotoria(profile: AccessProfile, value: object) -> bool:
+    """Fail closed for rows without a promotoria when the user is scoped."""
+    if profile.is_central_admin:
+        return True
+    promotoria = normalize_promotoria(value)
+    return bool(promotoria) and promotoria in set(profile.promotorias)
+
+
+def require_promotoria_access(profile: AccessProfile, value: object) -> None:
+    if not profile_allows_promotoria(profile, value):
+        raise HTTPException(
+            status_code=403,
+            detail="El registro no pertenece a una promotoría autorizada para tu usuario",
+        )

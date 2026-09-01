@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import call, patch
 from zoneinfo import ZoneInfo
 
 
@@ -71,6 +71,53 @@ class PendingReportJobTests(unittest.TestCase):
             configured_recipients(),
             sender_username="alberto.alfaro@taiico.com",
         )
+
+    def test_daily_promotoria_reports_are_sent_once_with_fixed_filter(self):
+        now = datetime(2026, 9, 1, 19, 5, tzinfo=ZoneInfo("America/Mexico_City"))
+        with TemporaryDirectory() as directory:
+            state_file = Path(directory) / "state.json"
+            state_file.write_text('{"last_sent_date": "2026-09-01"}')
+
+            def delivered(recipients, **kwargs):
+                return {
+                    "recipients": recipients,
+                    "generated_on": "2026-09-01",
+                    "promotoria": kwargs.get("promotoria"),
+                }
+
+            with patch.dict(
+                os.environ,
+                {"PENDING_REPORT_AUTOMATION_STATE_FILE": str(state_file)},
+            ), patch(
+                "jobs.send_pending_report.local_now_for",
+                return_value=now,
+            ), patch(
+                "jobs.send_pending_report.deliver_pending_report",
+                side_effect=delivered,
+            ) as delivery:
+                self.assertEqual(run(), 0)
+                self.assertEqual(run(), 0)
+
+            self.assertEqual(
+                delivery.call_args_list,
+                [
+                    call(
+                        ["19eryk@gmail.com"],
+                        sender_username="alberto.alfaro@taiico.com",
+                        promotoria="ABBONDANZA",
+                    ),
+                    call(
+                        ["mauricio@ekilibra.me"],
+                        sender_username="alberto.alfaro@taiico.com",
+                        promotoria="EKILIBRA",
+                    ),
+                    call(
+                        ["vic.villanueva@hotmail.com"],
+                        sender_username="alberto.alfaro@taiico.com",
+                        promotoria="FENIX PRE-VISION",
+                    ),
+                ],
+            )
 
 
 if __name__ == "__main__":

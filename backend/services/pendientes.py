@@ -827,6 +827,17 @@ def _filter_source_for_profile(result: dict, profile: AccessProfile) -> dict:
     return filtered
 
 
+def _filter_source_by_promotoria(result: dict, promotoria: str) -> dict:
+    expected = clean_cell(promotoria).upper()
+    rows = [
+        row
+        for row in result["rows"]
+        if clean_cell(row.get("summary", {}).get("Promotoria", "")).upper()
+        == expected
+    ]
+    return {**result, "rows": rows}
+
+
 def _assigned_promotoria(requested: str, profile: AccessProfile) -> str:
     if not profile.can_operate("pendientes"):
         raise HTTPException(status_code=403, detail="Tu usuario sólo tiene acceso de consulta")
@@ -2099,6 +2110,7 @@ def deliver_pending_report(
     *,
     sender_username: str,
     profile: AccessProfile | None = None,
+    promotoria: str | None = None,
 ) -> dict:
     normalized_recipients = normalize_report_recipients(recipients)
     service = build_pending_drive_service()
@@ -2109,10 +2121,14 @@ def deliver_pending_report(
     if profile is not None:
         emision = _filter_source_for_profile(emision, profile)
         siniestros = _filter_source_for_profile(siniestros, profile)
+    if promotoria:
+        emision = _filter_source_by_promotoria(emision, promotoria)
+        siniestros = _filter_source_by_promotoria(siniestros, promotoria)
     report = build_pending_report(emision, siniestros)
     settings = smtp_settings_for(sender_username)
+    subject_scope = f" {clean_cell(promotoria).upper()}" if promotoria else " TAIICO"
     send_email_smtp(
-        subject=f"Informe de pendientes TAIICO - {report['generated_on']}",
+        subject=f"Informe de pendientes{subject_scope} - {report['generated_on']}",
         body=pending_report_text(report),
         html_body=pending_report_html(report),
         recipients=normalized_recipients,
@@ -2124,6 +2140,7 @@ def deliver_pending_report(
         "recipient": ", ".join(normalized_recipients),
         "recipients": normalized_recipients,
         "generated_on": report["generated_on"],
+        "promotoria": clean_cell(promotoria).upper() if promotoria else None,
         "report": report,
     }
 

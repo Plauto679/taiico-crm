@@ -22,6 +22,11 @@ from services.pendientes import (
     deliver_pending_reminder_report,
     normalize_report_recipients,
 )
+from services.automatic_mails import (  # noqa: E402
+    automation_config,
+    local_now_for,
+    schedule_matches,
+)
 
 
 DEFAULT_RECIPIENTS = (
@@ -36,39 +41,53 @@ DEFAULT_TIMEZONE = "America/Mexico_City"
 DEFAULT_HOUR = 19
 DEFAULT_REMINDER_HOUR = 10
 DEFAULT_SENDER_USERNAME = "alberto.alfaro@taiico.com"
+PROMOTORIA_AUTOMATION_IDS = (
+    "pending_promotoria_abbondanza",
+    "pending_promotoria_ekilibra",
+    "pending_promotoria_fenix_prevision",
+)
 
 
-def configured_recipients() -> list[str]:
+def configured_recipients(automation_id: str = "pending_daily") -> list[str]:
     return normalize_report_recipients(
-        [os.getenv("PENDING_REPORT_AUTOMATION_RECIPIENTS", DEFAULT_RECIPIENTS)]
+        automation_config(automation_id)["recipients"]
     )
 
 
 def local_now() -> datetime:
-    timezone = ZoneInfo(
-        os.getenv("PENDING_REPORT_AUTOMATION_TIMEZONE", DEFAULT_TIMEZONE)
-    )
-    return datetime.now(timezone)
+    return local_now_for("pending_daily")
 
 
 def scheduled_hour() -> int:
-    return int(os.getenv("PENDING_REPORT_AUTOMATION_HOUR", str(DEFAULT_HOUR)))
+    return int(automation_config("pending_daily")["hour"])
 
 
 def should_send(now: datetime, last_sent_date: str | None) -> bool:
-    return now.hour >= scheduled_hour() and last_sent_date != now.date().isoformat()
+    return schedule_matches(automation_config("pending_daily"), now) and (
+        last_sent_date != now.date().isoformat()
+    )
 
 
 def reminder_scheduled_hour() -> int:
-    return int(os.getenv("PENDING_REMINDER_AUTOMATION_HOUR", str(DEFAULT_REMINDER_HOUR)))
+    return int(automation_config("pending_weekly_reminder")["hour"])
 
 
 def should_send_reminder(now: datetime, last_sent_date: str | None) -> bool:
-    return (
-        now.weekday() == 0
-        and now.hour >= reminder_scheduled_hour()
-        and last_sent_date != now.date().isoformat()
+    return schedule_matches(automation_config("pending_weekly_reminder"), now) and (
+        last_sent_date != now.date().isoformat()
     )
+
+
+def due_promotoria_reports(state: dict) -> list[tuple[str, dict, datetime]]:
+    sent = state.get("promotoria_reports", {})
+    due: list[tuple[str, dict, datetime]] = []
+    for automation_id in PROMOTORIA_AUTOMATION_IDS:
+        config = automation_config(automation_id)
+        now = local_now_for(automation_id)
+        last_sent_date = (sent.get(automation_id) or {}).get("last_sent_date")
+        if schedule_matches(config, now) and last_sent_date != now.date().isoformat():
+            due.append((automation_id, config, now))
+    return due
 
 
 def state_path() -> Path:
@@ -96,6 +115,7 @@ def write_state(path: Path, state: dict) -> None:
 
 def run(*, force: bool = False, force_reminder: bool = False, dry_run: bool = False) -> int:
     now = local_now()
+    reminder_now = local_now_for("pending_weekly_reminder")
     path = state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(".lock")
@@ -104,8 +124,9 @@ def run(*, force: bool = False, force_reminder: bool = False, dry_run: bool = Fa
         state = read_state(path)
         due = force or should_send(now, state.get("last_sent_date"))
         reminder_due = force_reminder or should_send_reminder(
-            now, state.get("last_reminder_sent_date")
+            reminder_now, state.get("last_reminder_sent_date")
         )
+        promotoria_due = due_promotoria_reports(state)
         if dry_run:
             print(
                 json.dumps(
@@ -115,18 +136,26 @@ def run(*, force: bool = False, force_reminder: bool = False, dry_run: bool = Fa
                         "now": now.isoformat(),
                         "last_sent_date": state.get("last_sent_date"),
                         "recipients": configured_recipients(),
+                        "reminder_recipients": configured_recipients(
+                            "pending_weekly_reminder"
+                        ),
+                        "promotoria_reports_due": [
+                            {
+                                "id": automation_id,
+                                "promotoria": config["promotoria"],
+                                "recipients": configured_recipients(automation_id),
+                            }
+                            for automation_id, config, _ in promotoria_due
+                        ],
                     },
                     ensure_ascii=False,
                 )
             )
             return 0
-        if not due and not reminder_due:
+        if not due and not reminder_due and not promotoria_due:
             return 0
 
-        sender_username = os.getenv(
-            "PENDING_REPORT_AUTOMATION_SENDER_USERNAME",
-            DEFAULT_SENDER_USERNAME,
-        ).strip().casefold()
+        sender_username = automation_config("pending_daily")["sender"]
         new_state = dict(state)
         if due:
             result = deliver_pending_report(
@@ -144,20 +173,46 @@ def run(*, force: bool = False, force_reminder: bool = False, dry_run: bool = Fa
                 f"Informe de pendientes enviado a {len(result['recipients'])} destinatarios "
                 f"el {now.isoformat()}"
             )
+            write_state(path, new_state)
         if reminder_due:
+            reminder_config = automation_config("pending_weekly_reminder")
             reminder_result = deliver_pending_reminder_report(
-                configured_recipients(), sender_username=sender_username
+                configured_recipients("pending_weekly_reminder"),
+                sender_username=reminder_config["sender"],
             )
             new_state.update({
-                "last_reminder_sent_date": now.date().isoformat(),
-                "last_reminder_sent_at": now.isoformat(),
+                "last_reminder_sent_date": reminder_now.date().isoformat(),
+                "last_reminder_sent_at": reminder_now.isoformat(),
                 "reminder_recipients": reminder_result["recipients"],
                 "reminder_count": reminder_result["count"],
                 "reminder_window_end": reminder_result["window_end"],
             })
             print(
                 f"Recordatorio de pendientes enviado a "
-                f"{len(reminder_result['recipients'])} destinatarios el {now.isoformat()}"
+                f"{len(reminder_result['recipients'])} destinatarios el {reminder_now.isoformat()}"
+            )
+            write_state(path, new_state)
+        for automation_id, config, promotoria_now in promotoria_due:
+            promotoria_result = deliver_pending_report(
+                configured_recipients(automation_id),
+                sender_username=config["sender"],
+                promotoria=config["promotoria"],
+            )
+            reports_state = dict(new_state.get("promotoria_reports", {}))
+            reports_state[automation_id] = {
+                "last_sent_date": promotoria_now.date().isoformat(),
+                "last_sent_at": promotoria_now.isoformat(),
+                "sender_username": config["sender"],
+                "recipients": promotoria_result["recipients"],
+                "generated_on": promotoria_result["generated_on"],
+                "promotoria": config["promotoria"],
+            }
+            new_state["promotoria_reports"] = reports_state
+            write_state(path, new_state)
+            print(
+                f"Informe de pendientes de {config['promotoria']} enviado a "
+                f"{len(promotoria_result['recipients'])} destinatarios el "
+                f"{promotoria_now.isoformat()}"
             )
         write_state(path, new_state)
     return 0

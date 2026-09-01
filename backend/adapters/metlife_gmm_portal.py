@@ -14,6 +14,8 @@ from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any, Literal
 
+from services.drive_folder_naming import is_process_folder_for, process_folder_descriptor, process_folder_name
+
 
 METLIFE_PORTAL_URL = "https://agentes.metlife.mx/"
 TARGET_DRIVE_FOLDER_ID_ENV = "GOOGLE_DRIVE_RENEWALS_METLIFE_GMM_FOLDER_ID"
@@ -148,9 +150,17 @@ def sanitize_drive_name(value: str) -> str:
     return cleaned[:180]
 
 
-def renewal_folder_name(task: MetLifeGmmPortalTask) -> str:
-    deadline = task.renewal_deadline.isoformat() if hasattr(task.renewal_deadline, "isoformat") else str(task.renewal_deadline or "unknown-period")
-    return sanitize_drive_name(f"{task.rfc}_{task.policy_number}_{deadline}")
+def renewal_folder_name(
+    task: MetLifeGmmPortalTask,
+    *,
+    created_at: datetime | None = None,
+) -> str:
+    deadline = task.renewal_deadline
+    year = deadline.year if hasattr(deadline, "year") else int(str(deadline or datetime.now().year)[:4])
+    descriptor = sanitize_drive_name(
+        f"Renovacion póliza {task.policy_number} {year} - {year + 1}"
+    )
+    return process_folder_name(descriptor, occurred_at=created_at)
 
 
 def policy_digits(policy_number: str) -> str:
@@ -212,15 +222,21 @@ def ensure_credentials(username: str | None = None, password: str | None = None)
 
 
 def create_drive_folder(service, parent_folder_id: str, name: str) -> dict[str, Any]:
+    descriptor = process_folder_descriptor(name)
     existing = service.files().list(
-        q=f"'{parent_folder_id}' in parents and name = '{name.replace(chr(39), chr(92) + chr(39))}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
-        fields="files(id,name,webViewLink)",
+        q=f"'{parent_folder_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        fields="files(id,name,webViewLink,createdTime)",
         supportsAllDrives=True,
         includeItemsFromAllDrives=True,
-        pageSize=10,
+        pageSize=1000,
     ).execute().get("files", [])
-    if existing:
-        return existing[0]
+    matches = [
+        folder for folder in existing
+        if is_process_folder_for(str(folder.get("name") or ""), descriptor)
+    ]
+    if matches:
+        matches.sort(key=lambda folder: str(folder.get("createdTime") or ""))
+        return matches[0]
 
     return service.files().create(
         body={

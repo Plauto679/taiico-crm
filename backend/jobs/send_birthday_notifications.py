@@ -23,6 +23,11 @@ from services.birthday_notifications import (  # noqa: E402
     birthday_email_text,
     build_agent_birthday_notifications,
 )
+from services.automatic_mails import (  # noqa: E402
+    automation_config,
+    local_now_for,
+    schedule_matches,
+)
 from services.cumpleanos import load_birthday_directory  # noqa: E402
 from services.mail_configuration import smtp_settings_for  # noqa: E402
 from services.renovaciones import send_email_smtp  # noqa: E402
@@ -35,17 +40,17 @@ DEFAULT_WINDOW_DAYS = 7
 
 
 def local_now() -> datetime:
-    return datetime.now(
-        ZoneInfo(os.getenv("BIRTHDAY_AUTOMATION_TIMEZONE", DEFAULT_TIMEZONE))
-    )
+    return local_now_for("client_birthdays")
 
 
 def scheduled_hour() -> int:
-    return int(os.getenv("BIRTHDAY_AUTOMATION_HOUR", str(DEFAULT_HOUR)))
+    return int(automation_config("client_birthdays")["hour"])
 
 
 def should_send(now: datetime, last_completed_date: str | None) -> bool:
-    return now.hour >= scheduled_hour() and last_completed_date != now.date().isoformat()
+    return schedule_matches(automation_config("client_birthdays"), now) and (
+        last_completed_date != now.date().isoformat()
+    )
 
 
 def state_path() -> Path:
@@ -128,10 +133,7 @@ def run(
         summary = {
             "due": due,
             "now": now.isoformat(),
-            "sender_username": os.getenv(
-                "BIRTHDAY_AUTOMATION_SENDER_USERNAME",
-                DEFAULT_SENDER_USERNAME,
-            ).strip().casefold(),
+            "sender_username": automation_config("client_birthdays")["sender"],
             "agents_with_email": len(notifications),
             "birthdays": sum(len(item["clients"]) for item in notifications),
             "agents_missing_email": len(report["missing_email"]),

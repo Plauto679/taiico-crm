@@ -47,6 +47,11 @@ from database import (  # noqa: E402
     SessionLocal,
 )
 from services.client_email_directory import lookup_client_email  # noqa: E402
+from services.automatic_mails import (  # noqa: E402
+    automation_config,
+    local_now_for,
+    schedule_matches,
+)
 from services.renewal_agent_api import TAIICO_AGENT_CODES  # noqa: E402
 from services.renovaciones import (  # noqa: E402
     SmtpDeliveryUncertainError,
@@ -66,7 +71,6 @@ DEFAULT_MAX_CONSECUTIVE_PORTAL_FAILURES = 7
 DEFAULT_TARGET_DRIVE_FOLDER_ID = "1UthkPpr5_pvX5SszrCuIm546XKZh4Z_R"
 DEFAULT_INTERNAL_RECIPIENTS = (
     "alberto.alfaro@taiico.com,"
-    "pamela.alfaro@taiico.com,"
     "veronica.alfaro@taiico.com"
 )
 MAX_ATTACHMENT_BYTES = 18 * 1024 * 1024
@@ -110,16 +114,11 @@ def emit(event: str, **payload) -> None:
 
 
 def local_now() -> datetime:
-    timezone = ZoneInfo(
-        os.getenv("RENEWAL_AGENT_AUTOMATION_TIMEZONE", DEFAULT_TIMEZONE)
-    )
-    return datetime.now(timezone)
+    return local_now_for("renewal_agent")
 
 
 def scheduled_hour() -> int:
-    return int(
-        os.getenv("RENEWAL_AGENT_AUTOMATION_HOUR", str(DEFAULT_HOUR))
-    )
+    return int(automation_config("renewal_agent")["hour"])
 
 
 def window_days() -> int:
@@ -132,9 +131,8 @@ def window_days() -> int:
 
 
 def should_run(now: datetime, last_started_date: str | None) -> bool:
-    return (
-        now.hour >= scheduled_hour()
-        and last_started_date != now.date().isoformat()
+    return schedule_matches(automation_config("renewal_agent"), now) and (
+        last_started_date != now.date().isoformat()
     )
 
 
@@ -166,19 +164,7 @@ def write_state(path: Path, state: dict) -> None:
 
 
 def internal_recipients() -> list[str]:
-    configured = os.getenv(
-        "RENEWAL_AGENT_AUTOMATION_RECIPIENTS",
-        DEFAULT_INTERNAL_RECIPIENTS,
-    )
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in configured.split(","):
-        email = value.strip()
-        normalized = email.casefold()
-        if email and normalized not in seen:
-            result.append(email)
-            seen.add(normalized)
-    return result
+    return list(automation_config("renewal_agent")["recipients"])
 
 
 def send_internal_renewal_email(*, subject: str, body: str) -> None:

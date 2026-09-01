@@ -1,5 +1,6 @@
 import sys
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 
@@ -56,8 +57,11 @@ class MetLifeGmmOldPortalTests(unittest.TestCase):
 
     def test_builds_renewal_folder_name_under_client_folder(self):
         self.assertEqual(
-            renewal_folder_name(self.task(policy_number="1344950")),
-            "Renovacion póliza 1344950 2026 - 2027",
+            renewal_folder_name(
+                self.task(policy_number="1344950"),
+                created_at=datetime(2026, 8, 29, 9, 7),
+            ),
+            "2026-08-29 09-07 Renovacion póliza 1344950 2026 - 2027",
         )
 
 

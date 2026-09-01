@@ -37,7 +37,8 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
     const filteredClients = useMemo(() => clients.filter(client =>
         client.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (client.rfc && client.rfc.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (client.correo && client.correo.toLowerCase().includes(searchTerm.toLowerCase()))
+        (client.correo && client.correo.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (client.promotorias || []).some((promotoria) => promotoria.toLowerCase().includes(searchTerm.toLowerCase()))
     ), [clients, searchTerm]);
 
     const handleAddClient = async (newClient: Cliente) => {
@@ -116,6 +117,7 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
                 RFC: client.rfc || '',
                 Correo: client.correo || '',
                 Teléfono: client.telefono || '',
+                Promotorías: (client.promotorias || []).join(', '),
                 Estado: client.estado_identidad === 'identified' ? 'Cliente identificado' : 'Prospecto',
                 Expediente: client.expediente_url || '',
                 'Nombre del expediente': client.expediente_nombre || '',
@@ -127,6 +129,7 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
                 { wch: 18 },
                 { wch: 34 },
                 { wch: 18 },
+                { wch: 32 },
                 { wch: 22 },
                 { wch: 60 },
                 { wch: 42 },
@@ -145,6 +148,11 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
         { header: 'RFC', accessorKey: 'rfc' as keyof Cliente },
         { header: 'Correo', accessorKey: 'correo' as keyof Cliente },
         { header: 'Teléfono', accessorKey: 'telefono' as keyof Cliente },
+        {
+            header: 'Promotoría',
+            filterValue: (client: Cliente) => (client.promotorias || []).join(', '),
+            accessorKey: (client: Cliente) => (client.promotorias || []).join(', ') || <span className="text-slate-400">Sin asignar</span>,
+        },
         {
             header: 'Estado',
             filterValue: (client: Cliente) => client.estado_identidad === 'identified' ? 'Cliente identificado' : 'Prospecto',

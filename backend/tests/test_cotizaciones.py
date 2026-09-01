@@ -3,7 +3,8 @@ import unittest
 from pydantic import ValidationError
 
 from backend.services.auth import AccessProfile
-from backend.services.cotizaciones import QuoteCreate, QuoteUpdate, _resolve_quote_client_folder, assigned_agent, find_or_create_quote_client_folder, parse_agent_directory
+from backend.services.cotizaciones import QuoteCreate, QuoteUpdate, _is_quote_document_subfolder_name, _quote_document_folder_name, _resolve_quote_client_folder, assigned_agent, find_or_create_quote_client_folder, parse_agent_directory
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 from openpyxl import Workbook
 import io
@@ -50,6 +51,19 @@ class QuoteCreateTests(unittest.TestCase):
 
         self.assertEqual(result, linked_folder)
         service.files.assert_not_called()
+
+    def test_document_process_folder_uses_minute_timestamp(self):
+        name = _quote_document_folder_name(
+            "cotizaciones",
+            "Medicalife Familiar",
+            "COT-20260829-ABC123",
+            created_at=datetime(2026, 8, 29, 10, 42),
+        )
+        self.assertEqual(
+            name,
+            "2026-08-29 10-42 Cotización-Medicalife Familiar-29/08/26",
+        )
+        self.assertTrue(_is_quote_document_subfolder_name(name))
 
     def test_accepts_existing_client_with_matching_product(self):
         payload = QuoteCreate(client_id="client-1", ramo="GMM", producto="Primordial")

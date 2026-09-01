@@ -153,6 +153,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
     const vidaColumns = [
         { header: 'Póliza Actual', accessorKey: 'POLIZA_ACTUAL' as keyof RenovacionVida },
         { header: 'Contratante', accessorKey: 'CONTRATANTE' as keyof RenovacionVida },
+        { header: 'RFC', accessorKey: 'RFC' as keyof RenovacionVida },
         { header: 'Fin Vigencia', accessorKey: 'FIN_VIG' as keyof RenovacionVida },
         { header: 'Forma Pago', accessorKey: 'FORMA_PAGO' as keyof RenovacionVida },
         { header: 'Conducto Cobro', accessorKey: 'CONDUCTO_COBRO' as keyof RenovacionVida },
@@ -187,6 +188,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         { header: 'N Póliza', accessorKey: 'NPOLIZA' as keyof RenovacionGMM },
         { header: 'Póliza Origen', accessorKey: 'POLORIG' as keyof RenovacionGMM },
         { header: 'Contratante', accessorKey: 'CONTRATANTE' as keyof RenovacionGMM },
+        { header: 'RFC', accessorKey: 'RFC' as keyof RenovacionGMM },
         { header: 'Fin Vigencia', accessorKey: 'FFINVIG' as keyof RenovacionGMM },
         {
             header: 'Prima',

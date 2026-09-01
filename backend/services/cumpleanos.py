@@ -11,13 +11,15 @@ from typing import Iterable
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from config import METLIFE_PATHS
 from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
 from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workbook
 from services.pendientes import DEFAULT_AGENTS_METLIFE_FILE_ID, _download_workbook
 from services.data_cache import data_cache
+from services.auth import AccessProfile
+from services.authorization import profile_allows_promotoria, require_module_access
 
 
 router = APIRouter(prefix="/cumpleanos", tags=["cumpleanos"])
@@ -355,9 +357,26 @@ def load_birthday_directory() -> dict:
 
 
 @router.get("/clientes")
-def birthday_clients():
+def birthday_clients(
+    profile: AccessProfile = Depends(require_module_access("cumpleanos")),
+):
     try:
-        return load_birthday_directory()
+        result = load_birthday_directory()
+        clients = [
+            client for client in result["clients"]
+            if profile_allows_promotoria(profile, client.get("promotoria"))
+        ]
+        scoped = {**result, "clients": clients, "summary": {**result["summary"]}}
+        scoped["summary"]["total_clients"] = len(clients)
+        scoped["summary"]["birthdays_this_month"] = sum(
+            1 for client in clients
+            if datetime.date.fromisoformat(client["birth_date"]).month
+            == datetime.date.fromisoformat(result["generated_on"]).month
+        )
+        scoped["summary"]["birthdays_next_30_days"] = sum(
+            1 for client in clients if client["days_until_birthday"] <= 30
+        )
+        return scoped
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=503,

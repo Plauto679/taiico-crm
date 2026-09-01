@@ -5,6 +5,7 @@ import re
 import shutil
 import time
 import zipfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -31,6 +32,7 @@ from services.client_folders import (
     safe_folder_component,
     valid_client_rfc,
 )
+from services.drive_folder_naming import is_process_folder_for, process_folder_name
 
 
 METLIFE_OLD_PORTAL_URL = (
@@ -115,10 +117,21 @@ def find_or_create_client_folder(service, task: MetLifeGmmPortalTask) -> dict[st
         ).execute()
 
 
-def renewal_folder_name(task: MetLifeGmmPortalTask) -> str:
+def renewal_folder_descriptor(task: MetLifeGmmPortalTask) -> str:
     deadline = task.renewal_deadline
     year = deadline.year if hasattr(deadline, "year") else int(str(deadline)[:4])
     return f"Renovacion póliza {task.policy_number} {year} - {year + 1}"
+
+
+def renewal_folder_name(
+    task: MetLifeGmmPortalTask,
+    *,
+    created_at: datetime | None = None,
+) -> str:
+    return process_folder_name(
+        renewal_folder_descriptor(task),
+        occurred_at=created_at,
+    )
 
 
 def find_or_create_renewal_folder(
@@ -126,21 +139,25 @@ def find_or_create_renewal_folder(
     client_folder_id: str,
     task: MetLifeGmmPortalTask,
 ) -> dict[str, Any]:
-    name = renewal_folder_name(task)
+    descriptor = renewal_folder_descriptor(task)
     response = service.files().list(
         q=(
             f"'{_drive_literal(client_folder_id)}' in parents and "
-            f"mimeType = '{FOLDER_MIME_TYPE}' and "
-            f"name = '{_drive_literal(name)}' and trashed = false"
+            f"mimeType = '{FOLDER_MIME_TYPE}' and trashed = false"
         ),
-        fields="files(id,name,webViewLink)",
+        fields="files(id,name,webViewLink,createdTime)",
         supportsAllDrives=True,
         includeItemsFromAllDrives=True,
-        pageSize=10,
+        pageSize=1000,
     ).execute()
-    matches = response.get("files", [])
+    matches = [
+        folder for folder in response.get("files", [])
+        if is_process_folder_for(str(folder.get("name") or ""), descriptor)
+    ]
     if matches:
+        matches.sort(key=lambda folder: str(folder.get("createdTime") or ""))
         return matches[0]
+    name = renewal_folder_name(task)
     return service.files().create(
         body={
             "name": name,

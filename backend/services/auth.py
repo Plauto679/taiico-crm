@@ -71,6 +71,7 @@ MODULES = (
     "campanas",
     "finanzas",
 )
+UNIVERSAL_READ_MODULES = {"inicio"}
 MODULE_COLUMNS = {
     module: f"Permiso_{module.title()}"
     for module in MODULES
@@ -147,6 +148,8 @@ class AccessProfile:
         return self.is_admin and set(self.promotorias) == set(PROMOTORIAS)
 
     def permission_for(self, module: str) -> str:
+        if module in UNIVERSAL_READ_MODULES:
+            return "lectura"
         return self.module_permissions.get(module, "ninguno")
 
     def can_read(self, module: str) -> bool:
@@ -252,6 +255,8 @@ def _default_module_permissions(role: str, promotorias: tuple[str, ...]) -> dict
     permissions["rrhh"] = "ninguno"
     permissions["campanas"] = "ninguno"
     permissions["finanzas"] = "ninguno"
+    for module in UNIVERSAL_READ_MODULES:
+        permissions[module] = "lectura"
     return permissions
 
 
@@ -288,6 +293,8 @@ def _read_user_directory(
             )
             for module, column in MODULE_COLUMNS.items()
         }
+        for module in UNIVERSAL_READ_MODULES:
+            permissions[module] = "lectura"
         profiles[username] = AccessProfile(
             username=username,
             role=role,
@@ -338,10 +345,13 @@ def _normalize_module_permissions(
     if invalid:
         raise ValueError("Módulo no válido: " + ", ".join(invalid))
     defaults = _default_module_permissions(role, promotorias)
-    return {
+    permissions = {
         module: _normalize_permission(values.get(module, defaults[module]))
         for module in MODULES
     }
+    for module in UNIVERSAL_READ_MODULES:
+        permissions[module] = "lectura"
+    return permissions
 
 
 def _validate_username(username: str) -> str:

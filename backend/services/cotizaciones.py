@@ -60,7 +60,11 @@ except ModuleNotFoundError:
 from database import Client, SessionLocal
 from drive.client import download_drive_file_bytes
 from services.auth import AccessProfile
-from services.authorization import current_access_profile
+from services.authorization import (
+    current_access_profile,
+    profile_allows_promotoria,
+    require_promotoria_access,
+)
 from services.client_email_directory import lookup_client_email
 from services.client_folders import (
     FOLDER_MIME_TYPE,
@@ -73,6 +77,7 @@ from services.client_folders import (
 )
 from services.mail_configuration import smtp_settings_for
 from services.renovaciones import send_email_smtp
+from services.drive_folder_naming import is_process_folder_for, process_folder_descriptor, process_folder_name
 
 
 router = APIRouter(prefix="/cotizaciones", tags=["cotizaciones"])
@@ -304,11 +309,24 @@ def _quote_record_date(quote_id: str) -> str:
     return f"{datetime.now(timezone.utc):%d/%m/%y}"
 
 
-def _quote_document_folder_name(document_kind: str, product: str, quote_id: str) -> str:
+def _quote_document_folder_descriptor(document_kind: str, product: str, quote_id: str) -> str:
     prefix = QUOTE_DOCUMENT_FOLDER_PREFIXES[document_kind]
     product_name = re.sub(r"\s+", " ", str(product or "").strip()) or "Producto"
     product_name = product_name.replace("/", "-").replace("\\", "-")
     return f"{prefix}-{product_name}-{_quote_record_date(quote_id)}"
+
+
+def _quote_document_folder_name(
+    document_kind: str,
+    product: str,
+    quote_id: str,
+    *,
+    created_at: datetime | None = None,
+) -> str:
+    return process_folder_name(
+        _quote_document_folder_descriptor(document_kind, product, quote_id),
+        occurred_at=created_at,
+    )
 
 
 def quote_client_folder_name(rfc: str, client_name: str) -> str:
@@ -418,8 +436,9 @@ def _drive_folder_metadata(service, folder_id: str) -> dict[str, object]:
 
 
 def _is_quote_document_subfolder_name(name: str) -> bool:
+    descriptor = process_folder_descriptor(name)
     return any(
-        str(name or "").startswith(f"{prefix}-")
+        descriptor.startswith(f"{prefix}-")
         for prefix in QUOTE_DOCUMENT_FOLDER_PREFIXES.values()
     )
 
@@ -463,20 +482,24 @@ def find_or_create_quote_document_subfolder(
     parent_id: str,
     folder_name: str,
 ) -> dict[str, str]:
+    descriptor = process_folder_descriptor(folder_name)
     response = service.files().list(
         q=(
             f"'{_drive_query_literal(parent_id)}' in parents and "
-            f"mimeType = '{FOLDER_MIME_TYPE}' and trashed = false and "
-            f"name = '{_drive_query_literal(folder_name)}'"
+            f"mimeType = '{FOLDER_MIME_TYPE}' and trashed = false"
         ),
         spaces="drive",
-        fields="files(id,name,mimeType,webViewLink)",
+        fields="files(id,name,mimeType,webViewLink,createdTime)",
         supportsAllDrives=True,
         includeItemsFromAllDrives=True,
-        pageSize=10,
+        pageSize=1000,
     ).execute()
-    folders = response.get("files", [])
+    folders = [
+        folder for folder in response.get("files", [])
+        if is_process_folder_for(str(folder.get("name") or ""), descriptor)
+    ]
     if folders:
+        folders.sort(key=lambda folder: str(folder.get("createdTime") or ""))
         return folders[0]
     return service.files().create(
         body={
@@ -803,6 +826,12 @@ def _quote_by_id(quote_id: str) -> dict[str, str]:
     sheet, headers = _sheet_and_headers(workbook)
     row_number = _quote_row_by_id(sheet, headers, quote_id)
     return _serialize_row(sheet, headers, row_number)
+
+
+def require_quote_access(profile: AccessProfile, quote_id: str) -> dict[str, str]:
+    row = _quote_by_id(quote_id)
+    require_promotoria_access(profile, row.get("promotoria"))
+    return row
 
 
 def _quote_document_folder_for_listing(
@@ -1316,9 +1345,14 @@ def get_quotes_config(profile: AccessProfile = Depends(current_access_profile)):
 
 
 @router.get("")
-def get_quotes():
+def get_quotes(profile: AccessProfile = Depends(current_access_profile)):
     try:
-        return {"quotes": list_quotes()}
+        return {
+            "quotes": [
+                quote for quote in list_quotes()
+                if profile_allows_promotoria(profile, quote.get("promotoria"))
+            ]
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"No se pudo leer Cotizaciones.xlsx: {exc}") from exc
 
@@ -1400,6 +1434,7 @@ def edit_quote(
     profile: AccessProfile = Depends(current_access_profile),
 ):
     try:
+        require_quote_access(profile, quote_id)
         return {"quote": update_quote(quote_id, payload, profile)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1415,6 +1450,7 @@ def create_quote_data_request_link_route(
     profile: AccessProfile = Depends(current_access_profile),
 ):
     try:
+        require_quote_access(profile, quote_id)
         return create_quote_data_request_link(quote_id, profile)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1431,6 +1467,7 @@ def begin_quote(
     profile: AccessProfile = Depends(current_access_profile),
 ):
     try:
+        require_quote_access(profile, quote_id)
         return {"quote": start_quote(quote_id, payload)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1446,6 +1483,7 @@ def open_browser_session(
     profile: AccessProfile = Depends(current_access_profile),
 ):
     try:
+        require_quote_access(profile, quote_id)
         return {"session": open_quote_browser_session(quote_id)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1474,6 +1512,7 @@ def answer_browser_session(
     profile: AccessProfile = Depends(current_access_profile),
 ):
     try:
+        require_quote_access(profile, quote_id)
         return {"session": answer_quote_browser_session(quote_id, payload)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1500,6 +1539,7 @@ def release_browser_session(
     quote_id: str,
     profile: AccessProfile = Depends(current_access_profile),
 ):
+    require_quote_access(profile, quote_id)
     return release_quote_browser_session(quote_id)
 
 
@@ -1511,6 +1551,7 @@ async def upload_quote_document_route(
     profile: AccessProfile = Depends(current_access_profile),
 ):
     try:
+        require_quote_access(profile, quote_id)
         return await upload_quote_document(quote_id, document_kind, document)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1530,6 +1571,7 @@ def get_quote_email_draft_route(
     profile: AccessProfile = Depends(current_access_profile),
 ):
     try:
+        require_quote_access(profile, quote_id)
         return quote_email_draft(quote_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1546,6 +1588,7 @@ def send_quote_email_route(
     profile: AccessProfile = Depends(current_access_profile),
 ):
     try:
+        require_quote_access(profile, quote_id)
         return send_quote_email(quote_id, payload, profile)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

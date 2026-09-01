@@ -9,6 +9,7 @@ export interface Cliente {
     expediente_url?: string | null;
     expediente_nombre?: string | null;
     expediente_verificado?: string | null;
+    promotorias?: string[];
 }
 
 export interface ClientRegistryAuditSummary {

@@ -15,7 +15,11 @@ from openpyxl.utils.datetime import from_excel
 from pydantic import BaseModel, Field
 
 from services.auth import AccessProfile
-from services.authorization import require_module_access
+from services.authorization import (
+    profile_allows_promotoria,
+    require_module_access,
+    require_promotoria_access,
+)
 from services.data_cache import data_cache
 from services.metlife_agent_directory import (
     AGENTS_FILE_ID_ENV,
@@ -207,6 +211,21 @@ def build_agent_directory(workbook_bytes: bytes, *, can_operate: bool = False) -
     }
 
 
+def scope_agent_directory(result: dict, profile: AccessProfile) -> dict:
+    scoped = copy.deepcopy(result)
+    scoped["agents"] = [
+        row
+        for row in scoped["agents"]
+        if profile_allows_promotoria(profile, row.get("promotoria"))
+    ]
+    scoped["catalogs"] = {
+        "promotorias": sorted({row["promotoria"] for row in scoped["agents"] if row["promotoria"]}),
+        "clasificaciones": sorted({row["clasificacion_comercial"] for row in scoped["agents"] if row["clasificacion_comercial"]}),
+        "estatus_met": sorted({row["estatus_met"] for row in scoped["agents"] if row["estatus_met"]}),
+    }
+    return scoped
+
+
 def load_agents_directory(*, can_operate: bool = False) -> dict:
     """Load the canonical shared Agents workbook without using the web cache."""
     return build_agent_directory(
@@ -307,7 +326,15 @@ def _upload_workbook(file_id: str, workbook_bytes: bytes) -> None:
     drive.files().update(fileId=file_id, media_body=media).execute()
 
 
-def _save_mutation(payload: AgentFields, version: str, *, row_number: int | None = None, fingerprint: str | None = None) -> dict:
+def _save_mutation(
+    payload: AgentFields,
+    version: str,
+    *,
+    profile: AccessProfile,
+    row_number: int | None = None,
+    fingerprint: str | None = None,
+) -> dict:
+    require_promotoria_access(profile, payload.promotoria)
     with _write_lock:
         current = _download_workbook(_file_id())
         if hashlib.sha256(current).hexdigest() != version:
@@ -316,6 +343,14 @@ def _save_mutation(payload: AgentFields, version: str, *, row_number: int | None
                 detail="La base de agentes cambió desde que abriste la pantalla; actualiza antes de guardar",
             )
         try:
+            if row_number is not None:
+                context = _workbook_context(current)
+                if row_number < 2 or row_number > context.sheet.max_row:
+                    raise ValueError("El agente seleccionado ya no existe")
+                require_promotoria_access(
+                    profile,
+                    _agent_from_row(context, row_number).get("promotoria"),
+                )
             updated = mutate_agent_workbook(
                 current,
                 payload,
@@ -341,7 +376,10 @@ def get_agents(
 ):
     try:
         workbook = _download_workbook(_file_id())
-        return build_agent_directory(workbook, can_operate=profile.can_operate("agentes"))
+        return scope_agent_directory(
+            build_agent_directory(workbook, can_operate=profile.can_operate("agentes")),
+            profile,
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -353,8 +391,11 @@ def create_agent(
     payload: CreateAgentPayload,
     profile: AccessProfile = Depends(require_module_access("agentes", operation=True)),
 ):
-    updated = _save_mutation(payload, payload.version)
-    return build_agent_directory(updated, can_operate=profile.can_operate("agentes"))
+    updated = _save_mutation(payload, payload.version, profile=profile)
+    return scope_agent_directory(
+        build_agent_directory(updated, can_operate=profile.can_operate("agentes")),
+        profile,
+    )
 
 
 @router.patch("/{row_number}")
@@ -366,7 +407,11 @@ def update_agent(
     updated = _save_mutation(
         payload,
         payload.version,
+        profile=profile,
         row_number=row_number,
         fingerprint=payload.fingerprint,
     )
-    return build_agent_directory(updated, can_operate=profile.can_operate("agentes"))
+    return scope_agent_directory(
+        build_agent_directory(updated, can_operate=profile.can_operate("agentes")),
+        profile,
+    )

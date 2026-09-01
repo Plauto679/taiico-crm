@@ -1,5 +1,4 @@
 import { SmartLink } from '@/components/navigation/SmartLink';
-import { redirect } from 'next/navigation';
 import { DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, UserRoundCog } from 'lucide-react';
 import { fetchFromApi } from '@/lib/api';
 
@@ -7,12 +6,6 @@ export default async function Home() {
   const session = await fetchFromApi<{
     module_permissions: Record<string, string>;
   }>('/session');
-  if (!['lectura', 'operacion'].includes(session.module_permissions.inicio || '')) {
-    if (['lectura', 'operacion'].includes(session.module_permissions.pendientes || '')) {
-      redirect('/pendientes');
-    }
-    redirect('/login');
-  }
   return (
     <div className="h-full overflow-y-auto">
       <div className="flex min-h-full flex-col items-center space-y-8 p-4 sm:space-y-12 sm:p-8">

@@ -32,9 +32,16 @@ from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
 from parsers.metlife_vida_renovaciones import PARSER_VERSION as METLIFE_VIDA_RENEWAL_PARSER_VERSION
 from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workbook
 from adapters.metlife_gmm_portal import MetLifeGmmPortalAdapter, MetLifeGmmPortalTask, result_to_dict, stable_chrome_profile_dir
+from services.automatic_mails import automation_config
 from services.mail_configuration import smtp_settings_for_email_address, smtp_ssl_context
 from services.metlife_agent_directory import normalize_agent_key, promotoria_by_agent_key
 from services.session_auth import current_username
+from services.auth import AccessProfile
+from services.authorization import (
+    current_access_profile,
+    profile_allows_promotoria,
+    require_promotoria_access,
+)
 from drive.client import build_drive_service
 
 router = APIRouter(prefix="/renovaciones", tags=["renovaciones"])
@@ -51,10 +58,7 @@ RENEWAL_STATUS_OPTIONS = {
 
 
 def renewal_smtp_settings() -> dict:
-    sender_address = os.getenv(
-        "RENEWAL_EMAIL_SENDER_ADDRESS",
-        DEFAULT_RENEWAL_SENDER_ADDRESS,
-    ).strip().casefold()
+    sender_address = automation_config("renewal_agent")["sender"]
     settings = smtp_settings_for_email_address(sender_address)
     if not settings:
         raise RuntimeError(
@@ -70,7 +74,6 @@ DEFAULT_MAX_RENEWAL_ATTACHMENT_COUNT = 100
 DEFAULT_RENEWAL_EMAIL_CC_RECIPIENTS = (
     "alberto.alfaro@taiico.com",
     "veronica.alfaro@taiico.com",
-    "pamela.alfaro@taiico.com",
 )
 GOOGLE_NATIVE_EXPORTS = {
     "application/vnd.google-apps.document": ("application/pdf", ".pdf"),
@@ -115,6 +118,25 @@ def normalize_name(value: str) -> str:
     if not value:
         return ""
     return " ".join(str(value).strip().upper().split())
+
+
+def scope_renewal_rows(rows: list[dict], profile: AccessProfile) -> list[dict]:
+    return [
+        row for row in rows
+        if profile_allows_promotoria(
+            profile,
+            row.get("PROMOTORIA") or row.get("Promotoría") or row.get("PROMOTOR"),
+        )
+    ]
+
+
+def metlife_policy_promotoria(policy: Policy, renewal_type: str) -> str:
+    policy_number = str(policy.policy_number or "").strip()
+    deadline = format_date(policy.effective_end_date) or ""
+    agents = metlife_vida_agents() if renewal_type.upper() == "VIDA" else metlife_gmm_agents()
+    agent = agents.get((policy_number, deadline), agents.get((policy_number, ""), {}))
+    agent_code = str(agent.get("AGENTE") or "")
+    return promotoria_by_agent_key().get(normalize_agent_key(agent_code), "")
 
 
 @lru_cache(maxsize=4)
@@ -640,12 +662,7 @@ def drive_folder_attachments(
 
 
 def renewal_email_cc_recipients(primary_recipients: List[str]) -> List[str]:
-    configured = os.getenv("RENEWAL_EMAIL_CC_RECIPIENTS", "").strip()
-    candidates = (
-        [email.strip() for email in configured.split(",") if email.strip()]
-        if configured
-        else list(DEFAULT_RENEWAL_EMAIL_CC_RECIPIENTS)
-    )
+    candidates = automation_config("renewal_agent")["cc_recipients"]
     primary = {email.strip().casefold() for email in primary_recipients if email.strip()}
     result = []
     seen = set(primary)
@@ -1462,7 +1479,8 @@ async def get_upcoming_renewals(
     end_date: Optional[str] = Query(None, description="End date YYYY-MM-DD"),
     days: Optional[int] = Query(30, description="Days to look ahead"),
     insurer: str = Query("Metlife", description="Insurer name"),
-    type: str = Query("ALL", description="Policy type: ALL, VIDA, GMM")
+    type: str = Query("ALL", description="Policy type: ALL, VIDA, GMM"),
+    profile: AccessProfile = Depends(current_access_profile),
 ):
     db = SessionLocal()
     try:
@@ -1517,6 +1535,7 @@ async def get_upcoming_renewals(
                     results.append({
                         "POLIZA_ACTUAL": pol.policy_number,
                         "CONTRATANTE": pol.client.full_name if pol.client else "",
+                        "RFC": pol.client.rfc if pol.client else "",
                         "INI_VIG": format_date(pol.effective_start_date),
                         "FIN_VIG": format_date(ren.renewal_deadline),
                         "FORMA_PAGO": pol.payment_frequency.upper(),
@@ -1541,6 +1560,7 @@ async def get_upcoming_renewals(
                         "NPOLIZA": pol.policy_number,
                         "POLORIG": pol.policy_number,
                         "CONTRATANTE": pol.client.full_name if pol.client else "",
+                        "RFC": pol.client.rfc if pol.client else "",
                         "FFINVIG": format_date(ren.renewal_deadline),
                         "PRIMA.1": float(pol.premium_amount) if pol.premium_amount else 0.0,
                         "IVA": float(pol.premium_amount) * 0.16 if pol.premium_amount else 0.0,
@@ -1627,7 +1647,7 @@ async def get_upcoming_renewals(
                     "Email": pol.client.email if pol.client else None
                 })
                 
-        return results
+        return scope_renewal_rows(results, profile) if isinstance(profile, AccessProfile) else results
     except Exception as e:
         print(f"Error fetching upcoming renewals: {e}")
         return []
@@ -1641,7 +1661,8 @@ async def update_renewal_status(
     policy_number: Union[str, int] = Body(..., embed=True),
     new_status: Optional[str] = Body(None, embed=True),
     expediente: Optional[str] = Body(None, embed=True),
-    email: Optional[str] = Body(None, embed=True)
+    email: Optional[str] = Body(None, embed=True),
+    profile: AccessProfile = Depends(current_access_profile),
 ):
     """
     Update the ESTATUS_DE_RENOVACION, EXPEDIENTE, and EMAIL in the SQL database.
@@ -1653,6 +1674,7 @@ async def update_renewal_status(
         
         if not policy:
             raise HTTPException(status_code=404, detail=f"Policy {policy_number} not found")
+        require_promotoria_access(profile, metlife_policy_promotoria(policy, type))
             
         # Retrieve related renewal
         renewal = db.query(Renewal).filter(Renewal.original_policy_id == policy.id).first()
@@ -1695,8 +1717,16 @@ async def update_renewal_status(
         db.close()
 
 @router.get("/vida")
-async def get_renovaciones_vida(days: int = 30):
-    return await get_upcoming_renewals(days=days, insurer="Metlife", type="VIDA")
+async def get_renovaciones_vida(
+    days: int = 30,
+    profile: AccessProfile = Depends(current_access_profile),
+):
+    return await get_upcoming_renewals(
+        days=days,
+        insurer="Metlife",
+        type="VIDA",
+        profile=profile,
+    )
 
 @router.post("/send-email")
 async def send_renewal_email_endpoint(
@@ -1707,6 +1737,7 @@ async def send_renewal_email_endpoint(
     end_date: str = Body(..., embed=True),
     expediente: Optional[str] = Body(None, embed=True),
     username: str = Depends(current_username),
+    profile: AccessProfile = Depends(current_access_profile),
 ):
     """
     Send renewal email using database details. Updates status in database upon success.
@@ -1718,6 +1749,7 @@ async def send_renewal_email_endpoint(
         
         if not policy or not policy.client:
             raise HTTPException(status_code=404, detail="Policy or client profile not found")
+        require_promotoria_access(profile, metlife_policy_promotoria(policy, type))
             
         recipient_email = policy.client.email
         if not recipient_email:

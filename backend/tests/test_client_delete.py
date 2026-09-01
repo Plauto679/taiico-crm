@@ -3,6 +3,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
+from fastapi import BackgroundTasks
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -12,7 +13,18 @@ from sqlalchemy.pool import StaticPool
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from database import Base, Client, Insurer, Policy, Product, User
+from services.auth import AccessProfile, PROMOTORIAS
 from services.clientes import DeleteClientRequest, delete_client
+
+
+CENTRAL_PROFILE = AccessProfile(
+    username="admin@taiico.com",
+    role="admin",
+    promotorias=tuple(PROMOTORIAS),
+    rfc="",
+    aseguradoras=(),
+    module_permissions={"clientes": "operacion"},
+)
 
 
 class ClientDeleteTests(unittest.TestCase):
@@ -42,7 +54,11 @@ class ClientDeleteTests(unittest.TestCase):
         db.close()
 
         with patch("services.clientes.SessionLocal", self.Session):
-            result = delete_client(DeleteClientRequest(client_id=prospect_id))
+            result = delete_client(
+                DeleteClientRequest(client_id=prospect_id),
+                BackgroundTasks(),
+                CENTRAL_PROFILE,
+            )
 
         self.assertEqual(result["result"], "deleted")
         db = self.Session()
@@ -74,7 +90,11 @@ class ClientDeleteTests(unittest.TestCase):
         db.close()
 
         with patch("services.clientes.SessionLocal", self.Session):
-            result = delete_client(DeleteClientRequest(client_id=prospect_id))
+            result = delete_client(
+                DeleteClientRequest(client_id=prospect_id),
+                BackgroundTasks(),
+                CENTRAL_PROFILE,
+            )
 
         self.assertEqual(result["result"], "archived")
         self.assertEqual(result["linked_records"]["pólizas"], 1)

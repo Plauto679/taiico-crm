@@ -6,7 +6,7 @@ import threading
 import time
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from services.cumpleanos import (
     clean_text,
@@ -16,6 +16,8 @@ from services.cumpleanos import (
 )
 from services.pendientes import DEFAULT_AGENTS_METLIFE_FILE_ID, _download_workbook
 from services.data_cache import data_cache
+from services.auth import AccessProfile
+from services.authorization import normalize_promotoria, require_module_access
 
 
 router = APIRouter(prefix="/cumpleanos-agentes", tags=["cumpleanos-agentes"])
@@ -150,8 +152,26 @@ def load_agent_birthday_directory() -> dict:
 
 
 @router.get("")
-def birthday_agents():
+def birthday_agents(
+    profile: AccessProfile = Depends(require_module_access("cumpleanos_agentes")),
+):
     try:
-        return load_agent_birthday_directory()
+        result = load_agent_birthday_directory()
+        allowed = set(profile.promotorias)
+        agents = result["agents"] if profile.is_central_admin else [
+            agent for agent in result["agents"]
+            if any(normalize_promotoria(value) in allowed for value in agent.get("promotorias", []))
+        ]
+        scoped = {**result, "agents": agents, "summary": {**result["summary"]}}
+        scoped["summary"]["total_agents"] = len(agents)
+        scoped["summary"]["birthdays_this_month"] = sum(
+            1 for agent in agents
+            if datetime.date.fromisoformat(agent["birth_date"]).month
+            == datetime.date.fromisoformat(result["generated_on"]).month
+        )
+        scoped["summary"]["birthdays_next_30_days"] = sum(
+            1 for agent in agents if agent["days_until_birthday"] <= 30
+        )
+        return scoped
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

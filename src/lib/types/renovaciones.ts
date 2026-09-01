@@ -2,6 +2,7 @@ export interface RenovacionGMM {
     NPOLIZA: string;
     POLORIG: string;
     CONTRATANTE: string;
+    RFC?: string;
     FFINVIG: string; // Date YYYY-MM-DD
     'PRIMA.1': number;
     IVA: number;
@@ -20,6 +21,7 @@ export interface RenovacionGMM {
 export interface RenovacionVida {
     POLIZA_ACTUAL: string;
     CONTRATANTE: string;
+    RFC?: string;
     INI_VIG: string; // Date YYYY-MM-DD
     FIN_VIG: string; // Date YYYY-MM-DD
     FORMA_PAGO: string;

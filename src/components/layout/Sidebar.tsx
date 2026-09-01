@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, Menu, X, Landmark, UserRoundCog } from 'lucide-react';
+import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, MailCheck, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, Menu, X, Landmark, UserRoundCog } from 'lucide-react';
 import { SmartLink } from '@/components/navigation/SmartLink';
 import { IdleModulePrefetch } from '@/components/navigation/IdleModulePrefetch';
 
@@ -21,6 +21,7 @@ const NAV_ITEMS = [
     { name: 'Recluta', href: '/recluta', icon: UserRoundSearch, module: 'recluta' },
     { name: 'Dashboards', href: '/dashboards', icon: BarChart3, module: 'dashboards' },
     { name: 'Configuración de Mail', href: '/configuracion-mail', icon: Mail, module: 'configuracion_mail' },
+    { name: 'Mails automáticos', href: '/mails-automaticos', icon: MailCheck, module: 'configuracion_mail' },
     { name: 'Carga de bases', href: '/carga-bases', icon: DatabaseZap, module: 'carga_bases' },
     { name: 'Accesos', href: '/accesos', icon: UserCog, module: 'accesos' },
     { name: 'Cotizaciones', href: '/cotizaciones', icon: FilePenLine, module: 'cotizaciones' },
@@ -152,7 +153,8 @@ export function Sidebar() {
             </div>
             <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-2 py-4 [scrollbar-gutter:stable]">
                 {NAV_ITEMS.filter((item) => (
-                    permissions?.[item.module] === 'lectura'
+                    item.module === 'inicio'
+                    || permissions?.[item.module] === 'lectura'
                     || permissions?.[item.module] === 'operacion'
                 )).map((item) => (
                     <SmartLink

@@ -21,6 +21,12 @@ from jobs.send_pending_report import (  # noqa: E402
     DEFAULT_SENDER_USERNAME,
     configured_recipients,
 )
+from services.automatic_mails import (  # noqa: E402
+    automation_config,
+    local_now_for,
+    schedule_matches,
+    schedule_period_key,
+)
 from services.agent_license_notifications import (  # noqa: E402
     deliver_agent_license_expiration_report,
 )
@@ -32,20 +38,17 @@ DEFAULT_MONTHS_AHEAD = 3
 
 
 def local_now() -> datetime:
-    return datetime.now(
-        ZoneInfo(os.getenv("AGENT_LICENSE_AUTOMATION_TIMEZONE", DEFAULT_TIMEZONE))
-    )
+    return local_now_for("agent_license_expiration")
 
 
 def scheduled_hour() -> int:
-    return int(os.getenv("AGENT_LICENSE_AUTOMATION_HOUR", str(DEFAULT_HOUR)))
+    return int(automation_config("agent_license_expiration")["hour"])
 
 
-def should_send(now: datetime, last_sent_month: str | None) -> bool:
-    return (
-        now.day == 1
-        and now.hour >= scheduled_hour()
-        and last_sent_month != now.strftime("%Y-%m")
+def should_send(now: datetime, last_sent_period: str | None) -> bool:
+    config = automation_config("agent_license_expiration")
+    return schedule_matches(config, now) and (
+        last_sent_period != schedule_period_key(config, now)
     )
 
 
@@ -79,12 +82,14 @@ def run(*, force: bool = False, dry_run: bool = False) -> int:
     with path.with_suffix(".lock").open("a+") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         state = read_state(path)
-        due = force or should_send(now, state.get("last_sent_month"))
+        automation = automation_config("agent_license_expiration")
+        last_sent_period = state.get("last_sent_period") or state.get("last_sent_month")
+        due = force or should_send(now, last_sent_period)
         summary = {
             "due": due,
             "now": now.isoformat(),
             "last_sent_month": state.get("last_sent_month"),
-            "recipients": configured_recipients(),
+            "recipients": configured_recipients("agent_license_expiration"),
         }
         if dry_run:
             print(json.dumps(summary, ensure_ascii=False))
@@ -92,15 +97,9 @@ def run(*, force: bool = False, dry_run: bool = False) -> int:
         if not due:
             return 0
 
-        sender_username = (
-            os.getenv("AGENT_LICENSE_AUTOMATION_SENDER_USERNAME", "").strip()
-            or os.getenv(
-                "PENDING_REPORT_AUTOMATION_SENDER_USERNAME",
-                DEFAULT_SENDER_USERNAME,
-            ).strip()
-        ).casefold()
+        sender_username = automation["sender"]
         result = deliver_agent_license_expiration_report(
-            configured_recipients(),
+            configured_recipients("agent_license_expiration"),
             sender_username=sender_username,
             generated_on=now.date(),
             months_ahead=int(
@@ -114,6 +113,7 @@ def run(*, force: bool = False, dry_run: bool = False) -> int:
             path,
             {
                 "last_sent_month": now.strftime("%Y-%m"),
+                "last_sent_period": schedule_period_key(automation, now),
                 "last_sent_at": now.isoformat(),
                 "sender_username": sender_username,
                 "recipients": result["recipients"],

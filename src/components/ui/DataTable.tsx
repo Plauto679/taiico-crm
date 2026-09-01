@@ -26,6 +26,9 @@ interface DataTableProps<T> {
 
 type SortDirection = 'asc' | 'desc' | null;
 
+const EMPTY_FILTER_VALUE = '__TAIICO_EMPTY_FILTER_VALUE__';
+const EMPTY_FILTER_LABEL = 'Vacío';
+
 interface SortConfig<T> {
     key: keyof T | null;
     direction: SortDirection;
@@ -43,6 +46,14 @@ function columnValue<T>(column: Column<T>, row: T): string {
         ? column.accessorKey(row)
         : row[column.accessorKey];
     return typeof value === 'string' || typeof value === 'number' ? String(value) : '';
+}
+
+function multiSelectValue(value: string): string {
+    return value.trim() ? value : EMPTY_FILTER_VALUE;
+}
+
+function multiSelectLabel(value: string): string {
+    return value === EMPTY_FILTER_VALUE ? EMPTY_FILTER_LABEL : value;
 }
 
 export function DataTable<T>({ data, columns, className, onRowClick, onProcessedDataChange, filterMode = 'text' }: DataTableProps<T>) {
@@ -65,8 +76,12 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
     };
 
     const filterOptions = useMemo(() => Object.fromEntries(columns.map((column) => {
-        const values = Array.from(new Set(data.map((row) => columnValue(column, row)).filter(Boolean)));
-        values.sort((left, right) => left.localeCompare(right, 'es-MX', { numeric: true, sensitivity: 'base' }));
+        const values = Array.from(new Set(data.map((row) => multiSelectValue(columnValue(column, row)))));
+        values.sort((left, right) => {
+            if (left === EMPTY_FILTER_VALUE) return -1;
+            if (right === EMPTY_FILTER_VALUE) return 1;
+            return left.localeCompare(right, 'es-MX', { numeric: true, sensitivity: 'base' });
+        });
         return [columnKey(column), values];
     })), [columns, data]);
 
@@ -108,7 +123,7 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
             if (!selected.length) return;
             const column = columns.find((candidate) => columnKey(candidate) === key);
             if (!column) return;
-            filtered = filtered.filter((row) => selected.includes(columnValue(column, row)));
+            filtered = filtered.filter((row) => selected.includes(multiSelectValue(columnValue(column, row))));
         });
 
         // Apply sorting
@@ -235,7 +250,7 @@ function MultiSelectFilter({
     onClear: () => void;
 }) {
     const [search, setSearch] = useState('');
-    const visibleOptions = options.filter((option) => option.toLocaleLowerCase('es-MX').includes(search.toLocaleLowerCase('es-MX')));
+    const visibleOptions = options.filter((option) => multiSelectLabel(option).toLocaleLowerCase('es-MX').includes(search.toLocaleLowerCase('es-MX')));
     return (
         <details className="group/filter relative font-normal" onClick={(event) => event.stopPropagation()}>
             <summary className={clsx(
@@ -257,7 +272,7 @@ function MultiSelectFilter({
                 <div className="max-h-56 space-y-0.5 overflow-y-auto overscroll-contain">
                     {visibleOptions.map((option) => {
                         const checked = selected.includes(option);
-                        return <button key={option} type="button" onClick={() => onToggle(option)} className={clsx('flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-blue-50', checked && 'bg-blue-50 text-blue-800')}><span className={clsx('mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border', checked ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white')}>{checked && <Check className="h-3 w-3" />}</span><span className="break-words">{option}</span></button>;
+                        return <button key={option} type="button" onClick={() => onToggle(option)} className={clsx('flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-blue-50', checked && 'bg-blue-50 text-blue-800')}><span className={clsx('mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border', checked ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white')}>{checked && <Check className="h-3 w-3" />}</span><span className="break-words">{multiSelectLabel(option)}</span></button>;
                     })}
                     {!visibleOptions.length && <p className="px-2 py-4 text-center text-xs text-slate-400">Sin coincidencias</p>}
                 </div>

@@ -5,8 +5,8 @@ import re
 from typing import List, Optional
 from urllib.parse import parse_qs, urlparse
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 
@@ -21,6 +21,18 @@ from database import (
     Renewal,
     SessionLocal,
     User,
+)
+from services.auth import AccessProfile
+from services.authorization import current_access_profile
+from services.client_promotorias import (
+    assign_profile_promotorias,
+    scope_client_query,
+    sync_client_promotorias,
+    valid_promotoria,
+)
+from services.client_registry_mirror import (
+    sync_client_registry_mirror,
+    sync_client_registry_mirror_best_effort,
 )
 from services.client_identity_matching import build_identity_candidates
 from services.client_merge import merge_duplicate_client
@@ -48,6 +60,7 @@ class ClientModel(BaseModel):
     expediente_url: Optional[str] = None
     expediente_nombre: Optional[str] = None
     expediente_verificado: Optional[str] = None
+    promotorias: List[str] = Field(default_factory=list)
 
 
 class UpdateClientRequest(BaseModel):
@@ -132,6 +145,7 @@ def _serialize_client(client: Client) -> ClientModel:
         expediente_verificado=(
             client.drive_verified_at.isoformat() if client.drive_verified_at else None
         ),
+        promotorias=sorted({row.promotoria for row in client.promotorias if valid_promotoria(row.promotoria)}),
     )
 
 
@@ -175,23 +189,37 @@ def _assert_unique_rfc(db, rfc: Optional[str], *, excluding_id: Optional[str] = 
         )
 
 
-def _client_query(db, client_id: Optional[str], name: Optional[str]):
+def _client_query(
+    db,
+    client_id: Optional[str],
+    name: Optional[str],
+    profile: AccessProfile | None = None,
+):
+    query = db.query(Client)
+    if profile is not None:
+        query = scope_client_query(query, profile)
     if client_id:
-        return db.query(Client).filter(Client.id == client_id).first()
+        return query.filter(Client.id == client_id).first()
     if name:
-        return db.query(Client).filter(Client.full_name == name).first()
+        return query.filter(Client.full_name == name).first()
     return None
 
 
-def _load_audit(db, *, detail_limit: int = 200) -> dict:
+def _load_audit(db, profile: AccessProfile, *, detail_limit: int = 200) -> dict:
     clients = (
-        db.query(Client)
+        scope_client_query(db.query(Client), profile)
         .filter(Client.status != "inactive")
         .order_by(Client.full_name)
         .all()
     )
     service = build_client_folder_drive_service()
     folders = list_folder_children(service, client_folders_parent_id())
+    if not profile.is_central_admin:
+        visible_rfcs = {normalize_rfc(client.rfc) for client in clients if normalize_rfc(client.rfc)}
+        folders = [
+            folder for folder in folders
+            if normalize_rfc(str(folder.get("name") or "").split(" - ", 1)[0]) in visible_rfcs
+        ]
     return build_client_registry_audit(
         [_audit_client_payload(client) for client in clients],
         folders,
@@ -224,11 +252,11 @@ def _relationship_counts(db) -> dict[str, dict[str, int]]:
 
 
 @router.get("/", response_model=List[ClientModel])
-def get_clients():
+def get_clients(profile: AccessProfile = Depends(current_access_profile)):
     db = SessionLocal()
     try:
         clients = (
-            db.query(Client)
+            scope_client_query(db.query(Client), profile)
             .filter(Client.status != "inactive")
             .order_by(Client.full_name)
             .all()
@@ -239,7 +267,11 @@ def get_clients():
 
 
 @router.post("/", response_model=ClientModel)
-def add_client(client: ClientModel):
+def add_client(
+    client: ClientModel,
+    background_tasks: BackgroundTasks,
+    profile: AccessProfile = Depends(current_access_profile),
+):
     db = SessionLocal()
     try:
         name = _optional_text(client.nombre)
@@ -257,8 +289,10 @@ def add_client(client: ClientModel):
             identity_status="identified" if rfc else "prospect",
         )
         db.add(new_client)
+        assign_profile_promotorias(new_client, profile)
         db.commit()
         db.refresh(new_client)
+        background_tasks.add_task(sync_client_registry_mirror_best_effort)
         return _serialize_client(new_client)
     except HTTPException:
         db.rollback()
@@ -271,10 +305,14 @@ def add_client(client: ClientModel):
 
 
 @router.post("/update")
-def update_client(req: UpdateClientRequest):
+def update_client(
+    req: UpdateClientRequest,
+    background_tasks: BackgroundTasks,
+    profile: AccessProfile = Depends(current_access_profile),
+):
     db = SessionLocal()
     try:
-        db_client = _client_query(db, req.client_id or req.client.id, req.original_nombre)
+        db_client = _client_query(db, req.client_id or req.client.id, req.original_nombre, profile)
         if not db_client:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
         name = _optional_text(req.client.nombre)
@@ -308,6 +346,7 @@ def update_client(req: UpdateClientRequest):
             db_client.drive_verified_at = None
         db.commit()
         db.refresh(db_client)
+        background_tasks.add_task(sync_client_registry_mirror_best_effort)
         return {"success": True, "client": _serialize_client(db_client)}
     except HTTPException:
         db.rollback()
@@ -320,10 +359,14 @@ def update_client(req: UpdateClientRequest):
 
 
 @router.post("/delete")
-def delete_client(req: DeleteClientRequest):
+def delete_client(
+    req: DeleteClientRequest,
+    background_tasks: BackgroundTasks,
+    profile: AccessProfile = Depends(current_access_profile),
+):
     db = SessionLocal()
     try:
-        db_client = _client_query(db, req.client_id, req.nombre)
+        db_client = _client_query(db, req.client_id, req.nombre, profile)
         if not db_client:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
         if db_client.identity_status != "prospect":
@@ -354,6 +397,7 @@ def delete_client(req: DeleteClientRequest):
             db.delete(db_client)
             result = "deleted"
         db.commit()
+        background_tasks.add_task(sync_client_registry_mirror_best_effort)
         return {
             "success": True,
             "result": result,
@@ -379,13 +423,16 @@ def delete_client(req: DeleteClientRequest):
 
 
 @router.get("/search")
-def search_client(name: str):
+def search_client(
+    name: str,
+    profile: AccessProfile = Depends(current_access_profile),
+):
     db = SessionLocal()
     try:
         term = name.strip()
         normalized_rfc = normalize_rfc(term)
         client = (
-            db.query(Client)
+            scope_client_query(db.query(Client), profile)
             .filter(
                 Client.status != "inactive",
                 or_(
@@ -406,10 +453,13 @@ def search_client(name: str):
 
 
 @router.get("/registry-audit")
-def client_registry_audit(detail_limit: int = Query(default=200, ge=10, le=1000)):
+def client_registry_audit(
+    detail_limit: int = Query(default=200, ge=10, le=1000),
+    profile: AccessProfile = Depends(current_access_profile),
+):
     db = SessionLocal()
     try:
-        audit = _load_audit(db, detail_limit=detail_limit)
+        audit = _load_audit(db, profile, detail_limit=detail_limit)
         audit.pop("safe_link_updates", None)
         audit["drive_folder_url"] = (
             f"https://drive.google.com/drive/folders/{client_folders_parent_id()}"
@@ -422,11 +472,14 @@ def client_registry_audit(detail_limit: int = Query(default=200, ge=10, le=1000)
 
 
 @router.get("/identity-candidates")
-def client_identity_candidates(limit: int = Query(default=200, ge=1, le=1000)):
+def client_identity_candidates(
+    limit: int = Query(default=200, ge=1, le=1000),
+    profile: AccessProfile = Depends(current_access_profile),
+):
     db = SessionLocal()
     try:
         clients = (
-            db.query(Client)
+            scope_client_query(db.query(Client), profile)
             .filter(Client.status != "inactive")
             .order_by(Client.full_name)
             .all()
@@ -457,7 +510,11 @@ def client_identity_candidates(limit: int = Query(default=200, ge=1, le=1000)):
 
 
 @router.post("/merge")
-def merge_clients(req: MergeClientsRequest):
+def merge_clients(
+    req: MergeClientsRequest,
+    background_tasks: BackgroundTasks,
+    profile: AccessProfile = Depends(current_access_profile),
+):
     duplicate_ids = list(dict.fromkeys(req.duplicate_ids))
     if not duplicate_ids:
         raise HTTPException(status_code=422, detail="Selecciona al menos un registro duplicado.")
@@ -467,7 +524,7 @@ def merge_clients(req: MergeClientsRequest):
     db = SessionLocal()
     try:
         canonical = (
-            db.query(Client)
+            scope_client_query(db.query(Client), profile)
             .filter(Client.id == req.canonical_id, Client.status != "inactive")
             .first()
         )
@@ -483,7 +540,7 @@ def merge_clients(req: MergeClientsRequest):
         results = []
         for duplicate_id in duplicate_ids:
             duplicate = (
-                db.query(Client)
+                scope_client_query(db.query(Client), profile)
                 .filter(Client.id == duplicate_id, Client.status != "inactive")
                 .first()
             )
@@ -506,6 +563,7 @@ def merge_clients(req: MergeClientsRequest):
                 )
             )
         db.commit()
+        background_tasks.add_task(sync_client_registry_mirror_best_effort)
         return {
             "success": True,
             "canonical_id": req.canonical_id,
@@ -533,10 +591,13 @@ def merge_clients(req: MergeClientsRequest):
 
 
 @router.post("/sync-expedientes")
-def sync_client_folder_links():
+def sync_client_folder_links(
+    background_tasks: BackgroundTasks,
+    profile: AccessProfile = Depends(current_access_profile),
+):
     db = SessionLocal()
     try:
-        audit = _load_audit(db, detail_limit=1000)
+        audit = _load_audit(db, profile, detail_limit=1000)
         linked = []
         verified_at = datetime.utcnow()
         for mapping in audit["safe_link_updates"]:
@@ -551,6 +612,7 @@ def sync_client_folder_links():
             client.identity_status = "identified"
             linked.append({"client_id": client.id, "rfc": mapping["rfc"], "folder_id": folder["id"]})
         db.commit()
+        background_tasks.add_task(sync_client_registry_mirror_best_effort)
         return {
             "success": True,
             "linked": linked,
@@ -563,6 +625,36 @@ def sync_client_folder_links():
         raise HTTPException(status_code=502, detail=f"No fue posible vincular los expedientes: {exc}") from exc
     finally:
         db.close()
+
+
+@router.post("/sync-promotorias")
+def sync_promotorias(
+    background_tasks: BackgroundTasks,
+    profile: AccessProfile = Depends(current_access_profile),
+):
+    if not profile.is_central_admin:
+        raise HTTPException(status_code=403, detail="Solo la administración central puede recalcular promotorías.")
+    db = SessionLocal()
+    try:
+        result = sync_client_promotorias(db)
+        db.commit()
+        background_tasks.add_task(sync_client_registry_mirror_best_effort)
+        return {"success": True, **result}
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=502, detail=f"No fue posible sincronizar promotorías: {exc}") from exc
+    finally:
+        db.close()
+
+
+@router.post("/sync-drive-mirror")
+def sync_drive_mirror(profile: AccessProfile = Depends(current_access_profile)):
+    if not profile.is_central_admin:
+        raise HTTPException(status_code=403, detail="Solo la administración central puede publicar el registro maestro.")
+    try:
+        return {"success": True, **sync_client_registry_mirror()}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"No fue posible publicar el registro maestro: {exc}") from exc
 
 
 def upsert_client_internal(nombre: str, correo: str):

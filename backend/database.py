@@ -192,6 +192,27 @@ class Client(Base):
     claims = relationship("Claim", back_populates="client")
     documents = relationship("Document", back_populates="client")
     conversations = relationship("Conversation", back_populates="client")
+    promotorias = relationship(
+        "ClientPromotoria",
+        back_populates="client",
+        cascade="all, delete-orphan",
+    )
+
+
+class ClientPromotoria(Base):
+    __tablename__ = "client_promotorias"
+    __table_args__ = (
+        UniqueConstraint("client_id", "promotoria", name="uq_client_promotoria"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    client_id = Column(String(36), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    promotoria = Column(String(100), nullable=False, index=True)
+    sources_json = Column("sources", JSON, default=list, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+    client = relationship("Client", back_populates="promotorias")
 
 # 5. Lead Model
 class Lead(Base):

@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from database import Base, Client, Insurer, Policy, Product, User
+from database import Base, Client, ClientPromotoria, Insurer, Policy, Product, User
 from services.client_merge import merge_duplicate_client
 
 
@@ -51,6 +51,11 @@ class ClientMergeTests(unittest.TestCase):
             responsible_user_id="user",
         )
         self.db.add(policy)
+        self.db.add_all([
+            ClientPromotoria(client_id="canonical", promotoria="TAIICO", sources_json=[{"source": "canonical"}]),
+            ClientPromotoria(client_id="duplicate", promotoria="TAIICO", sources_json=[{"source": "duplicate"}]),
+            ClientPromotoria(client_id="duplicate", promotoria="ABBONDANZA", sources_json=[{"source": "duplicate"}]),
+        ])
         self.db.commit()
 
     def tearDown(self):
@@ -64,7 +69,7 @@ class ClientMergeTests(unittest.TestCase):
         )
         self.db.commit()
 
-        self.assertEqual(result["reassigned_references"], {"policies": 1})
+        self.assertEqual(result["reassigned_references"], {"policies": 1, "client_promotorias": 2})
         self.assertIsNone(self.db.query(Client).filter(Client.id == "duplicate").first())
         canonical = self.db.query(Client).filter(Client.id == "canonical").one()
         self.assertEqual(canonical.email, "axel@example.com")
@@ -72,6 +77,10 @@ class ClientMergeTests(unittest.TestCase):
         self.assertEqual(
             self.db.query(Policy).filter(Policy.id == "policy").one().client_id,
             "canonical",
+        )
+        self.assertEqual(
+            {row.promotoria for row in canonical.promotorias},
+            {"TAIICO", "ABBONDANZA"},
         )
 
     def test_rejects_different_rfcs(self):

@@ -343,7 +343,7 @@ class WorkbookAuthenticationTests(unittest.TestCase):
             "Ninguno",
         )
 
-    def test_blank_promotoria_fails_closed_for_every_module(self):
+    def test_blank_promotoria_only_allows_universal_home_module(self):
         workbook = workbook_bytes([{
             "Usuario": "unassigned@example.com",
             "Password": "secret",
@@ -354,7 +354,30 @@ class WorkbookAuthenticationTests(unittest.TestCase):
         _, profiles = auth._read_user_directory(workbook)
 
         profile = profiles["unassigned@example.com"]
-        self.assertFalse(any(profile.can_read(module) for module in auth.MODULES))
+        self.assertTrue(profile.can_read("inicio"))
+        self.assertFalse(
+            any(
+                profile.can_read(module)
+                for module in auth.MODULES
+                if module != "inicio"
+            )
+        )
+
+    def test_explicit_none_cannot_remove_universal_home_access(self):
+        workbook = workbook_bytes([{
+            "Usuario": "limited@example.com",
+            "Password": "secret",
+            "Rol": "Agente",
+            "Promotoria": "ABBONDANZA",
+            "Permiso_Inicio": "Ninguno",
+        }])
+
+        _, profiles = auth._read_user_directory(workbook)
+
+        self.assertEqual(
+            profiles["limited@example.com"].module_permissions["inicio"],
+            "lectura",
+        )
 
     def test_updates_only_registered_users_password_and_preserves_other_sheets(self):
         output = io.BytesIO()

@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy import MetaData, Table, update
 
-from database import Client
+from database import Client, ClientPromotoria
 from services.client_folders import normalize_rfc
 
 
@@ -43,11 +43,40 @@ def merge_duplicate_client(db, *, canonical_id: str, duplicate_id: str) -> dict:
         raise ValueError("Solo se pueden consolidar registros con el mismo RFC; los RFC son distintos.")
 
     bind = db.get_bind()
+
+    canonical_promotorias = {
+        row.promotoria: row
+        for row in db.query(ClientPromotoria).filter(ClientPromotoria.client_id == canonical_id).all()
+    }
+    duplicate_promotorias = (
+        db.query(ClientPromotoria).filter(ClientPromotoria.client_id == duplicate_id).all()
+    )
+    moved_promotorias = 0
+    new_promotorias: list[tuple[str, list]] = []
+    for duplicate_promotoria in duplicate_promotorias:
+        existing = canonical_promotorias.get(duplicate_promotoria.promotoria)
+        if existing:
+            combined_sources = list(existing.sources_json or [])
+            for source in duplicate_promotoria.sources_json or []:
+                if source not in combined_sources:
+                    combined_sources.append(source)
+            existing.sources_json = combined_sources
+            db.delete(duplicate_promotoria)
+        else:
+            new_promotorias.append((
+                duplicate_promotoria.promotoria,
+                list(duplicate_promotoria.sources_json or []),
+            ))
+            db.delete(duplicate_promotoria)
+        moved_promotorias += 1
+    db.flush()
+    db.expire(canonical, ["promotorias"])
+
     metadata = MetaData()
     metadata.reflect(bind=bind)
     reference_counts: dict[str, int] = {}
     for table in metadata.sorted_tables:
-        if table.name == Client.__tablename__ or "client_id" not in table.c:
+        if table.name in {Client.__tablename__, ClientPromotoria.__tablename__} or "client_id" not in table.c:
             continue
         references_clients = any(
             foreign_key.column.table.name == Client.__tablename__
@@ -98,6 +127,15 @@ def merge_duplicate_client(db, *, canonical_id: str, duplicate_id: str) -> dict:
 
     db.delete(duplicate)
     db.flush()
+    for promotoria, sources in new_promotorias:
+        db.add(ClientPromotoria(
+            client_id=canonical_id,
+            promotoria=promotoria,
+            sources_json=sources,
+        ))
+    db.flush()
+    if moved_promotorias:
+        reference_counts[ClientPromotoria.__tablename__] = moved_promotorias
     return {
         "rfc": canonical_rfc,
         "canonical_id": canonical.id,
