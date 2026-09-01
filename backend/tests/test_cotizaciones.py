@@ -3,13 +3,54 @@ import unittest
 from pydantic import ValidationError
 
 from backend.services.auth import AccessProfile
-from backend.services.cotizaciones import QuoteCreate, QuoteUpdate, assigned_agent, parse_agent_directory
-from unittest.mock import patch
+from backend.services.cotizaciones import QuoteCreate, QuoteUpdate, _resolve_quote_client_folder, assigned_agent, find_or_create_quote_client_folder, parse_agent_directory
+from unittest.mock import MagicMock, patch
 from openpyxl import Workbook
 import io
 
 
 class QuoteCreateTests(unittest.TestCase):
+    def test_client_registry_folder_has_priority_over_drive_name_search(self):
+        service = MagicMock()
+        linked_folder = {
+            "id": "canonical-folder",
+            "name": "AAMP821011P28 - Pamela Asmara Alfaro Mendoza",
+            "webViewLink": "https://drive.google.com/drive/folders/canonical-folder",
+        }
+        with patch(
+            "backend.services.cotizaciones._linked_quote_client_folder",
+            return_value=linked_folder,
+        ):
+            result = find_or_create_quote_client_folder(
+                service,
+                rfc="AAMP821011P28",
+                client_name="PAMELA ASMARA ALFARO MENDOZA",
+            )
+
+        self.assertEqual(result, linked_folder)
+        service.files.assert_not_called()
+
+    def test_client_registry_folder_replaces_a_saved_duplicate_quote_link(self):
+        service = MagicMock()
+        linked_folder = {
+            "id": "canonical-folder",
+            "name": "AAMP821011P28 - Pamela Asmara Alfaro Mendoza",
+            "webViewLink": "https://drive.google.com/drive/folders/canonical-folder",
+        }
+        row = {
+            "cliente": "PAMELA ASMARA ALFARO MENDOZA",
+            "cotizaciones": "https://drive.google.com/drive/folders/duplicate-folder",
+            "documentos_adicionales": "",
+        }
+        with patch(
+            "backend.services.cotizaciones._linked_quote_client_folder",
+            return_value=linked_folder,
+        ):
+            result = _resolve_quote_client_folder(service, row, "AAMP821011P28")
+
+        self.assertEqual(result, linked_folder)
+        service.files.assert_not_called()
+
     def test_accepts_existing_client_with_matching_product(self):
         payload = QuoteCreate(client_id="client-1", ramo="GMM", producto="Primordial")
         self.assertEqual(payload.ramo, "GMM")

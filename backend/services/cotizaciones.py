@@ -319,6 +319,52 @@ def quote_client_folder_name(rfc: str, client_name: str) -> str:
     return f"{normalized_rfc} - {normalized_name}"
 
 
+def _linked_quote_client_folder(service, rfc: str) -> dict[str, str] | None:
+    """Resolve the folder explicitly linked in the canonical client registry."""
+    normalized_rfc = normalize_rfc(rfc)
+    db = SessionLocal()
+    try:
+        client = (
+            db.query(Client)
+            .filter(Client.rfc.ilike(normalized_rfc), Client.status != "inactive")
+            .first()
+        )
+        if not client:
+            return None
+        folder_id = str(client.drive_folder_id or "").strip()
+        if not folder_id:
+            folder_id = _folder_id_from_link(str(client.drive_folder_url or ""))
+        client_name = str(client.full_name or normalized_rfc).strip()
+        linked_folder_name = str(client.drive_folder_name or "").strip()
+        linked_folder_url = str(client.drive_folder_url or "").strip()
+    finally:
+        db.close()
+
+    if not folder_id:
+        return None
+    try:
+        folder = _drive_folder_metadata(service, folder_id)
+    except Exception as exc:
+        raise RuntimeError(
+            f"El expediente vinculado a {client_name} ({normalized_rfc}) no está accesible. "
+            "No se creó otra carpeta para evitar duplicados."
+        ) from exc
+    if str(folder.get("mimeType") or "") != FOLDER_MIME_TYPE:
+        raise RuntimeError(
+            f"El expediente vinculado a {client_name} ({normalized_rfc}) no es una carpeta de Drive. "
+            "No se creó otra carpeta para evitar duplicados."
+        )
+    return {
+        "id": str(folder.get("id") or folder_id),
+        "name": str(folder.get("name") or linked_folder_name),
+        "webViewLink": str(
+            folder.get("webViewLink")
+            or linked_folder_url
+            or f"https://drive.google.com/drive/folders/{folder_id}"
+        ),
+    }
+
+
 def find_or_create_quote_client_folder(
     service,
     *,
@@ -332,6 +378,9 @@ def find_or_create_quote_client_folder(
     parent = (parent_id or client_folders_parent_id()).strip()
     expected_name = quote_client_folder_name(normalized_rfc, client_name)
     with client_folder_creation_lock(normalized_rfc):
+        linked_folder = _linked_quote_client_folder(service, normalized_rfc)
+        if linked_folder:
+            return linked_folder
         response = service.files().list(
             q=(
                 f"'{_drive_query_literal(parent)}' in parents and "
@@ -363,7 +412,7 @@ def find_or_create_quote_client_folder(
 def _drive_folder_metadata(service, folder_id: str) -> dict[str, object]:
     return service.files().get(
         fileId=folder_id,
-        fields="id,name,webViewLink,parents",
+        fields="id,name,mimeType,webViewLink,parents",
         supportsAllDrives=True,
     ).execute()
 
@@ -376,6 +425,9 @@ def _is_quote_document_subfolder_name(name: str) -> bool:
 
 
 def _resolve_quote_client_folder(service, row: dict[str, str], rfc: str) -> dict[str, str]:
+    linked_folder = _linked_quote_client_folder(service, rfc)
+    if linked_folder:
+        return linked_folder
     for link in (row["cotizaciones"], row["documentos_adicionales"]):
         folder_id = _folder_id_from_link(link)
         if not folder_id:
