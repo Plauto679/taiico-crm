@@ -349,16 +349,27 @@ def _company_filter(query, company: str):
     return query if company == "CONSOLIDADO" else query.filter(FinanceMovement.company == company)
 
 
-def overview(company: str = "CONSOLIDADO") -> dict[str, object]:
+def _movement_scope(query, company: str = "CONSOLIDADO", bank: str = "", start_date: date | None = None, end_date: date | None = None):
+    query = _company_filter(query, company)
+    if bank:
+        query = query.filter(FinanceMovement.bank == bank)
+    if start_date:
+        query = query.filter(FinanceMovement.operation_date >= start_date)
+    if end_date:
+        query = query.filter(FinanceMovement.operation_date <= end_date)
+    return query
+
+
+def overview(company: str = "CONSOLIDADO", bank: str = "", start_date: date | None = None, end_date: date | None = None) -> dict[str, object]:
     db = SessionLocal()
     try:
-        query = _company_filter(db.query(FinanceMovement), company)
+        query = _movement_scope(db.query(FinanceMovement), company, bank, start_date, end_date)
         movements = query.all()
         today = date.today()
         month_start = today.replace(day=1)
-        monthly = [row for row in movements if row.operation_date >= month_start]
-        entries = sum((row.net_amount for row in monthly if row.net_amount > 0), Decimal("0"))
-        exits = sum((-row.net_amount for row in monthly if row.net_amount < 0), Decimal("0"))
+        period_movements = movements if start_date or end_date else [row for row in movements if row.operation_date >= month_start]
+        entries = sum((row.net_amount for row in period_movements if row.net_amount > 0), Decimal("0"))
+        exits = sum((-row.net_amount for row in period_movements if row.net_amount < 0), Decimal("0"))
         latest_by_account: dict[tuple[str, str, str], FinanceMovement] = {}
         for row in movements:
             key = (row.company, row.bank, row.account or row.source_key)
@@ -368,12 +379,17 @@ def overview(company: str = "CONSOLIDADO") -> dict[str, object]:
         credit_liability = sum((abs(row.balance or Decimal("0")) for row in latest_by_account.values() if "credito" in _normalized(row.account_nature)), Decimal("0"))
         unclassified = sum(not (row.category_override or row.source_category) for row in movements)
         invoice_gaps = sum(row.requires_invoice and not row.invoice_uuid for row in movements)
-        tax_total = sum((-row.net_amount for row in monthly if row.tax and row.net_amount < 0), Decimal("0"))
-        recurring_pending = sum(1 for item in recurring_groups(db, company) if item["status"] == "pendiente")
+        tax_total = sum((-row.net_amount for row in period_movements if row.tax and row.net_amount < 0), Decimal("0"))
+        recurring_pending = sum(1 for item in recurring_groups(db, company, bank, start_date, end_date) if item["status"] == "pendiente")
         projections = db.query(FinanceProjection).filter(FinanceProjection.status == "activa", FinanceProjection.due_date >= today)
         if company != "CONSOLIDADO": projections = projections.filter(FinanceProjection.company == company)
         projected = sum((row.amount for row in projections.all()), Decimal("0"))
-        sources = db.query(FinanceSourceState).order_by(FinanceSourceState.company, FinanceSourceState.bank).all()
+        source_query = db.query(FinanceSourceState)
+        if company != "CONSOLIDADO":
+            source_query = source_query.filter(FinanceSourceState.company == company)
+        if bank:
+            source_query = source_query.filter(FinanceSourceState.bank == bank)
+        sources = source_query.order_by(FinanceSourceState.company, FinanceSourceState.bank).all()
         return {
             "company": company,
             "as_of": datetime.utcnow().isoformat(),
@@ -409,8 +425,8 @@ def _recurring_fingerprint(row: FinanceMovement) -> str:
     return hashlib.sha256(seed.encode()).hexdigest()
 
 
-def recurring_groups(db, company: str = "CONSOLIDADO") -> list[dict[str, object]]:
-    query = _company_filter(db.query(FinanceMovement), company)
+def recurring_groups(db, company: str = "CONSOLIDADO", bank: str = "", start_date: date | None = None, end_date: date | None = None) -> list[dict[str, object]]:
+    query = _movement_scope(db.query(FinanceMovement), company, bank, start_date, end_date)
     groups: dict[str, list[FinanceMovement]] = defaultdict(list)
     for row in query.order_by(FinanceMovement.operation_date).all():
         groups[_recurring_fingerprint(row)].append(row)
@@ -527,22 +543,19 @@ def synchronize_sources(force: bool = False, _profile=Depends(require_module_acc
 
 
 @router.get("/overview")
-def get_overview(company: str = Query(default="CONSOLIDADO", pattern="^(CONSOLIDADO|TLA|TS)$")):
-    return overview(company)
+def get_overview(company: str = Query(default="CONSOLIDADO", pattern="^(CONSOLIDADO|TLA|TS)$"), bank: str = "", start_date: date | None = None, end_date: date | None = None):
+    return overview(company, bank, start_date, end_date)
 
 
 @router.get("/movements")
-def list_movements(company: str = "CONSOLIDADO", search: str = "", category: str = "", bank: str = "", start_date: date | None = None, end_date: date | None = None, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=500), sort: str = "operation_date", direction: str = "desc"):
+def list_movements(company: str = "CONSOLIDADO", search: str = "", category: str = "", bank: str = "", start_date: date | None = None, end_date: date | None = None, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=5000), sort: str = "operation_date", direction: str = "desc"):
     db = SessionLocal()
     try:
-        query = _company_filter(db.query(FinanceMovement), company)
+        query = _movement_scope(db.query(FinanceMovement), company, bank, start_date, end_date)
         if search:
             pattern = f"%{search.strip()}%"
             query = query.filter(or_(FinanceMovement.original_description.ilike(pattern), FinanceMovement.counterparty.ilike(pattern), FinanceMovement.reference.ilike(pattern), FinanceMovement.external_id.ilike(pattern)))
         if category: query = query.filter(or_(FinanceMovement.category_override == category, (FinanceMovement.category_override.is_(None)) & (FinanceMovement.source_category == category)))
-        if bank: query = query.filter(FinanceMovement.bank == bank)
-        if start_date: query = query.filter(FinanceMovement.operation_date >= start_date)
-        if end_date: query = query.filter(FinanceMovement.operation_date <= end_date)
         total = query.count()
         allowed_sort = {"operation_date": FinanceMovement.operation_date, "net_amount": FinanceMovement.net_amount, "bank": FinanceMovement.bank, "company": FinanceMovement.company}
         order = allowed_sort.get(sort, FinanceMovement.operation_date)
@@ -553,10 +566,10 @@ def list_movements(company: str = "CONSOLIDADO", search: str = "", category: str
 
 
 @router.get("/movements/export")
-def export_movements(company: str = "CONSOLIDADO", search: str = ""):
+def export_movements(company: str = "CONSOLIDADO", search: str = "", bank: str = "", start_date: date | None = None, end_date: date | None = None):
     db = SessionLocal()
     try:
-        query = _company_filter(db.query(FinanceMovement), company)
+        query = _movement_scope(db.query(FinanceMovement), company, bank, start_date, end_date)
         if search:
             pattern = f"%{search.strip()}%"
             query = query.filter(or_(FinanceMovement.original_description.ilike(pattern), FinanceMovement.counterparty.ilike(pattern), FinanceMovement.reference.ilike(pattern)))
@@ -598,9 +611,9 @@ def bulk_classify(payload: BulkClassification, profile: AccessProfile = Depends(
 
 
 @router.get("/recurring")
-def list_recurring(company: str = "CONSOLIDADO"):
+def list_recurring(company: str = "CONSOLIDADO", bank: str = "", start_date: date | None = None, end_date: date | None = None):
     db = SessionLocal()
-    try: return {"items": recurring_groups(db, company)}
+    try: return {"items": recurring_groups(db, company, bank, start_date, end_date)}
     finally: db.close()
 
 

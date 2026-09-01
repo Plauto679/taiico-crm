@@ -93,6 +93,26 @@ class FinanceModuleTests(unittest.TestCase):
         self.assertEqual(db.query(FinanceMovement).count(), 0)
         db.close()
 
+    def test_overview_and_movements_honor_bank_and_date_scope(self):
+        self.source.write_bytes(canonical_csv(
+            {"id_movimiento": "amex-aug", "banco": "AMEX", "fecha_operacion": "2026-08-01", "importe_neto": "100.00", "cargo": "0", "abono": "100.00"},
+            {"id_movimiento": "bbva-aug", "banco": "BBVA", "fecha_operacion": "2026-08-15", "importe_neto": "200.00", "cargo": "0", "abono": "200.00"},
+            {"id_movimiento": "amex-sep", "banco": "AMEX", "fecha_operacion": "2026-09-01", "importe_neto": "300.00", "cargo": "0", "abono": "300.00"},
+        ))
+        finanzas.sync_source("tla_amex")
+
+        result = finanzas.overview("TLA", "AMEX", date(2026, 8, 1), date(2026, 8, 31))
+        self.assertEqual(result["monthly"], [{"month": "2026-08", "entries": 100.0, "exits": 0.0, "net": 100.0}])
+        self.assertEqual(result["kpis"]["entries_month"], 100.0)
+
+        movements = finanzas.list_movements(
+            company="TLA", search="", category="", bank="AMEX",
+            start_date=date(2026, 8, 1), end_date=date(2026, 8, 31),
+            page=1, page_size=5000, sort="operation_date", direction="desc",
+        )
+        self.assertEqual(movements["total"], 1)
+        self.assertEqual(movements["items"][0]["id_movimiento"], "amex-aug")
+
     def test_xml_invoice_extracts_cfdi_fields_without_claiming_validation(self):
         xml = b'''<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" Fecha="2026-08-01T10:00:00" Total="116.00" Moneda="MXN"><cfdi:Emisor Rfc="AAA010101AAA"/><cfdi:Receptor Rfc="BBB010101BBB"/><cfdi:Complemento><tfd:TimbreFiscalDigital xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" UUID="ABC-123"/></cfdi:Complemento></cfdi:Comprobante>'''
         path = Path(self.temp.name) / "factura.xml"; path.write_bytes(xml)

@@ -3,8 +3,9 @@
 import { useMemo, useState } from 'react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { AlertTriangle, Check, FileSearch, Landmark, Loader2, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
+import { DataTable } from '@/components/ui/DataTable';
 import {
-  Budget, Company, FinanceInvoice, FinanceMovement, FinanceOverview, Projection, RecurringGroup, Rule,
+  Budget, Company, FinanceFilters, FinanceInvoice, FinanceMovement, FinanceOverview, Projection, RecurringGroup, Rule,
   applyRule, cancelProjection, createProjection, createRule, decideRecurring, deleteRule,
   exportMovements, getBudgets, getCashFlow, getFinanceOverview, getInvoiceSuggestions, getInvoices, getMovements, getRecurring, getRules,
   matchInvoice, previewIngestion, previewRule, publishIngestion, revertRule, scanInvoices, syncSources, updateMovement, upsertBudget,
@@ -31,6 +32,9 @@ function Kpi({ label, value, tone = 'slate' }: { label: string; value: string; t
 export function FinanceView({ initialOverview }: { initialOverview: FinanceOverview }) {
   const [tab, setTab] = useState<Tab>('Resumen');
   const [company, setCompany] = useState<Company>('CONSOLIDADO');
+  const [bank, setBank] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [overview, setOverview] = useState(initialOverview);
   const [movements, setMovements] = useState<FinanceMovement[]>([]);
   const [movementTotal, setMovementTotal] = useState(0);
@@ -45,12 +49,12 @@ export function FinanceView({ initialOverview }: { initialOverview: FinanceOverv
   const [error, setError] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
 
-  async function load(activeTab = tab, activeCompany = company) {
+  async function load(activeTab = tab, activeCompany = company, filters: FinanceFilters = { bank, startDate, endDate }) {
     setLoading(true); setError('');
     try {
-      if (activeTab === 'Resumen') setOverview(await getFinanceOverview(activeCompany));
-      if (activeTab === 'Movimientos') { const response = await getMovements(activeCompany, search); setMovements(response.items); setMovementTotal(response.total); }
-      if (activeTab === 'Recurrentes') setRecurring((await getRecurring(activeCompany)).items);
+      if (activeTab === 'Resumen') setOverview(await getFinanceOverview(activeCompany, filters));
+      if (activeTab === 'Movimientos') { const response = await getMovements(activeCompany, search, filters); setMovements(response.items); setMovementTotal(response.total); }
+      if (activeTab === 'Recurrentes') setRecurring((await getRecurring(activeCompany, filters)).items);
       if (activeTab === 'Facturas') { const response = await getInvoices(); setInvoices(response.items); setInvoiceFolder(response.folder_available); }
       if (activeTab === 'Flujo y presupuesto') { const [flow, budget] = await Promise.all([getCashFlow(activeCompany), getBudgets(activeCompany)]); setProjections(flow.items); setBudgets(budget.items); }
       if (activeTab === 'Clasificación') setRules((await getRules()).items);
@@ -59,9 +63,11 @@ export function FinanceView({ initialOverview }: { initialOverview: FinanceOverv
   }
 
   function chooseTab(value: Tab) { setTab(value); void load(value, company); }
-  function chooseCompany(value: Company) { setCompany(value); void load(tab, value); }
+  function chooseCompany(value: Company) { setCompany(value); void load(tab, value, { bank, startDate, endDate }); }
+  function applyScope() { void load(tab, company, { bank, startDate, endDate }); }
+  function resetScope() { setBank(''); setStartDate(''); setEndDate(''); void load(tab, company, {}); }
 
-  return <div className="flex h-full min-h-0 flex-col gap-4 text-slate-900">
+  return <div className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col gap-4 overflow-hidden px-3 py-4 text-slate-900 sm:px-5 md:py-6">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h1 className="flex items-center gap-2 text-2xl font-bold text-white"><Landmark className="h-6 w-6" />Finanzas</h1><p className="text-sm text-blue-100">Salud financiera, conciliación y planeación con trazabilidad a la fuente.</p></div>
       <div className="flex gap-2">
@@ -73,11 +79,17 @@ export function FinanceView({ initialOverview }: { initialOverview: FinanceOverv
       <div className="flex max-w-full gap-1 overflow-x-auto">{TABS.map((item) => <button key={item} onClick={() => chooseTab(item)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-semibold ${tab === item ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>{item}</button>)}</div>
       <div className="flex rounded-lg bg-slate-100 p-1">{(['CONSOLIDADO', 'TLA', 'TS'] as Company[]).map((item) => <button key={item} onClick={() => chooseCompany(item)} className={`rounded-md px-3 py-1.5 text-xs font-bold ${company === item ? 'bg-white text-emerald-700 shadow' : 'text-slate-500'}`}>{item === 'CONSOLIDADO' ? 'Consolidado' : item}</button>)}</div>
     </div>
+    {(tab === 'Resumen' || tab === 'Movimientos' || tab === 'Recurrentes') && <div className="grid gap-3 rounded-xl bg-white p-3 shadow sm:grid-cols-2 lg:grid-cols-[minmax(150px,1fr),minmax(150px,1fr),minmax(160px,1fr),auto] lg:items-end">
+      <label className="text-xs font-semibold text-slate-600">Fecha inicial<input type="date" value={startDate} max={endDate || undefined} onChange={(event) => setStartDate(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900" /></label>
+      <label className="text-xs font-semibold text-slate-600">Fecha final<input type="date" value={endDate} min={startDate || undefined} onChange={(event) => setEndDate(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900" /></label>
+      <label className="text-xs font-semibold text-slate-600">Banco<select value={bank} onChange={(event) => setBank(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"><option value="">Todos los bancos</option><option value="AMEX">AMEX</option><option value="BBVA">BBVA</option><option value="BANORTE">Banorte</option></select></label>
+      <div className="flex gap-2 sm:col-span-2 lg:col-span-1"><button onClick={applyScope} disabled={!!startDate && !!endDate && startDate > endDate} className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">Aplicar</button><button onClick={resetScope} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600">Restablecer</button></div>
+    </div>}
     <ErrorMessage text={error} />
     <div className="min-h-0 flex-1 overflow-auto rounded-2xl bg-white/95 p-4 shadow-xl md:p-6">
       {loading && <div className="mb-3 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Actualizando información…</div>}
-      {tab === 'Resumen' && <Summary overview={overview} onSync={async () => { setLoading(true); try { await syncSources(); await load('Resumen', company); } catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo sincronizar'); } finally { setLoading(false); } }} />}
-      {tab === 'Movimientos' && <Movements items={movements} total={movementTotal} company={company} search={search} setSearch={setSearch} onSearch={() => load('Movimientos')} onSaved={(saved) => setMovements((current) => current.map((item) => item.id === saved.id ? saved : item))} />}
+      {tab === 'Resumen' && <Summary overview={overview} scopedPeriod={!!startDate || !!endDate} onSync={async () => { setLoading(true); try { await syncSources(); await load('Resumen', company); } catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo sincronizar'); } finally { setLoading(false); } }} />}
+      {tab === 'Movimientos' && <Movements items={movements} total={movementTotal} company={company} filters={{ bank, startDate, endDate }} search={search} setSearch={setSearch} onSearch={() => load('Movimientos')} onSaved={(saved) => setMovements((current) => current.map((item) => item.id === saved.id ? saved : item))} />}
       {tab === 'Recurrentes' && <Recurring items={recurring} onDecide={async (fingerprint, status) => { await decideRecurring(fingerprint, status); await load('Recurrentes'); }} />}
       {tab === 'Facturas' && <Invoices items={invoices} folderAvailable={invoiceFolder} onScan={async () => { const result = await scanInvoices(); if (result.message) setError(result.message); await load('Facturas'); }} onRefresh={() => load('Facturas')} />}
       {tab === 'Flujo y presupuesto' && <CashFlow items={projections} budgets={budgets} company={company} onRefresh={() => load('Flujo y presupuesto')} />}
@@ -87,24 +99,35 @@ export function FinanceView({ initialOverview }: { initialOverview: FinanceOverv
   </div>;
 }
 
-function Summary({ overview, onSync }: { overview: FinanceOverview; onSync: () => Promise<void> }) {
+function Summary({ overview, scopedPeriod, onSync }: { overview: FinanceOverview; scopedPeriod: boolean; onSync: () => Promise<void> }) {
   const k = overview.kpis;
+  const periodLabel = scopedPeriod ? 'del periodo' : 'del mes';
   return <div className="space-y-6">
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-      <Kpi label="Efectivo activo" value={money.format(k.active_cash)} tone="green" /><Kpi label="Pasivo tarjetas" value={money.format(k.credit_liability)} tone="red" /><Kpi label="Flujo neto del mes" value={money.format(k.net_flow_month)} tone={k.net_flow_month >= 0 ? 'green' : 'red'} /><Kpi label="Sin clasificar" value={String(k.unclassified)} tone={k.unclassified ? 'amber' : 'green'} /><Kpi label="Facturas pendientes" value={String(k.invoice_gaps)} tone={k.invoice_gaps ? 'amber' : 'green'} />
+      <Kpi label="Efectivo activo" value={money.format(k.active_cash)} tone="green" /><Kpi label="Pasivo tarjetas" value={money.format(k.credit_liability)} tone="red" /><Kpi label={`Flujo neto ${periodLabel}`} value={money.format(k.net_flow_month)} tone={k.net_flow_month >= 0 ? 'green' : 'red'} /><Kpi label="Sin clasificar" value={String(k.unclassified)} tone={k.unclassified ? 'amber' : 'green'} /><Kpi label="Facturas pendientes" value={String(k.invoice_gaps)} tone={k.invoice_gaps ? 'amber' : 'green'} />
     </div>
     <div className="grid gap-4 xl:grid-cols-[2fr,1fr]">
       <section className="rounded-xl border border-slate-200 p-4"><h2 className="font-bold">Entradas y salidas</h2>{overview.monthly.length ? <div className="mt-4 h-72"><ResponsiveContainer width="100%" height="100%"><AreaChart data={overview.monthly}><defs><linearGradient id="income" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#059669" stopOpacity={.35}/><stop offset="95%" stopColor="#059669" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="month" /><YAxis /><Tooltip formatter={(value) => money.format(Number(value))} /><Area type="monotone" dataKey="entries" name="Entradas" stroke="#059669" fill="url(#income)" /><Area type="monotone" dataKey="exits" name="Salidas" stroke="#dc2626" fill="#fecaca" /></AreaChart></ResponsiveContainer></div> : <Empty>Sin movimientos indexados para graficar.</Empty>}</section>
       <section className="rounded-xl border border-slate-200 p-4"><div className="flex items-center justify-between"><h2 className="font-bold">Fuentes</h2><button onClick={onSync} className="text-xs font-bold text-emerald-700 hover:underline">Sincronizar</button></div><div className="mt-3 space-y-2">{overview.sources.length ? overview.sources.map((source) => <div key={source.key} className="rounded-lg bg-slate-50 p-3"><div className="flex items-center justify-between"><span className="font-semibold">{source.company} · {source.bank}</span><span className={`h-2.5 w-2.5 rounded-full ${source.available ? 'bg-emerald-500' : 'bg-amber-500'}`} /></div><p className="mt-1 text-xs text-slate-500">{source.available ? `${source.row_count} movimientos · ${source.last_synced_at ? dateFormat.format(new Date(source.last_synced_at)) : 'pendiente de sincronizar'}` : source.error || 'Fuente no disponible'}</p></div>) : <p className="text-sm text-slate-500">Pulsa Sincronizar para registrar el estado de las fuentes.</p>}</div></section>
     </div>
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Kpi label="Entradas del mes" value={money.format(k.entries_month)} /><Kpi label="Salidas del mes" value={money.format(k.exits_month)} /><Kpi label="Impuestos del mes" value={money.format(k.tax_month)} /><Kpi label="Compromisos futuros" value={money.format(k.future_commitments)} /></div>
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Kpi label={`Entradas ${periodLabel}`} value={money.format(k.entries_month)} /><Kpi label={`Salidas ${periodLabel}`} value={money.format(k.exits_month)} /><Kpi label={`Impuestos ${periodLabel}`} value={money.format(k.tax_month)} /><Kpi label="Compromisos futuros" value={money.format(k.future_commitments)} /></div>
   </div>;
 }
 
-function Movements({ items, total, company, search, setSearch, onSearch, onSaved }: { items: FinanceMovement[]; total: number; company: Company; search: string; setSearch: (value: string) => void; onSearch: () => void; onSaved: (item: FinanceMovement) => void }) {
+function Movements({ items, total, company, filters, search, setSearch, onSearch, onSaved }: { items: FinanceMovement[]; total: number; company: Company; filters: FinanceFilters; search: string; setSearch: (value: string) => void; onSearch: () => void; onSaved: (item: FinanceMovement) => void }) {
   const [editing, setEditing] = useState<FinanceMovement | null>(null);
-  return <div className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex w-full max-w-xl"><input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && onSearch()} placeholder="Buscar descripción, contraparte, referencia o ID" className="min-w-0 flex-1 rounded-l-lg border border-slate-300 px-3 py-2 text-sm" /><button onClick={onSearch} className="rounded-r-lg bg-slate-900 px-3 text-white"><Search className="h-4 w-4" /></button></div><div className="flex items-center gap-3"><span className="text-sm text-slate-500">{total.toLocaleString('es-MX')} movimientos</span><button onClick={() => exportMovements(company, search)} className="rounded-lg border px-3 py-2 text-xs font-bold">Exportar vista</button></div></div>
-    {items.length ? <div className="overflow-x-auto rounded-xl border"><table className="min-w-[1100px] w-full text-sm"><thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-3">Fecha</th><th>Empresa/Banco</th><th>Descripción</th><th>Categoría</th><th className="text-right">Importe</th><th>Factura</th><th>Fuente</th></tr></thead><tbody className="divide-y">{items.map((item) => <tr key={item.id} onClick={() => setEditing(item)} className="cursor-pointer hover:bg-emerald-50"><td className="px-3 py-3">{dateFormat.format(new Date(`${item.fecha_operacion}T12:00:00`))}</td><td>{item.empresa} · {item.banco}</td><td className="max-w-sm"><p className="truncate font-medium">{item.descripcion_original}</p><p className="truncate text-xs text-slate-500">{item.contraparte || item.referencia}</p></td><td>{item.categoria || <span className="text-amber-700">Sin clasificar</span>}</td><td className={`text-right font-semibold ${item.importe_neto < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{money.format(item.importe_neto)}</td><td>{item.factura_uuid ? <Check className="h-4 w-4 text-emerald-600" /> : item.requiere_factura ? <AlertTriangle className="h-4 w-4 text-amber-500" /> : '—'}</td><td className="text-xs text-slate-500">{item.archivo_fuente || '—'}{item.pagina_fuente ? ` · p.${item.pagina_fuente}` : ''}</td></tr>)}</tbody></table></div> : <Empty>No hay movimientos. Sincroniza las fuentes o revisa los filtros.</Empty>}
+  const columns = useMemo(() => [
+    { header: 'Fecha', accessorKey: 'fecha_operacion' as const, cell: (item: FinanceMovement) => dateFormat.format(new Date(`${item.fecha_operacion}T12:00:00`)) },
+    { header: 'Empresa', accessorKey: 'empresa' as const },
+    { header: 'Banco', accessorKey: 'banco' as const },
+    { header: 'Descripción', accessorKey: 'descripcion_original' as const, cell: (item: FinanceMovement) => <div className="max-w-sm"><p className="truncate font-medium">{item.descripcion_original}</p><p className="truncate text-xs text-slate-500">{item.contraparte || item.referencia || '—'}</p></div> },
+    { header: 'Categoría', accessorKey: 'categoria' as const, cell: (item: FinanceMovement) => item.categoria || <span className="text-amber-700">Sin clasificar</span> },
+    { header: 'Importe', accessorKey: 'importe_neto' as const, cell: (item: FinanceMovement) => <span className={`font-semibold ${item.importe_neto < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{money.format(item.importe_neto)}</span> },
+    { header: 'Factura', accessorKey: (item: FinanceMovement) => item.factura_uuid ? 'Conciliada' : item.requiere_factura ? 'Pendiente' : '', filterValue: (item: FinanceMovement) => item.factura_uuid ? 'Conciliada' : item.requiere_factura ? 'Pendiente' : '', cell: (item: FinanceMovement) => item.factura_uuid ? <Check className="h-4 w-4 text-emerald-600" /> : item.requiere_factura ? <AlertTriangle className="h-4 w-4 text-amber-500" /> : '—' },
+    { header: 'Fuente', accessorKey: 'archivo_fuente' as const, cell: (item: FinanceMovement) => <span className="text-xs text-slate-500">{item.archivo_fuente || '—'}{item.pagina_fuente ? ` · p.${item.pagina_fuente}` : ''}</span> },
+  ], []);
+  return <div className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex w-full max-w-xl"><input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && onSearch()} placeholder="Buscar descripción, contraparte, referencia o ID" className="min-w-0 flex-1 rounded-l-lg border border-slate-300 px-3 py-2 text-sm" /><button onClick={onSearch} className="rounded-r-lg bg-slate-900 px-3 text-white"><Search className="h-4 w-4" /></button></div><div className="flex items-center gap-3"><span className="text-sm text-slate-500">{total.toLocaleString('es-MX')} movimientos</span><button onClick={() => exportMovements(company, search, filters)} className="rounded-lg border px-3 py-2 text-xs font-bold">Exportar vista</button></div></div>
+    {items.length ? <DataTable data={items} columns={columns} filterMode="multi-select" onRowClick={setEditing} className="max-h-[calc(100dvh-25rem)] overflow-auto rounded-xl" /> : <Empty>No hay movimientos. Sincroniza las fuentes o revisa los filtros.</Empty>}
     {editing && <MovementEditor item={editing} onClose={() => setEditing(null)} onSave={async (payload) => { const response = await updateMovement(editing.id, payload); onSaved(response.movement); setEditing(null); }} />}
   </div>;
 }
@@ -120,6 +143,15 @@ function Recurring({ items, onDecide }: { items: RecurringGroup[]; onDecide: (fi
 
 function Invoices({ items, folderAvailable, onScan, onRefresh }: { items: FinanceInvoice[]; folderAvailable: boolean; onScan: () => Promise<void>; onRefresh: () => Promise<void> }) {
   const [suggestions, setSuggestions] = useState<{ invoice: FinanceInvoice; items: Array<{ movement: FinanceMovement; confidence: number; rationale: string }> } | null>(null);
+  const columns = useMemo(() => [
+    { header: 'Archivo', accessorKey: 'filename' as const, cell: (item: FinanceInvoice) => <div><p className="font-medium">{item.filename}</p>{item.parse_error && <p className="max-w-sm whitespace-normal text-xs text-amber-700">{item.parse_error}</p>}</div> },
+    { header: 'UUID', accessorKey: 'uuid' as const, cell: (item: FinanceInvoice) => <span className="font-mono text-xs">{item.uuid || '—'}</span> },
+    { header: 'Emisor', accessorKey: 'issuer_rfc' as const },
+    { header: 'Receptor', accessorKey: 'receiver_rfc' as const },
+    { header: 'Total', accessorKey: 'total' as const, cell: (item: FinanceInvoice) => item.total == null ? '—' : money.format(item.total) },
+    { header: 'Estatus', accessorKey: 'status' as const, cell: (item: FinanceInvoice) => <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold">{item.status}</span> },
+    { header: 'Acción', accessorKey: (item: FinanceInvoice) => item.status, enableFiltering: false, cell: (item: FinanceInvoice) => <button disabled={!item.total || !item.issued_at || item.status === 'conciliada'} onClick={() => suggest(item)} className="rounded-lg border px-3 py-1.5 text-xs font-bold disabled:opacity-40">Sugerir</button> },
+  ], []);
   async function suggest(invoice: FinanceInvoice) {
     const response = await getInvoiceSuggestions(invoice.id);
     setSuggestions({ invoice, items: response.items });
@@ -127,15 +159,23 @@ function Invoices({ items, folderAvailable, onScan, onRefresh }: { items: Financ
   return <div className="space-y-4">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-bold">Facturas y conciliación</h2><p className="text-sm text-slate-500">El XML aporta datos CFDI; un PDF solo se conserva como evidencia y no acredita validez fiscal.</p></div><button onClick={onScan} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white"><FileSearch className="h-4 w-4" />Indexar carpeta</button></div>
     {!folderAvailable && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">La carpeta configurada de facturas no está montada en este servidor.</div>}
-    {items.length ? <div className="overflow-x-auto rounded-xl border"><table className="min-w-[950px] w-full text-sm"><thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-3">Archivo</th><th>UUID</th><th>Emisor → receptor</th><th>Total</th><th>Estatus</th><th /></tr></thead><tbody className="divide-y">{items.map((item) => <tr key={item.id}><td className="px-3 py-3"><p className="font-medium">{item.filename}</p>{item.parse_error && <p className="max-w-sm text-xs text-amber-700">{item.parse_error}</p>}</td><td className="font-mono text-xs">{item.uuid || '—'}</td><td>{item.issuer_rfc || '—'} → {item.receiver_rfc || '—'}</td><td>{item.total == null ? '—' : money.format(item.total)}</td><td><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold">{item.status}</span></td><td><button disabled={!item.total || !item.issued_at || item.status === 'conciliada'} onClick={() => suggest(item)} className="rounded-lg border px-3 py-1.5 text-xs font-bold disabled:opacity-40">Sugerir</button></td></tr>)}</tbody></table></div> : <Empty>No hay facturas indexadas.</Empty>}
+    {items.length ? <DataTable data={items} columns={columns} filterMode="multi-select" className="max-h-[calc(100dvh-25rem)] overflow-auto rounded-xl" /> : <Empty>No hay facturas indexadas.</Empty>}
     {suggestions && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4"><div className="max-h-[80vh] w-full max-w-2xl overflow-auto rounded-2xl bg-white p-6"><div className="flex justify-between"><div><h3 className="text-lg font-bold">Sugerencias de conciliación</h3><p className="text-sm text-slate-500">{suggestions.invoice.filename}</p></div><button onClick={() => setSuggestions(null)}><X /></button></div><div className="mt-4 space-y-2">{suggestions.items.length ? suggestions.items.map((item) => <div key={item.movement.id} className="flex items-center justify-between gap-3 rounded-xl border p-3"><div><p className="font-semibold">{item.movement.descripcion_original}</p><p className="text-xs text-slate-500">{item.movement.fecha_operacion} · {money.format(item.movement.importe_neto)} · {item.rationale}</p></div><button onClick={async () => { await matchInvoice(suggestions.invoice.id, item.movement.id); setSuggestions(null); await onRefresh(); }} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">Confirmar {item.confidence}%</button></div>) : <Empty>No hay candidatos con al menos 50% de confianza.</Empty>}</div></div></div>}
   </div>;
 }
 
 function CashFlow({ items, budgets, company, onRefresh }: { items: Projection[]; budgets: Budget[]; company: Company; onRefresh: () => Promise<void> }) {
   const [open, setOpen] = useState(false); const total = useMemo(() => items.reduce((sum, item) => sum + item.amount, 0), [items]);
+  const budgetColumns = useMemo(() => [
+    { header: 'Empresa', accessorKey: 'company' as const },
+    { header: 'Mes', accessorKey: 'month' as const },
+    { header: 'Categoría', accessorKey: 'category' as const },
+    { header: 'Presupuesto', accessorKey: 'budget' as const, cell: (item: Budget) => money.format(item.budget) },
+    { header: 'Real', accessorKey: 'actual' as const, cell: (item: Budget) => money.format(item.actual) },
+    { header: 'Variación', accessorKey: 'variance' as const, cell: (item: Budget) => <span className={`font-semibold ${item.variance < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{money.format(item.variance)}</span> },
+  ], []);
   return <div className="space-y-5"><div className="flex items-start justify-between"><div><h2 className="text-lg font-bold">Flujo futuro y presupuesto</h2><p className="text-sm text-slate-500">Real histórico más compromisos futuros. Las proyecciones nunca se mezclan con movimientos bancarios reales.</p></div><button disabled={company === 'CONSOLIDADO'} onClick={() => setOpen(true)} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40"><Plus className="h-4 w-4" />Proyección</button></div><Kpi label="Compromisos proyectados" value={money.format(total)} tone={total < 0 ? 'amber' : 'green'} />{items.length ? <div className="space-y-2">{items.map((item) => <div key={item.id} className="flex items-center justify-between rounded-xl border p-4"><div><p className="font-semibold">{item.concept}</p><p className="text-xs text-slate-500">{item.company} · {dateFormat.format(new Date(`${item.due_date}T12:00:00`))} · escenario {item.scenario}</p></div><div className="flex items-center gap-3"><span className={`font-bold ${item.amount < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{money.format(item.amount)}</span><button onClick={async () => { await cancelProjection(item.id); await onRefresh(); }} title="Cancelar"><Trash2 className="h-4 w-4 text-slate-400" /></button></div></div>)}</div> : <Empty>No hay compromisos proyectados en los próximos 90 días.</Empty>}
-    <section><h3 className="mb-2 font-bold">Presupuesto mensual vs. real</h3>{budgets.length ? <div className="overflow-x-auto rounded-xl border"><table className="w-full text-sm"><thead className="bg-slate-50 text-left"><tr><th className="p-3">Empresa</th><th>Categoría</th><th className="text-right">Presupuesto</th><th className="text-right">Real</th><th className="pr-3 text-right">Variación</th></tr></thead><tbody className="divide-y">{budgets.map((item) => <tr key={item.id}><td className="p-3">{item.company}</td><td>{item.category}</td><td className="text-right">{money.format(item.budget)}</td><td className="text-right">{money.format(item.actual)}</td><td className={`pr-3 text-right font-semibold ${item.variance < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{money.format(item.variance)}</td></tr>)}</tbody></table></div> : <Empty>{company === 'CONSOLIDADO' ? 'Selecciona TLA o TS para capturar presupuesto.' : <BudgetQuickForm company={company} onCreated={onRefresh} />}</Empty>}</section>
+    <section><h3 className="mb-2 font-bold">Presupuesto mensual vs. real</h3>{budgets.length ? <DataTable data={budgets} columns={budgetColumns} filterMode="multi-select" className="rounded-xl" /> : <Empty>{company === 'CONSOLIDADO' ? 'Selecciona TLA o TS para capturar presupuesto.' : <BudgetQuickForm company={company} onCreated={onRefresh} />}</Empty>}</section>
     {open && <ProjectionModal company={company as 'TLA' | 'TS'} onClose={() => setOpen(false)} onCreated={async () => { setOpen(false); await onRefresh(); }} />}
   </div>;
 }

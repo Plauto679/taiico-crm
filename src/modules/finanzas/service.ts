@@ -1,6 +1,7 @@
 import { fetchFromApi } from '@/lib/api';
 
 export type Company = 'CONSOLIDADO' | 'TLA' | 'TS';
+export type FinanceFilters = { bank?: string; startDate?: string; endDate?: string };
 export type FinanceSource = { key: string; company: string; bank: string; available: boolean; row_count: number; last_modified_at: string | null; last_synced_at: string | null; error?: string | null };
 export type MonthlyPoint = { month: string; entries: number; exits: number; net: number };
 export type FinanceOverview = {
@@ -16,16 +17,25 @@ export type Projection = { id: string; company: string; due_date: string; concep
 export type Rule = { id: string; name: string; priority: number; field: string; operator: string; value: string; company?: string | null; category: string; subcategory?: string | null; enabled: boolean; exclusion: boolean; updated_at: string };
 export type Budget = { id: string; company: string; month: string; category: string; budget: number; actual: number; variance: number };
 
-export const getFinanceOverview = (company: Company = 'CONSOLIDADO') => fetchFromApi<FinanceOverview>(`/finanzas/overview?company=${company}`);
-export const getMovements = (company: Company, search = '', page = 1) => fetchFromApi<MovementResponse>(`/finanzas/movements?company=${company}&search=${encodeURIComponent(search)}&page=${page}&page_size=50`);
+function financeQuery(company: Company, filters: FinanceFilters = {}, extra: Record<string, string | number> = {}) {
+  const params = new URLSearchParams({ company });
+  if (filters.bank) params.set('bank', filters.bank);
+  if (filters.startDate) params.set('start_date', filters.startDate);
+  if (filters.endDate) params.set('end_date', filters.endDate);
+  Object.entries(extra).forEach(([key, value]) => params.set(key, String(value)));
+  return params.toString();
+}
+
+export const getFinanceOverview = (company: Company = 'CONSOLIDADO', filters: FinanceFilters = {}) => fetchFromApi<FinanceOverview>(`/finanzas/overview?${financeQuery(company, filters)}`);
+export const getMovements = (company: Company, search = '', filters: FinanceFilters = {}) => fetchFromApi<MovementResponse>(`/finanzas/movements?${financeQuery(company, filters, { search, page: 1, page_size: 5000 })}`);
 export const updateMovement = (id: string, payload: Record<string, unknown>) => fetchFromApi<{ movement: FinanceMovement }>(`/finanzas/movements/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-export async function exportMovements(company: Company, search = '') {
-  const response = await fetch(`/api/finanzas/movements/export?company=${company}&search=${encodeURIComponent(search)}`, { credentials: 'same-origin' });
+export async function exportMovements(company: Company, search = '', filters: FinanceFilters = {}) {
+  const response = await fetch(`/api/finanzas/movements/export?${financeQuery(company, filters, { search })}`, { credentials: 'same-origin' });
   if (!response.ok) throw new Error('No se pudo exportar la vista filtrada');
   const blob = await response.blob(); const url = URL.createObjectURL(blob); const anchor = document.createElement('a');
   anchor.href = url; anchor.download = `movimientos-${company.toLowerCase()}.csv`; anchor.click(); URL.revokeObjectURL(url);
 }
-export const getRecurring = (company: Company) => fetchFromApi<{ items: RecurringGroup[] }>(`/finanzas/recurring?company=${company}`);
+export const getRecurring = (company: Company, filters: FinanceFilters = {}) => fetchFromApi<{ items: RecurringGroup[] }>(`/finanzas/recurring?${financeQuery(company, filters)}`);
 export const decideRecurring = (fingerprint: string, status: string) => fetchFromApi(`/finanzas/recurring/${fingerprint}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
 export const getInvoices = () => fetchFromApi<{ items: FinanceInvoice[]; folder_available: boolean }>('/finanzas/invoices');
 export const scanInvoices = () => fetchFromApi<{ available: boolean; indexed: number; errors: number; message?: string }>('/finanzas/invoices/scan', { method: 'POST' });

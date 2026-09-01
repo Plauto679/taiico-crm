@@ -75,7 +75,7 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
         setFilters(prev => ({ ...prev, [key]: value }));
     };
 
-    const filterOptions = useMemo(() => Object.fromEntries(columns.map((column) => {
+    const filterOptions = useMemo(() => Object.fromEntries(columns.filter((column) => column.enableFiltering !== false).map((column) => {
         const values = Array.from(new Set(data.map((row) => multiSelectValue(columnValue(column, row)))));
         values.sort((left, right) => {
             if (left === EMPTY_FILTER_VALUE) return -1;
@@ -153,7 +153,7 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
                 <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
                     <tr>
                         {columns.map((col, idx) => {
-                            const isSortable = typeof col.accessorKey !== 'function'; // Only sort direct keys for now
+                            const isSortable = col.enableSorting !== false && typeof col.accessorKey !== 'function'; // Only sort direct keys for now
                             const filterKey = columnKey(col);
 
                             return (
@@ -177,7 +177,7 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
                                                 </span>
                                             )}
                                         </div>
-                                        {filterMode === 'multi-select' ? (
+                                        {col.enableFiltering === false ? null : filterMode === 'multi-select' ? (
                                             <MultiSelectFilter
                                                 label={col.header}
                                                 options={filterOptions[filterKey] || []}
