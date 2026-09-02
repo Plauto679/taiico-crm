@@ -34,7 +34,12 @@ from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workboo
 from adapters.metlife_gmm_portal import MetLifeGmmPortalAdapter, MetLifeGmmPortalTask, result_to_dict, stable_chrome_profile_dir
 from services.automatic_mails import automation_config
 from services.mail_configuration import smtp_settings_for_email_address, smtp_ssl_context
-from services.metlife_agent_directory import normalize_agent_key, promotoria_by_agent_key
+from services.metlife_agent_directory import (
+    AgentContactResolutionError,
+    normalize_agent_key,
+    promotoria_by_agent_key,
+    resolve_agent_contact,
+)
 from services.session_auth import current_username
 from services.auth import AccessProfile
 from services.authorization import (
@@ -48,11 +53,13 @@ router = APIRouter(prefix="/renovaciones", tags=["renovaciones"])
 
 DEFAULT_RENEWAL_SENDER_ADDRESS = "clientes@taiico.com"
 MANUAL_RENEWAL_EMAIL_STATUS = "Enviada Manual"
+AGENT_RENEWAL_EMAIL_STATUS = "Enviado al agente"
 RENEWAL_STATUS_OPTIONS = {
     "Renovado Automático",
     "Renovada Manual",
     MANUAL_RENEWAL_EMAIL_STATUS,
     "Enviado Automáticamente",
+    AGENT_RENEWAL_EMAIL_STATUS,
     "Revision Manual Necesaria",
 }
 
@@ -674,6 +681,19 @@ def renewal_email_cc_recipients(primary_recipients: List[str]) -> List[str]:
     return result
 
 
+def renewal_agent_email_cc_recipients(primary_recipients: List[str]) -> List[str]:
+    primary = {email.strip().casefold() for email in primary_recipients if email.strip()}
+    configured = os.getenv(
+        "RENEWAL_AGENT_DELIVERY_CC_RECIPIENTS",
+        "alberto.alfaro@taiico.com",
+    )
+    return [
+        email.strip()
+        for email in configured.split(",")
+        if email.strip() and email.strip().casefold() not in primary
+    ]
+
+
 def send_email_smtp(
     subject: str,
     body: str,
@@ -756,6 +776,27 @@ def build_metlife_gmm_renewal_email_body(
         "- Documentos de la póliza.\n\n"
         f"Póliza de referencia: {policy_number}\n\n"
         "Saludos,\nTAIICO"
+    )
+
+
+def build_metlife_gmm_agent_email_body(
+    agent_name: str,
+    client_name: str,
+    client_email: str,
+    policy_number: str,
+    end_date: str,
+) -> str:
+    client_reference = client_email or "sin correo registrado"
+    greeting_name = agent_name or "Agente"
+    introduction = (
+        f"Buenos días {greeting_name}, tu cliente {client_name} con correo "
+        f"{client_reference} tiene su renovación hoy.\n\n"
+    )
+    return introduction + build_metlife_gmm_renewal_email_body(
+        client_name,
+        client_email,
+        policy_number,
+        end_date,
     )
 
 
@@ -1852,5 +1893,135 @@ async def send_renewal_email_endpoint(
         print(f"Error sending email: {e}")
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al enviar correo: {str(e)}")
+    finally:
+        db.close()
+
+
+@router.post("/send-agent-email")
+async def send_renewal_agent_email_endpoint(
+    insurer: str = Body(..., embed=True),
+    type: str = Body(..., embed=True),
+    policy_number: Union[str, int] = Body(..., embed=True),
+    client_name: str = Body(..., embed=True),
+    end_date: str = Body(..., embed=True),
+    expediente: Optional[str] = Body(None, embed=True),
+    username: str = Depends(current_username),
+    profile: AccessProfile = Depends(current_access_profile),
+):
+    del username
+    if insurer.casefold() != "metlife" or type.upper() != "GMM":
+        raise HTTPException(status_code=422, detail="El envío al agente solo está disponible para MetLife GMM")
+
+    db = SessionLocal()
+    renewal = None
+    try:
+        policy_str = str(policy_number).strip().split(".")[0]
+        policy = db.query(Policy).filter(Policy.policy_number == policy_str).first()
+        if not policy or not policy.client:
+            raise HTTPException(status_code=404, detail="Policy or client profile not found")
+        require_promotoria_access(profile, metlife_policy_promotoria(policy, "GMM"))
+
+        deadline = format_date(policy.effective_end_date) or end_date
+        agent_row = metlife_gmm_agents().get(
+            (policy_str, deadline),
+            metlife_gmm_agents().get((policy_str, ""), {}),
+        )
+        agent_code = str(agent_row.get("AGENTE") or "").strip()
+        try:
+            contact = resolve_agent_contact(agent_code)
+        except AgentContactResolutionError as exc:
+            renewal = db.query(Renewal).filter(Renewal.original_policy_id == policy.id).first()
+            if renewal is None:
+                renewal = Renewal(
+                    original_policy_id=policy.id,
+                    client_id=policy.client_id,
+                    renewal_deadline=policy.effective_end_date,
+                    status="in_progress",
+                )
+                db.add(renewal)
+            renewal.insurer_response = "Revision Manual Necesaria"
+            db.commit()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        agent_email = contact["email"]
+        recipients = renewal_email_recipients(agent_email)
+        if recipients != [agent_email]:
+            raise HTTPException(
+                status_code=409,
+                detail="La configuración de correo no está habilitada para el agente real",
+            )
+        cc_recipients = renewal_agent_email_cc_recipients(recipients)
+        client_email = str(policy.client.email or "").strip()
+        body = build_metlife_gmm_agent_email_body(
+            contact.get("name", "Agente"),
+            policy.client.full_name or client_name,
+            client_email,
+            policy_str,
+            end_date,
+        )
+        subject = f"Renovación Metlife GMM - {policy.client.full_name}"
+        attachments = []
+        if expediente:
+            exp_path = expediente.strip().strip("'").strip('"')
+            if os.path.exists(exp_path):
+                if os.path.isdir(exp_path):
+                    for filename in os.listdir(exp_path):
+                        file_path = os.path.join(exp_path, filename)
+                        if os.path.isfile(file_path) and not filename.startswith("."):
+                            with open(file_path, "rb") as file_handle:
+                                attachments.append(
+                                    {"name": filename, "content": file_handle.read()}
+                                )
+                elif os.path.isfile(exp_path):
+                    with open(exp_path, "rb") as file_handle:
+                        attachments.append(
+                            {
+                                "name": os.path.basename(exp_path),
+                                "content": file_handle.read(),
+                            }
+                        )
+            elif drive_file_id_from_url(exp_path):
+                attachments = drive_folder_attachments(exp_path)
+            elif exp_path.startswith("http"):
+                body += f"\n\nLink al expediente: {exp_path}"
+
+        send_email_smtp(
+            subject,
+            body,
+            recipients,
+            attachments,
+            cc_recipients=cc_recipients,
+            settings=renewal_smtp_settings(),
+        )
+        renewal = db.query(Renewal).filter(Renewal.original_policy_id == policy.id).first()
+        if renewal is None:
+            renewal = Renewal(
+                original_policy_id=policy.id,
+                client_id=policy.client_id,
+                renewal_deadline=policy.effective_end_date,
+                status="in_progress",
+            )
+            db.add(renewal)
+        renewal.insurer_response = AGENT_RENEWAL_EMAIL_STATUS
+        db.commit()
+        return {
+            "message": "Correo de renovación enviado al agente",
+            "agent_code": agent_code,
+            "agent_name": contact.get("name"),
+            "actual_recipients": recipients,
+            "cc_recipients": cc_recipients,
+            "attachment_count": len(attachments),
+        }
+    except HTTPException:
+        raise
+    except DriveAttachmentError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SmtpDeliveryUncertainError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al enviar correo al agente: {exc}") from exc
     finally:
         db.close()

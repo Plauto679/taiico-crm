@@ -208,7 +208,7 @@ def default_automations() -> dict[str, dict]:
             "description": "Ejecuta renovaciones y envía avisos internos de inicio y cierre.",
             "enabled": True,
             "cadence": "daily",
-            "hour": int(os.getenv("RENEWAL_AGENT_AUTOMATION_HOUR", "9")),
+            "hour": int(os.getenv("RENEWAL_AGENT_AUTOMATION_HOUR", "7")),
             "minute": 0,
             "timezone": os.getenv("RENEWAL_AGENT_AUTOMATION_TIMEZONE", DEFAULT_TIMEZONE),
             "day_of_week": None,

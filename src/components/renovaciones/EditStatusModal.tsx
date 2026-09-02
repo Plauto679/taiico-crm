@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, Mail } from 'lucide-react';
-import { sendRenewalEmail } from '@/modules/renovaciones/service';
+import { sendRenewalAgentEmail, sendRenewalEmail } from '@/modules/renovaciones/service';
 import { searchClient } from '@/modules/clientes/service';
 
 const RENEWAL_STATUS_OPTIONS = [
@@ -8,6 +8,7 @@ const RENEWAL_STATUS_OPTIONS = [
     'Renovada Manual',
     'Enviada Manual',
     'Enviado Automáticamente',
+    'Enviado al agente',
     'Revision Manual Necesaria',
 ] as const;
 
@@ -26,7 +27,12 @@ interface EditStatusModalProps {
     endDate: string;
 }
 
-export const EditStatusModal = ({
+export const EditStatusModal = (props: EditStatusModalProps) => {
+    if (!props.isOpen) return null;
+    return <EditStatusModalContent {...props} />;
+};
+
+const EditStatusModalContent = ({
     isOpen,
     onClose,
     onSave,
@@ -44,18 +50,10 @@ export const EditStatusModal = ({
     const [expediente, setExpediente] = useState<string>(currentExpediente || '');
     const [email, setEmail] = useState<string>(currentEmail || '');
     const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
-    const [isSending, setIsSending] = useState(false);
+    const [sendingTarget, setSendingTarget] = useState<'client' | 'agent' | null>(null);
     const [isSaving, setIsSaving] = useState(false);
 
     useEffect(() => {
-        setStatus(currentStatus || null);
-        setExpediente(currentExpediente || '');
-        setEmail(currentEmail || '');
-        setIsSending(false);
-        setIsSaving(false);
-        setRegisteredEmail(null);
-
-        // Fetch registered email if modal is open
         if (isOpen && clientName) {
             searchClient(clientName).then(res => {
                 if (res && res.email) {
@@ -63,18 +61,17 @@ export const EditStatusModal = ({
                 }
             }).catch(err => console.error("Error searching client:", err));
         }
-    }, [currentStatus, currentExpediente, currentEmail, isOpen, clientName]);
-
-    if (!isOpen) return null;
+    }, [isOpen, clientName]);
 
     const handleSave = async () => {
         setIsSaving(true);
         try {
             await onSave(status, expediente || null, email || null);
             onClose();
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('Failed to update renewal', error);
-            alert('Error al actualizar la póliza: ' + (error.message || 'Desconocido'));
+            const detail = error instanceof Error ? error.message : 'Desconocido';
+            alert('Error al actualizar la póliza: ' + detail);
         } finally {
             setIsSaving(false);
         }
@@ -101,7 +98,7 @@ export const EditStatusModal = ({
 
         if (!confirm(confirmMsg)) return;
 
-        setIsSending(true);
+        setSendingTarget('client');
         try {
             await sendRenewalEmail(
                 insurer,
@@ -114,13 +111,41 @@ export const EditStatusModal = ({
             await onEmailSent();
             alert('Correo enviado exitosamente.');
             onClose();
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('Failed to send email', error);
-            alert('Error al enviar correo: ' + (error.message || 'Desconocido'));
+            const detail = error instanceof Error ? error.message : 'Desconocido';
+            alert('Error al enviar correo: ' + detail);
         } finally {
-            setIsSending(false);
+            setSendingTarget(null);
         }
     };
+
+    const handleSendAgentEmail = async () => {
+        if (!confirm('¿Enviar esta renovación exclusivamente al agente de la póliza?')) return;
+        setSendingTarget('agent');
+        try {
+            const response = await sendRenewalAgentEmail(
+                insurer,
+                type,
+                policyNumber,
+                clientName,
+                endDate,
+                expediente
+            );
+            await onEmailSent();
+            alert(`Correo enviado a ${response.agent_name || 'el agente'} (${response.actual_recipients?.[0] || 'correo registrado'}).`);
+            onClose();
+        } catch (error: unknown) {
+            console.error('Failed to send renewal to agent', error);
+            const detail = error instanceof Error ? error.message : 'Desconocido';
+            alert('Error al enviar al agente: ' + detail);
+        } finally {
+            setSendingTarget(null);
+        }
+    };
+
+    const isSending = sendingTarget !== null;
+    const canSendToAgent = insurer.toLowerCase() === 'metlife' && type.toUpperCase() === 'GMM';
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-2 sm:p-4">
@@ -195,17 +220,29 @@ export const EditStatusModal = ({
                     </div>
                 </div>
 
-                <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
-                    <button
-                        onClick={handleSendEmail}
-                        disabled={isSending}
-                        className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
-                    >
-                        <Mail className="h-4 w-4 mr-2" />
-                        {isSending ? 'Enviando...' : 'Enviar Correo'}
-                    </button>
+                <div className="mt-6 flex flex-col gap-3">
+                    <div className="flex flex-wrap gap-3">
+                        <button
+                            onClick={handleSendEmail}
+                            disabled={isSending}
+                            className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
+                        >
+                            <Mail className="h-4 w-4 mr-2" />
+                            {sendingTarget === 'client' ? 'Enviando...' : 'Enviar al cliente'}
+                        </button>
+                        {canSendToAgent && (
+                            <button
+                                onClick={handleSendAgentEmail}
+                                disabled={isSending}
+                                className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                            >
+                                <Mail className="h-4 w-4 mr-2" />
+                                {sendingTarget === 'agent' ? 'Enviando...' : 'Enviar al agente'}
+                            </button>
+                        )}
+                    </div>
 
-                    <div className="grid grid-cols-2 gap-3 sm:flex sm:space-x-3">
+                    <div className="grid grid-cols-2 gap-3 sm:flex sm:justify-end sm:space-x-3">
                         <button
                             onClick={onClose}
                             disabled={isSending || isSaving}

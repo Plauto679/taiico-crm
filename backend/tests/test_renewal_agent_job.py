@@ -29,6 +29,131 @@ from jobs.run_renewal_agent import (
 
 
 class RenewalAgentJobTests(unittest.TestCase):
+    def test_external_agent_delivery_never_addresses_the_client(self):
+        from adapters.metlife_gmm_portal import MetLifeGmmPortalResult
+
+        task = SimpleNamespace(
+            id="task-agent",
+            policy_number="1454602",
+            original_policy_number="1454602",
+            rfc="BOFK941022ME5",
+            client_name="Cliente Ejemplo",
+            renewal_deadline=date(2026, 9, 10),
+            attempt_count=1,
+            normalized_payload={"agent_code": "70151"},
+            source_payload={},
+        )
+        with TemporaryDirectory() as folder:
+            Path(folder, "renovacion.pdf").write_bytes(b"pdf")
+            retrieval_result = MetLifeGmmPortalResult(
+                status="completed",
+                task_id=task.id,
+                policy_number=task.policy_number,
+                rfc=task.rfc,
+                steps=[],
+                extracted_folder_path=folder,
+                drive_folder_id="drive-folder",
+                drive_folder_link="https://drive.example/folder",
+            )
+            with patch.dict(
+                os.environ,
+                {"RENEWAL_EMAIL_INTERNAL_ONLY": "false"},
+                clear=False,
+            ), patch(
+                "jobs.run_renewal_agent.update_task_attempt",
+                return_value=task,
+            ), patch(
+                "jobs.run_renewal_agent.MetLifeGmmOldPortalAdapter",
+            ) as old_adapter, patch(
+                "jobs.run_renewal_agent.lookup_client_email",
+                return_value="cliente@example.com",
+            ), patch(
+                "jobs.run_renewal_agent.resolve_agent_contact",
+                return_value={
+                    "name": "Ana Agente",
+                    "email": "agente@example.com",
+                },
+            ), patch(
+                "jobs.run_renewal_agent.send_email_smtp",
+            ) as send_email, patch(
+                "jobs.run_renewal_agent.persist_result",
+            ) as persist, patch(
+                "jobs.run_renewal_agent.record_action",
+            ), patch(
+                "jobs.run_renewal_agent.emit",
+            ):
+                old_adapter.return_value.run.return_value = retrieval_result
+                item, portal_failure = process_one("run-1", task.id)
+
+        self.assertEqual(item["status"], "completed")
+        self.assertFalse(portal_failure)
+        call = send_email.call_args.kwargs
+        self.assertEqual(call["recipients"], ["agente@example.com"])
+        self.assertEqual(call["cc_recipients"], ["alberto.alfaro@taiico.com"])
+        self.assertNotIn("cliente@example.com", call["recipients"] + call["cc_recipients"])
+        self.assertTrue(call["body"].startswith("Buenos días Ana Agente"))
+        self.assertEqual(persist.call_args.kwargs["renewal_status"], "Enviado al agente")
+
+    def test_invalid_external_agent_contact_requires_manual_review_without_email(self):
+        from adapters.metlife_gmm_portal import MetLifeGmmPortalResult
+        from services.metlife_agent_directory import AgentContactResolutionError
+
+        task = SimpleNamespace(
+            id="task-agent-invalid",
+            policy_number="1454603",
+            original_policy_number="1454603",
+            rfc="RFC123456ABC",
+            client_name="Cliente Sin Agente",
+            renewal_deadline=date(2026, 9, 11),
+            attempt_count=1,
+            normalized_payload={"agent_code": "99999"},
+            source_payload={},
+        )
+        with TemporaryDirectory() as folder:
+            Path(folder, "renovacion.pdf").write_bytes(b"pdf")
+            retrieval_result = MetLifeGmmPortalResult(
+                status="completed",
+                task_id=task.id,
+                policy_number=task.policy_number,
+                rfc=task.rfc,
+                steps=[],
+                extracted_folder_path=folder,
+                drive_folder_id="drive-folder",
+                drive_folder_link="https://drive.example/folder",
+            )
+            with patch(
+                "jobs.run_renewal_agent.update_task_attempt",
+                return_value=task,
+            ), patch(
+                "jobs.run_renewal_agent.MetLifeGmmOldPortalAdapter",
+            ) as old_adapter, patch(
+                "jobs.run_renewal_agent.lookup_client_email",
+                return_value="cliente@example.com",
+            ), patch(
+                "jobs.run_renewal_agent.resolve_agent_contact",
+                side_effect=AgentContactResolutionError(
+                    "Clave de agente 99999 no encontrada en la base de Agentes"
+                ),
+            ), patch(
+                "jobs.run_renewal_agent.send_email_smtp",
+            ) as send_email, patch(
+                "jobs.run_renewal_agent.persist_result",
+            ) as persist, patch(
+                "jobs.run_renewal_agent.record_action",
+            ), patch(
+                "jobs.run_renewal_agent.emit",
+            ):
+                old_adapter.return_value.run.return_value = retrieval_result
+                item, portal_failure = process_one("run-1", task.id)
+
+        self.assertEqual(item["status"], "delivery_failed")
+        self.assertFalse(portal_failure)
+        send_email.assert_not_called()
+        self.assertEqual(
+            persist.call_args.kwargs["renewal_status"],
+            "Revision Manual Necesaria",
+        )
+
     def test_collection_check_is_limited_to_known_legacy_portal_failures(self):
         self.assertTrue(
             should_check_collection_after_failure(
@@ -206,12 +331,11 @@ class RenewalAgentJobTests(unittest.TestCase):
         self.assertIn('PolicyDocumentRetrievalTask.status == "queued"', contents)
         self.assertIn("PolicyDocumentRetrievalTask.attempt_count > 0", contents)
 
-    def test_successful_delivery_uses_final_automatic_status(self):
+    def test_successful_delivery_uses_distinct_client_and_agent_statuses(self):
         source = Path(__file__).resolve().parents[1] / "jobs" / "run_renewal_agent.py"
-        self.assertIn(
-            'renewal.insurer_response = "Enviado Automáticamente"',
-            source.read_text(),
-        )
+        contents = source.read_text()
+        self.assertIn('renewal_status = "Enviado Automáticamente"', contents)
+        self.assertIn('renewal_status = "Enviado al agente"', contents)
 
     def test_final_crm_statuses_block_automatic_retry(self):
         for status in (
@@ -220,6 +344,7 @@ class RenewalAgentJobTests(unittest.TestCase):
             "Enviada Manual",
             "Enviada al cliente",
             "Enviado Automáticamente",
+            "Enviado al agente",
             "Revision Manual Necesaria",
             "Enviado",
         ):
@@ -232,34 +357,34 @@ class RenewalAgentJobTests(unittest.TestCase):
         source = Path(__file__).resolve().parents[1] / "jobs" / "run_renewal_agent.py"
         self.assertIn("settings=renewal_smtp_settings()", source.read_text())
 
-    def test_job_runs_once_after_09_mexico_city(self):
+    def test_job_runs_once_after_07_mexico_city(self):
         now = datetime(
             2026,
             7,
             28,
-            9,
+            7,
             5,
             tzinfo=ZoneInfo("America/Mexico_City"),
         )
         with patch.dict(
             os.environ,
-            {"RENEWAL_AGENT_AUTOMATION_HOUR": "9"},
+            {"RENEWAL_AGENT_AUTOMATION_HOUR": "7"},
         ):
             self.assertTrue(should_run(now, None))
             self.assertFalse(should_run(now, "2026-07-28"))
 
-    def test_job_does_not_run_before_09(self):
+    def test_job_does_not_run_before_07(self):
         now = datetime(
             2026,
             7,
             28,
-            8,
+            6,
             59,
             tzinfo=ZoneInfo("America/Mexico_City"),
         )
         with patch.dict(
             os.environ,
-            {"RENEWAL_AGENT_AUTOMATION_HOUR": "9"},
+            {"RENEWAL_AGENT_AUTOMATION_HOUR": "7"},
         ):
             self.assertFalse(should_run(now, None))
 
@@ -277,6 +402,19 @@ class RenewalAgentJobTests(unittest.TestCase):
             {"RENEWAL_AGENT_AUTOMATION_WINDOW_DAYS": "30"},
         ):
             self.assertEqual(renewal_cutoff(now), date(2026, 8, 27))
+
+    def test_default_cutoff_is_forty_five_days(self):
+        now = datetime(
+            2026,
+            7,
+            28,
+            9,
+            0,
+            tzinfo=ZoneInfo("America/Mexico_City"),
+        )
+        with patch.dict(os.environ):
+            os.environ.pop("RENEWAL_AGENT_AUTOMATION_WINDOW_DAYS", None)
+            self.assertEqual(renewal_cutoff(now), date(2026, 9, 11))
 
     def test_whatsapp_is_disabled_in_daily_job(self):
         self.assertFalse(WHATSAPP_ENABLED)

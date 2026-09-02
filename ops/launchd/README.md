@@ -75,10 +75,10 @@ POST /api/renewal-agent/tasks/{task_id}/approve
 POST /api/renewal-agent/tasks/{task_id}/review-required
 ```
 
-Esta primera versión no ejecuta descargas ni envíos. Reserva una tarea, registra
-la consulta de cobranza y exige que `Pagado Hasta` sea igual o posterior a
-`FFINVIG` antes de permitir la aprobación humana. El alcance está fijado en el
-servidor a MetLife GMM y a los agentes TAIICO `16200`, `18412` y `73640`.
+Esta API no ejecuta descargas ni envíos. Reserva una tarea, registra la consulta
+de cobranza y exige que `Pagado Hasta` sea igual o posterior a `FFINVIG` antes
+de permitir la aprobación humana. El alcance está fijado en el servidor a todas
+las pólizas MetLife GMM con vencimiento dentro de los siguientes 45 días.
 
 ## Alcance
 
@@ -94,9 +94,11 @@ agentes cuya cédula vence entre ese día y los tres meses calendario siguientes
 Un archivo de estado evita duplicar el correo durante el mismo mes.
 
 El agente `com.taiico.crm.renewal-agent` realiza la misma comprobación y comienza
-una sola corrida diaria de renovaciones MetLife GMM después de las 09:00 de
+una sola corrida diaria de renovaciones MetLife GMM después de las 07:00 de
 Ciudad de México. Incluye pendientes vencidos que continúen en cola y pólizas
-con vencimiento durante los siguientes 30 días. La fecha de inicio se guarda
+con vencimiento durante los siguientes 45 días. Las claves TAIICO `16200`,
+`18412` y `73640` se envían al cliente; las demás se envían exclusivamente al
+`Correo_Personal` inequívoco del agente, con copia a Alberto. La fecha de inicio se guarda
 antes de procesar para impedir reintentos automáticos y correos duplicados si
 la corrida falla. WhatsApp está desactivado en este job; sólo se realizan los
 correos autorizados y se registra el paso como omitido.

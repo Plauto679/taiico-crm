@@ -15,7 +15,7 @@ from database import AgentAction, PolicyDocumentRetrievalTask, SessionLocal
 router = APIRouter(prefix="/renewal-agent", tags=["renewal-agent"])
 
 TAIICO_AGENT_CODES = frozenset({"16200", "18412", "73640"})
-DEFAULT_WINDOW_DAYS = 30
+DEFAULT_WINDOW_DAYS = 45
 PROCESS_TIMEZONE = ZoneInfo("America/Mexico_City")
 ALLOWED_CLAIM_STATUSES = frozenset({"queued"})
 ALLOWED_COLLECTION_STATUSES = frozenset({"claimed", "collection_blocked"})
@@ -115,16 +115,15 @@ def _record_action(
     return action
 
 
-def _get_taiico_task(db, task_id: str) -> PolicyDocumentRetrievalTask:
+def _get_gmm_task(db, task_id: str) -> PolicyDocumentRetrievalTask:
     task = db.get(PolicyDocumentRetrievalTask, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Renewal task not found")
     if (
         task.insurer_id != "metlife"
         or task.product_branch != "GMM"
-        or _agent_code(task) not in TAIICO_AGENT_CODES
     ):
-        raise HTTPException(status_code=403, detail="Task is outside TAIICO scope")
+        raise HTTPException(status_code=403, detail="Task is outside MetLife GMM scope")
     return task
 
 
@@ -137,7 +136,7 @@ def candidates(
     task_status: Literal["queued", "claimed", "collection_approved", "approved"] = Query(
         default="queued", alias="status"
     ),
-    days: int = Query(default=DEFAULT_WINDOW_DAYS, ge=0, le=30),
+    days: int = Query(default=DEFAULT_WINDOW_DAYS, ge=0, le=45),
     limit: int = Query(default=25, ge=1, le=100),
 ):
     today = _process_date()
@@ -159,13 +158,12 @@ def candidates(
             )
             .all()
         )
-        scoped = [task for task in tasks if _agent_code(task) in TAIICO_AGENT_CODES]
-        scoped = scoped[:limit]
+        scoped = tasks[:limit]
         return {
             "count": len(scoped),
             "process_date": today.isoformat(),
             "cutoff_date": cutoff.isoformat(),
-            "agent_codes": sorted(TAIICO_AGENT_CODES),
+            "direct_to_client_agent_codes": sorted(TAIICO_AGENT_CODES),
             "tasks": [_task_payload(task) for task in scoped],
         }
     finally:
@@ -176,7 +174,7 @@ def candidates(
 def claim_task(task_id: str, payload: ClaimRequest):
     db = SessionLocal()
     try:
-        task = _get_taiico_task(db, task_id)
+        task = _get_gmm_task(db, task_id)
         if task.status not in ALLOWED_CLAIM_STATUSES:
             raise HTTPException(
                 status_code=409,
@@ -221,7 +219,7 @@ def claim_task(task_id: str, payload: ClaimRequest):
 def record_collection_check(task_id: str, payload: CollectionCheckRequest):
     db = SessionLocal()
     try:
-        task = _get_taiico_task(db, task_id)
+        task = _get_gmm_task(db, task_id)
         if task.status not in ALLOWED_COLLECTION_STATUSES:
             raise HTTPException(
                 status_code=409,
@@ -268,7 +266,7 @@ def record_collection_check(task_id: str, payload: CollectionCheckRequest):
 def approve_task(task_id: str, payload: ApprovalRequest):
     db = SessionLocal()
     try:
-        task = _get_taiico_task(db, task_id)
+        task = _get_gmm_task(db, task_id)
         if task.status not in ALLOWED_APPROVAL_STATUSES:
             raise HTTPException(
                 status_code=409,
@@ -300,7 +298,7 @@ def approve_task(task_id: str, payload: ApprovalRequest):
 def mark_review_required(task_id: str, payload: ReviewRequiredRequest):
     db = SessionLocal()
     try:
-        task = _get_taiico_task(db, task_id)
+        task = _get_gmm_task(db, task_id)
         if task.status not in {"claimed", "collection_blocked"}:
             raise HTTPException(
                 status_code=409,

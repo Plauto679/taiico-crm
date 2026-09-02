@@ -85,7 +85,7 @@ class RenewalAgentApiTests(unittest.TestCase):
         response = self.client.get("/renewal-agent/candidates")
         self.assertEqual(response.status_code, 401)
 
-    def test_candidates_are_limited_to_taiico_agents_and_thirty_days(self):
+    def test_candidates_include_all_gmm_agents_in_forty_five_day_window(self):
         self.add_task(agent_code="16200", policy_number="TAIICO-1")
         self.add_task(agent_code="99999", policy_number="OTHER-1")
         self.add_task(
@@ -99,17 +99,21 @@ class RenewalAgentApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["count"], 1)
-        self.assertEqual(response.json()["tasks"][0]["policy_number"], "TAIICO-1")
+        self.assertEqual(response.json()["count"], 3)
+        self.assertEqual(
+            {task["policy_number"] for task in response.json()["tasks"]},
+            {"TAIICO-1", "OTHER-1", "FUTURE-1"},
+        )
 
-    def test_non_taiico_task_cannot_be_claimed_by_id(self):
+    def test_non_taiico_gmm_task_can_be_claimed_by_id(self):
         task_id = self.add_task(agent_code="99999", policy_number="OTHER-1")
         response = self.client.post(
             f"/renewal-agent/tasks/{task_id}/claim",
             headers=self.headers,
             json={"worker_id": "codex-mac"},
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["task"]["status"], "claimed")
 
     def test_claim_collection_and_approval_are_separate_transitions(self):
         task_id = self.add_task(agent_code="73640", policy_number="TAIICO-2")

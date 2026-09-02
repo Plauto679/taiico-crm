@@ -47,6 +47,10 @@ from database import (  # noqa: E402
     SessionLocal,
 )
 from services.client_email_directory import lookup_client_email  # noqa: E402
+from services.metlife_agent_directory import (  # noqa: E402
+    AgentContactResolutionError,
+    resolve_agent_contact,
+)
 from services.automatic_mails import (  # noqa: E402
     automation_config,
     local_now_for,
@@ -55,8 +59,10 @@ from services.automatic_mails import (  # noqa: E402
 from services.renewal_agent_api import TAIICO_AGENT_CODES  # noqa: E402
 from services.renovaciones import (  # noqa: E402
     SmtpDeliveryUncertainError,
+    build_metlife_gmm_agent_email_body,
     build_metlife_gmm_renewal_email_body,
     persist_adapter_steps,
+    renewal_agent_email_cc_recipients,
     renewal_email_cc_recipients,
     renewal_email_recipients,
     renewal_smtp_settings,
@@ -65,8 +71,8 @@ from services.renovaciones import (  # noqa: E402
 
 
 DEFAULT_TIMEZONE = "America/Mexico_City"
-DEFAULT_HOUR = 9
-DEFAULT_WINDOW_DAYS = 30
+DEFAULT_HOUR = 7
+DEFAULT_WINDOW_DAYS = 45
 DEFAULT_MAX_CONSECUTIVE_PORTAL_FAILURES = 7
 DEFAULT_TARGET_DRIVE_FOLDER_ID = "1UthkPpr5_pvX5SszrCuIm546XKZh4Z_R"
 DEFAULT_INTERNAL_RECIPIENTS = (
@@ -89,6 +95,7 @@ AUTOMATION_PROTECTED_RENEWAL_STATUSES = {
     "enviado al cliente",
     "enviado a cliente",
     "enviado automaticamente",
+    "enviado al agente",
     "enviado",
     "revision manual necesaria",
 }
@@ -290,6 +297,7 @@ def update_crm_renewal_fields(
     db,
     task: PolicyDocumentRetrievalTask,
     expediente_link: str | None,
+    renewal_status: str | None = None,
 ) -> None:
     if not expediente_link:
         return
@@ -311,7 +319,8 @@ def update_crm_renewal_fields(
         )
         db.add(renewal)
         db.flush()
-    renewal.insurer_response = "Enviado Automáticamente"
+    if renewal_status:
+        renewal.insurer_response = renewal_status
     renewal.updated_at = datetime.utcnow()
 
 
@@ -480,7 +489,6 @@ def selected_tasks(
             for task in tasks
             if task.id not in protected_task_ids
             and str(task.policy_number).strip() not in protected_policy_numbers
-            and task_agent_code(task) in TAIICO_AGENT_CODES
         ]
         effective_process_date = process_date or local_now().date()
         return sorted(
@@ -562,6 +570,7 @@ def persist_result(
     *,
     retrieval_succeeded: bool,
     delivery_succeeded: bool,
+    renewal_status: str | None = None,
     error: str | None = None,
 ) -> None:
     db = SessionLocal()
@@ -592,7 +601,7 @@ def persist_result(
             task.retrieval_adapter = OLD_PORTAL_ADAPTER_NAME
             task.completed_at = datetime.utcnow()
             task.last_error = error
-            update_crm_renewal_fields(db, task, expediente_link)
+            update_crm_renewal_fields(db, task, expediente_link, renewal_status)
         else:
             task.status = "queued"
             task.last_error = (
@@ -821,8 +830,32 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
 
         step_started = datetime.utcnow()
         client_email = lookup_client_email(task.client_name)
+        agent_code = task_agent_code(task)
         missing_client_email = not client_email
-        if missing_client_email:
+        if agent_code not in TAIICO_AGENT_CODES:
+            contact = resolve_agent_contact(agent_code)
+            agent_email = contact["email"]
+            recipients = renewal_email_recipients(agent_email)
+            if recipients != [agent_email]:
+                raise RuntimeError(
+                    "La configuración de correo no está habilitada para el agente real"
+                )
+            cc_recipients = renewal_agent_email_cc_recipients(recipients)
+            email_body = build_metlife_gmm_agent_email_body(
+                contact.get("name", "Agente"),
+                task.client_name or "Cliente",
+                client_email or "",
+                task.policy_number,
+                task.renewal_deadline.isoformat(),
+            )
+            period_start = task.renewal_deadline.year
+            subject = (
+                f"Renovación MetLife GMM - {task.client_name} - "
+                f"{period_start} - {period_start + 1}"
+            )
+            delivery_mode = "agent"
+            renewal_status = "Enviado al agente"
+        elif missing_client_email:
             recipients = internal_recipients()
             cc_recipients = []
             email_body = missing_client_email_body(
@@ -835,6 +868,7 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
                 f"Renovación MetLife GMM - {task.client_name}"
             )
             delivery_mode = "internal_missing_client_email"
+            renewal_status = "Revision Manual Necesaria"
         else:
             recipients = renewal_email_recipients(client_email)
             if recipients != [client_email]:
@@ -854,6 +888,7 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
                 f"{period_start} - {period_start + 1}"
             )
             delivery_mode = "client"
+            renewal_status = "Enviado Automáticamente"
         delivery_steps.append(
             step(
                 "resolve_client_email",
@@ -861,6 +896,7 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
                 started_at=step_started,
                 metadata={
                     "client_email": client_email,
+                    "agent_code": agent_code,
                     "delivery_mode": delivery_mode,
                     "recipients": recipients,
                 },
@@ -878,11 +914,11 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
         )
         delivery_steps.append(
             step(
-                "send_client_email",
+                "send_renewal_email",
                 "completed",
                 started_at=step_started,
                 metadata={
-                    "recipient": client_email or ", ".join(recipients),
+                    "recipient": recipients[0],
                     "cc_recipients": cc_recipients,
                     "delivery_mode": delivery_mode,
                 },
@@ -903,11 +939,13 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
             data,
             retrieval_succeeded=True,
             delivery_succeeded=True,
+            renewal_status=renewal_status,
         )
         output = {
             "drive_folder_id": result.drive_folder_id,
             "drive_folder_link": result.drive_folder_link,
             "client_email": client_email,
+            "agent_code": agent_code,
             "delivery_mode": delivery_mode,
             "recipients": recipients,
             "cc": cc_recipients,
@@ -929,7 +967,12 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
                 f"Sin correo cliente; expediente a equipo interno; "
                 f"{len(attachments)} adjuntos; WhatsApp omitido"
             )
-            if missing_client_email
+            if delivery_mode == "internal_missing_client_email"
+            else (
+                f"Correo al agente {recipients[0]}; {len(attachments)} adjuntos; "
+                "WhatsApp omitido"
+            )
+            if delivery_mode == "agent"
             else (
                 f"Correo a {client_email}; {len(attachments)} adjuntos; "
                 "WhatsApp omitido"
@@ -946,7 +989,7 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
         detail = f"ENTREGA INCIERTA: {exc}"
         delivery_steps.append(
             step(
-                "send_client_email",
+                "send_renewal_email",
                 "delivery_uncertain",
                 started_at=datetime.utcnow(),
                 error_message=detail,
@@ -995,6 +1038,11 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
             data,
             retrieval_succeeded=True,
             delivery_succeeded=False,
+            renewal_status=(
+                "Revision Manual Necesaria"
+                if isinstance(exc, AgentContactResolutionError)
+                else None
+            ),
             error=detail,
         )
         record_action(

@@ -30,6 +30,7 @@ class AutomaticMailConfigurationTests(unittest.TestCase):
                 "AUTOMATIC_MAILS_CONFIG_FILE": f"{directory}/config.json",
                 "RENEWAL_AGENT_AUTOMATION_RECIPIENTS": "",
                 "RENEWAL_EMAIL_CC_RECIPIENTS": "",
+                "RENEWAL_AGENT_AUTOMATION_HOUR": "7",
             },
         ):
             items = {item["id"]: item for item in all_automation_configs()}
@@ -55,6 +56,7 @@ class AutomaticMailConfigurationTests(unittest.TestCase):
             "pamela.alfaro@taiico.com",
             items["renewal_agent"]["cc_recipients"],
         )
+        self.assertEqual(items["renewal_agent"]["hour"], 7)
         self.assertEqual(
             items["pending_promotoria_abbondanza"]["recipients"],
             ["19eryk@gmail.com"],

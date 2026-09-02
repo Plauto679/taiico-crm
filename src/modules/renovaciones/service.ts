@@ -30,8 +30,8 @@ export async function updateRenewalStatus(
     newStatus: string | null,
     expediente: string | null,
     email?: string | null
-): Promise<any> {
-    const payload: any = {
+): Promise<unknown> {
+    const payload: Record<string, string | number> = {
         insurer,
         type,
         policy_number: policyNumber,
@@ -59,7 +59,7 @@ export async function sendRenewalEmail(
     clientName: string,
     endDate: string,
     expediente?: string
-): Promise<any> {
+): Promise<unknown> {
     return fetchFromApi('/renovaciones/send-email', {
         method: 'POST',
         headers: {
@@ -72,6 +72,35 @@ export async function sendRenewalEmail(
             client_name: clientName,
             end_date: endDate,
             expediente: expediente
+        }),
+    });
+}
+
+export async function sendRenewalAgentEmail(
+    insurer: string,
+    type: string,
+    policyNumber: string | number,
+    clientName: string,
+    endDate: string,
+    expediente?: string
+): Promise<{
+    message: string;
+    agent_code: string;
+    agent_name?: string;
+    actual_recipients: string[];
+    cc_recipients: string[];
+    attachment_count: number;
+}> {
+    return fetchFromApi('/renovaciones/send-agent-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            insurer,
+            type,
+            policy_number: policyNumber,
+            client_name: clientName,
+            end_date: endDate,
+            expediente,
         }),
     });
 }

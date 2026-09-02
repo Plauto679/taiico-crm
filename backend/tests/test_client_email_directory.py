@@ -15,9 +15,12 @@ from services.client_email_directory import (
     parse_email_directory,
 )
 from services.renovaciones import (
+    AGENT_RENEWAL_EMAIL_STATUS,
     MANUAL_RENEWAL_EMAIL_STATUS,
     RENEWAL_STATUS_OPTIONS,
+    build_metlife_gmm_agent_email_body,
     build_metlife_gmm_renewal_email_body,
+    renewal_agent_email_cc_recipients,
     renewal_email_cc_recipients,
     renewal_email_recipients,
 )
@@ -34,6 +37,34 @@ class ClientEmailDirectoryTests(unittest.TestCase):
         self.assertEqual(MANUAL_RENEWAL_EMAIL_STATUS, "Enviada Manual")
         self.assertIn(MANUAL_RENEWAL_EMAIL_STATUS, RENEWAL_STATUS_OPTIONS)
         self.assertNotIn("Enviada al cliente", RENEWAL_STATUS_OPTIONS)
+        self.assertEqual(AGENT_RENEWAL_EMAIL_STATUS, "Enviado al agente")
+        self.assertIn(AGENT_RENEWAL_EMAIL_STATUS, RENEWAL_STATUS_OPTIONS)
+
+    def test_agent_email_adds_intro_and_preserves_client_template(self):
+        body = build_metlife_gmm_agent_email_body(
+            "Ana Pérez",
+            "Cliente Ejemplo",
+            "cliente@example.com",
+            "1357138",
+            "2026-07-13",
+        )
+        self.assertTrue(
+            body.startswith(
+                "Buenos días Ana Pérez, tu cliente Cliente Ejemplo con correo "
+                "cliente@example.com tiene su renovación hoy."
+            )
+        )
+        self.assertIn("Hola Cliente Ejemplo,", body)
+
+    def test_agent_delivery_cc_contains_only_alberto(self):
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("RENEWAL_AGENT_DELIVERY_CC_RECIPIENTS", None)
+            self.assertEqual(
+                renewal_agent_email_cc_recipients(["agent@example.com"]),
+                ["alberto.alfaro@taiico.com"],
+            )
 
     def test_name_matching_ignores_accents_case_and_repeated_spaces(self):
         self.assertEqual(
@@ -128,3 +159,4 @@ class ClientEmailDirectoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+    build_metlife_gmm_agent_email_body,

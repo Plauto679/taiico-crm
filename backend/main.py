@@ -3,7 +3,7 @@ import time
 
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from services import cobranza, renovaciones, cumpleanos, cumpleanos_agentes, agentes, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, client_email_directory, whatsapp, pendientes, mail_configuration, automatic_mails, recluta, password_management, base_loads, accesos, cotizaciones, audit_logs, rrhh, campanas, finanzas
+from services import cobranza, renovaciones, cumpleanos, cumpleanos_agentes, agentes, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, renewal_agent_api, client_email_directory, whatsapp, pendientes, mail_configuration, automatic_mails, recluta, password_management, base_loads, accesos, cotizaciones, audit_logs, rrhh, campanas, finanzas
 from services.login_security import login_rate_limiter, secure_cookie_for
 from services.authorization import current_access_profile, require_module_access
 from services.session_auth import (
@@ -233,6 +233,7 @@ app.include_router(clientes.router, dependencies=[Depends(require_module_access(
 app.include_router(ingestion.router, dependencies=[Depends(require_module_access("cobranza", operation=True))])
 app.include_router(drive_sources.router, dependencies=[Depends(require_module_access("cobranza", operation=True))])
 app.include_router(renewal_ingestion.router, dependencies=[Depends(require_module_access("renovaciones", operation=True))])
+app.include_router(renewal_agent_api.router)
 app.include_router(client_email_directory.router, dependencies=[Depends(require_module_access("clientes"))])
 app.include_router(whatsapp.router, dependencies=[Depends(require_module_access("renovaciones", operation=True))])
 app.include_router(pendientes.router, dependencies=[Depends(require_module_access("pendientes"))])
