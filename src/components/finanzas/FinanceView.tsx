@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { AlertTriangle, Check, FileSearch, Landmark, Loader2, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronUp, Download, FileSearch, Landmark, Loader2, Plus, RefreshCw, Search, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
 import { DataTable } from '@/components/ui/DataTable';
 import {
   Budget, Company, FinanceFilters, FinanceInvoice, FinanceMovement, FinanceOverview, Projection, RecurringGroup, Rule,
@@ -48,6 +48,7 @@ export function FinanceView({ initialOverview }: { initialOverview: FinanceOverv
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [scopeOpen, setScopeOpen] = useState(true);
 
   async function load(activeTab = tab, activeCompany = company, filters: FinanceFilters = { bank, startDate, endDate }) {
     setLoading(true); setError('');
@@ -79,12 +80,31 @@ export function FinanceView({ initialOverview }: { initialOverview: FinanceOverv
       <div className="flex max-w-full gap-1 overflow-x-auto">{TABS.map((item) => <button key={item} onClick={() => chooseTab(item)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-semibold ${tab === item ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>{item}</button>)}</div>
       <div className="flex rounded-lg bg-slate-100 p-1">{(['CONSOLIDADO', 'TLA', 'TS'] as Company[]).map((item) => <button key={item} onClick={() => chooseCompany(item)} className={`rounded-md px-3 py-1.5 text-xs font-bold ${company === item ? 'bg-white text-emerald-700 shadow' : 'text-slate-500'}`}>{item === 'CONSOLIDADO' ? 'Consolidado' : item}</button>)}</div>
     </div>
-    {(tab === 'Resumen' || tab === 'Movimientos' || tab === 'Recurrentes') && <div className="grid gap-3 rounded-xl bg-white p-3 shadow sm:grid-cols-2 lg:grid-cols-[minmax(150px,1fr),minmax(150px,1fr),minmax(160px,1fr),auto] lg:items-end">
-      <label className="text-xs font-semibold text-slate-600">Fecha inicial<input type="date" value={startDate} max={endDate || undefined} onChange={(event) => setStartDate(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900" /></label>
-      <label className="text-xs font-semibold text-slate-600">Fecha final<input type="date" value={endDate} min={startDate || undefined} onChange={(event) => setEndDate(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900" /></label>
-      <label className="text-xs font-semibold text-slate-600">Banco<select value={bank} onChange={(event) => setBank(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"><option value="">Todos los bancos</option><option value="AMEX">AMEX</option><option value="BBVA">BBVA</option><option value="BANORTE">Banorte</option></select></label>
-      <div className="flex gap-2 sm:col-span-2 lg:col-span-1"><button onClick={applyScope} disabled={!!startDate && !!endDate && startDate > endDate} className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">Aplicar</button><button onClick={resetScope} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600">Restablecer</button></div>
-    </div>}
+    {(tab === 'Resumen' || tab === 'Movimientos' || tab === 'Recurrentes') && <section className="rounded-xl bg-white p-3 shadow">
+      <button
+        type="button"
+        onClick={() => setScopeOpen((current) => !current)}
+        aria-expanded={scopeOpen}
+        aria-controls="finance-scope-controls"
+        className="flex w-full items-center justify-between gap-3 rounded-lg px-1 py-1 text-left text-sm font-bold text-slate-700 hover:text-emerald-700"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <SlidersHorizontal className="h-4 w-4 shrink-0" />
+          <span className="shrink-0">Filtros de periodo y banco</span>
+          {!scopeOpen && <span className="truncate text-xs font-medium text-slate-500">{startDate || endDate ? `${startDate || 'Inicio abierto'} → ${endDate || 'Fin abierto'}` : 'Todas las fechas'} · {bank || 'Todos los bancos'}</span>}
+        </span>
+        <span className="flex shrink-0 items-center gap-1 text-xs font-semibold text-slate-500">
+          {scopeOpen ? 'Ocultar' : 'Mostrar'}
+          {scopeOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </span>
+      </button>
+      {scopeOpen && <div id="finance-scope-controls" className="mt-3 grid gap-3 border-t border-slate-200 pt-3 sm:grid-cols-2 lg:grid-cols-[minmax(150px,1fr),minmax(150px,1fr),minmax(160px,1fr),auto] lg:items-end">
+        <label className="text-xs font-semibold text-slate-600">Fecha inicial<input type="date" value={startDate} max={endDate || undefined} onChange={(event) => setStartDate(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900" /></label>
+        <label className="text-xs font-semibold text-slate-600">Fecha final<input type="date" value={endDate} min={startDate || undefined} onChange={(event) => setEndDate(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900" /></label>
+        <label className="text-xs font-semibold text-slate-600">Banco<select value={bank} onChange={(event) => setBank(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"><option value="">Todos los bancos</option><option value="AMEX">AMEX</option><option value="BBVA">BBVA</option><option value="BANORTE">Banorte</option></select></label>
+        <div className="flex gap-2 sm:col-span-2 lg:col-span-1"><button onClick={applyScope} disabled={!!startDate && !!endDate && startDate > endDate} className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">Aplicar</button><button onClick={resetScope} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600">Restablecer</button></div>
+      </div>}
+    </section>}
     <ErrorMessage text={error} />
     <div className="min-h-0 flex-1 overflow-auto rounded-2xl bg-white/95 p-4 shadow-xl md:p-6">
       {loading && <div className="mb-3 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Actualizando información…</div>}
@@ -116,6 +136,7 @@ function Summary({ overview, scopedPeriod, onSync }: { overview: FinanceOverview
 
 function Movements({ items, total, company, filters, search, setSearch, onSearch, onSaved }: { items: FinanceMovement[]; total: number; company: Company; filters: FinanceFilters; search: string; setSearch: (value: string) => void; onSearch: () => void; onSaved: (item: FinanceMovement) => void }) {
   const [editing, setEditing] = useState<FinanceMovement | null>(null);
+  const [exporting, setExporting] = useState(false);
   const columns = useMemo(() => [
     { header: 'Fecha', accessorKey: 'fecha_operacion' as const, cell: (item: FinanceMovement) => dateFormat.format(new Date(`${item.fecha_operacion}T12:00:00`)) },
     { header: 'Empresa', accessorKey: 'empresa' as const },
@@ -126,7 +147,7 @@ function Movements({ items, total, company, filters, search, setSearch, onSearch
     { header: 'Factura', accessorKey: (item: FinanceMovement) => item.factura_uuid ? 'Conciliada' : item.requiere_factura ? 'Pendiente' : '', filterValue: (item: FinanceMovement) => item.factura_uuid ? 'Conciliada' : item.requiere_factura ? 'Pendiente' : '', cell: (item: FinanceMovement) => item.factura_uuid ? <Check className="h-4 w-4 text-emerald-600" /> : item.requiere_factura ? <AlertTriangle className="h-4 w-4 text-amber-500" /> : '—' },
     { header: 'Fuente', accessorKey: 'archivo_fuente' as const, cell: (item: FinanceMovement) => <span className="text-xs text-slate-500">{item.archivo_fuente || '—'}{item.pagina_fuente ? ` · p.${item.pagina_fuente}` : ''}</span> },
   ], []);
-  return <div className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex w-full max-w-xl"><input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && onSearch()} placeholder="Buscar descripción, contraparte, referencia o ID" className="min-w-0 flex-1 rounded-l-lg border border-slate-300 px-3 py-2 text-sm" /><button onClick={onSearch} className="rounded-r-lg bg-slate-900 px-3 text-white"><Search className="h-4 w-4" /></button></div><div className="flex items-center gap-3"><span className="text-sm text-slate-500">{total.toLocaleString('es-MX')} movimientos</span><button onClick={() => exportMovements(company, search, filters)} className="rounded-lg border px-3 py-2 text-xs font-bold">Exportar vista</button></div></div>
+  return <div className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex w-full max-w-xl"><input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && onSearch()} placeholder="Buscar descripción, contraparte, referencia o ID" className="min-w-0 flex-1 rounded-l-lg border border-slate-300 px-3 py-2 text-sm" /><button onClick={onSearch} className="rounded-r-lg bg-slate-900 px-3 text-white"><Search className="h-4 w-4" /></button></div><div className="flex items-center gap-3"><span className="text-sm text-slate-500">{total.toLocaleString('es-MX')} movimientos</span><button disabled={exporting} onClick={async () => { setExporting(true); try { await exportMovements(company, search, filters); } finally { setExporting(false); } }} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold disabled:opacity-50">{exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}Exportar a Excel</button></div></div>
     {items.length ? <DataTable data={items} columns={columns} filterMode="multi-select" onRowClick={setEditing} className="max-h-[calc(100dvh-25rem)] overflow-auto rounded-xl" /> : <Empty>No hay movimientos. Sincroniza las fuentes o revisa los filtros.</Empty>}
     {editing && <MovementEditor item={editing} onClose={() => setEditing(null)} onSave={async (payload) => { const response = await updateMovement(editing.id, payload); onSaved(response.movement); setEditing(null); }} />}
   </div>;

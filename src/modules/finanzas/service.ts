@@ -31,9 +31,11 @@ export const getMovements = (company: Company, search = '', filters: FinanceFilt
 export const updateMovement = (id: string, payload: Record<string, unknown>) => fetchFromApi<{ movement: FinanceMovement }>(`/finanzas/movements/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 export async function exportMovements(company: Company, search = '', filters: FinanceFilters = {}) {
   const response = await fetch(`/api/finanzas/movements/export?${financeQuery(company, filters, { search })}`, { credentials: 'same-origin' });
-  if (!response.ok) throw new Error('No se pudo exportar la vista filtrada');
+  if (!response.ok) throw new Error('No se pudo exportar el archivo de Excel');
   const blob = await response.blob(); const url = URL.createObjectURL(blob); const anchor = document.createElement('a');
-  anchor.href = url; anchor.download = `movimientos-${company.toLowerCase()}.csv`; anchor.click(); URL.revokeObjectURL(url);
+  const disposition = response.headers.get('Content-Disposition');
+  const filename = disposition?.match(/filename="?([^";]+)"?/i)?.[1] || `movimientos-${company.toLowerCase()}.xlsx`;
+  anchor.href = url; anchor.download = filename; anchor.click(); URL.revokeObjectURL(url);
 }
 export const getRecurring = (company: Company, filters: FinanceFilters = {}) => fetchFromApi<{ items: RecurringGroup[] }>(`/finanzas/recurring?${financeQuery(company, filters)}`);
 export const decideRecurring = (fingerprint: string, status: string) => fetchFromApi(`/finanzas/recurring/${fingerprint}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });

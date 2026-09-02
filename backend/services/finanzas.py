@@ -18,6 +18,9 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field
 from sqlalchemy import asc, desc, func, or_
 
@@ -56,6 +59,9 @@ SOURCE_META = {
     "tla_bbva": ("TLA", "BBVA"),
     "tla_banorte": ("TLA", "BANORTE"),
     "ts_bbva": ("TS", "BBVA"),
+}
+BANK_ALIASES = {
+    "AMEX": {"AMEX", "AMERICAN EXPRESS"},
 }
 BOOL_TRUE = {"1", "true", "si", "sí", "yes", "x"}
 RUNTIME_DIR = Path(__file__).resolve().parents[2] / ".runtime" / "finanzas"
@@ -117,6 +123,14 @@ class BudgetInput(BaseModel):
 
 def _text(value: object) -> str:
     return " ".join(str(value or "").strip().split())
+
+
+def _canonical_bank(value: object) -> str:
+    bank = _text(value).upper()
+    for canonical, aliases in BANK_ALIASES.items():
+        if bank in aliases:
+            return canonical
+    return bank
 
 
 def _decimal(value: object, *, default: Decimal | None = Decimal("0")) -> Decimal | None:
@@ -185,12 +199,125 @@ def _validate_headers(headers: list[str] | None) -> None:
         raise ValueError("Faltan columnas canónicas: " + ", ".join(missing))
 
 
-def parse_canonical_csv(content: bytes) -> list[dict[str, object]]:
+def _decode_csv(content: bytes) -> str:
+    for encoding in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise ValueError("No se pudo identificar la codificación del CSV")
+
+
+def _csv_reader(content: bytes) -> csv.DictReader:
+    decoded = _decode_csv(content)
     try:
-        decoded = content.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        decoded = content.decode("latin-1")
-    reader = csv.DictReader(io.StringIO(decoded))
+        dialect = csv.Sniffer().sniff(decoded[:4096], delimiters=",;\t")
+    except csv.Error:
+        dialect = csv.excel
+    return csv.DictReader(io.StringIO(decoded), dialect=dialect)
+
+
+def _header_key(value: object) -> str:
+    normalized = unicodedata.normalize("NFKD", _text(value)).encode("ascii", "ignore").decode().casefold()
+    return re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
+
+
+def _amex_date(value: object, *, required: bool = False) -> date | None:
+    raw = _text(value)
+    if not raw:
+        if required:
+            raise ValueError("Fecha de operación vacía")
+        return None
+    month_aliases = {"ene": "jan", "abr": "apr", "ago": "aug", "dic": "dec", "sept": "sep"}
+    normalized = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode().casefold().replace(".", "")
+    for spanish, english in month_aliases.items():
+        normalized = re.sub(rf"\b{spanish}\b", english, normalized)
+    for pattern in ("%d %b %Y", "%d-%b-%y", "%d-%b-%Y", "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(normalized, pattern).date()
+        except ValueError:
+            continue
+    raise ValueError(f"Fecha AMEX inválida: {raw}")
+
+
+def _amex_account(value: object) -> str:
+    account = _text(value)
+    if re.fullmatch(r"-\d{4}", account):
+        return f"-0{account[1:]}"
+    return account
+
+
+def _amex_source_filename(filename: str) -> str:
+    return f"TLA/Estados Mensuales Amex/{Path(filename or 'estado.csv').name}"
+
+
+def parse_amex_monthly_csv(content: bytes, *, filename: str = "estado.csv") -> list[dict[str, object]]:
+    reader = _csv_reader(content)
+    headers = list(reader.fieldnames or ())
+    keyed_headers = {_header_key(header): header for header in headers}
+    description_header = next((header for header in headers if _header_key(header).startswith("descripci")), None)
+    aliases = {
+        "operation_date": keyed_headers.get("fecha"),
+        "settlement_date": keyed_headers.get("fecha_de_compra") or keyed_headers.get("fecha_compra"),
+        "description": keyed_headers.get("descripcion") or description_header,
+        "holder": keyed_headers.get("titular_de_la_tarjeta") or keyed_headers.get("titular_tarjeta"),
+        "account": keyed_headers.get("cuenta"),
+        "amount": keyed_headers.get("importe"),
+    }
+    if any(not header for header in aliases.values()):
+        raise ValueError(
+            "El CSV mensual de AMEX debe incluir las columnas: Fecha, Fecha de Compra, "
+            "Descripción, Titular de la Tarjeta, Cuenta e Importe"
+        )
+
+    rows: list[dict[str, object]] = []
+    occurrences: Counter[str] = Counter()
+    source_filename = _amex_source_filename(filename)
+    source_hash = _sha256(content)
+    for line, source in enumerate(reader, start=2):
+        if not any(_text(value) for value in source.values()):
+            continue
+        try:
+            operation_date = _amex_date(source.get(aliases["operation_date"]), required=True)
+            settlement_date = _amex_date(source.get(aliases["settlement_date"]))
+            amount = _decimal(source.get(aliases["amount"]), default=None)
+            if amount is None:
+                raise ValueError("Importe vacío")
+        except ValueError as exc:
+            raise ValueError(f"Fila {line}: {exc}") from exc
+        description = _text(source.get(aliases["description"]))
+        holder = _text(source.get(aliases["holder"]))
+        account = _amex_account(source.get(aliases["account"]))
+        fingerprint = json.dumps({
+            "fecha": operation_date.isoformat(),
+            "fecha_compra": settlement_date.isoformat() if settlement_date else "",
+            "descripcion": description,
+            "titular": holder,
+            "cuenta": account,
+            "importe": str(amount),
+        }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        occurrences[fingerprint] += 1
+        row_hash = _sha256(f"{fingerprint}|{occurrences[fingerprint]}".encode())
+        debit = amount if amount > 0 else Decimal("0")
+        credit = -amount if amount < 0 else Decimal("0")
+        rows.append({
+            "external_id": row_hash[:24], "company": "TLA", "bank": "AMEX",
+            "account_type": "Tarjeta", "account_nature": "Crédito", "account": account,
+            "clabe": "", "currency": "MXN", "operation_date": operation_date,
+            "settlement_date": settlement_date, "original_description": description,
+            "reference": "", "counterparty": "", "debit": debit, "credit": credit,
+            "net_amount": -amount, "balance": None, "holder": holder,
+            "source_category": "", "source_subcategory": "", "recurring": False,
+            "tax": False, "payroll": False, "requires_invoice": False,
+            "invoice_uuid": "", "invoice_reconciliation_status": "", "review_status": "",
+            "statement_period": operation_date.strftime("%Y-%m"),
+            "source_filename": source_filename, "source_page": None, "source_hash": source_hash,
+        })
+    return rows
+
+
+def parse_canonical_csv(content: bytes) -> list[dict[str, object]]:
+    reader = _csv_reader(content)
     _validate_headers(reader.fieldnames)
     rows: list[dict[str, object]] = []
     seen: set[str] = set()
@@ -209,7 +336,7 @@ def parse_canonical_csv(content: bytes) -> list[dict[str, object]]:
         rows.append({
             "external_id": external_id,
             "company": _text(source.get("empresa")).upper(),
-            "bank": _text(source.get("banco")).upper(),
+            "bank": _canonical_bank(source.get("banco")),
             "account_type": _text(source.get("tipo_cuenta")),
             "account_nature": _text(source.get("naturaleza_cuenta")),
             "account": _text(source.get("cuenta")),
@@ -240,6 +367,69 @@ def parse_canonical_csv(content: bytes) -> list[dict[str, object]]:
             "source_hash": _text(source.get("hash_fuente")),
         })
     return rows
+
+
+def parse_ingestion_csv(source_key: str, content: bytes, *, filename: str = "estado.csv") -> list[dict[str, object]]:
+    headers = list(_csv_reader(content).fieldnames or ())
+    if all(column in headers for column in CANONICAL_COLUMNS):
+        return parse_canonical_csv(content)
+    if source_key == "tla_amex":
+        return parse_amex_monthly_csv(content, filename=filename)
+    _validate_headers(headers)
+    return []
+
+
+def serialize_canonical_csv(rows: list[dict[str, object]]) -> bytes:
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=CANONICAL_COLUMNS)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({
+            "id_movimiento": row["external_id"], "empresa": row["company"], "banco": row["bank"],
+            "tipo_cuenta": row["account_type"], "naturaleza_cuenta": row["account_nature"],
+            "cuenta": row["account"], "clabe": row["clabe"], "moneda": row["currency"],
+            "fecha_operacion": row["operation_date"].isoformat(),
+            "fecha_liquidacion": row["settlement_date"].isoformat() if row["settlement_date"] else "",
+            "descripcion_original": row["original_description"], "referencia": row["reference"],
+            "contraparte": row["counterparty"], "cargo": row["debit"], "abono": row["credit"],
+            "importe_neto": row["net_amount"], "saldo": row["balance"] if row["balance"] is not None else "",
+            "titular": row["holder"], "categoria": row["source_category"],
+            "subcategoria": row["source_subcategory"], "recurrente": str(row["recurring"]).lower(),
+            "impuesto": str(row["tax"]).lower(), "nomina": str(row["payroll"]).lower(),
+            "requiere_factura": str(row["requires_invoice"]).lower(), "factura_uuid": row["invoice_uuid"],
+            "estatus_conciliacion_factura": row["invoice_reconciliation_status"],
+            "estatus_revision": row["review_status"], "periodo_estado": row["statement_period"],
+            "archivo_fuente": row["source_filename"], "pagina_fuente": row["source_page"] or "",
+            "hash_fuente": row["source_hash"],
+        })
+    return output.getvalue().encode("utf-8-sig")
+
+
+def _update_drive_csv(file_id: str, content: bytes) -> None:
+    try:
+        from google.auth import default
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseUpload
+    except ImportError as exc:
+        raise RuntimeError("Faltan las dependencias de escritura de Google Drive") from exc
+    credentials, _ = default(scopes=["https://www.googleapis.com/auth/drive"])
+    service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+    media = MediaIoBaseUpload(io.BytesIO(content), mimetype="text/csv", resumable=False)
+    service.files().update(
+        fileId=file_id,
+        media_body=media,
+        fields="id,modifiedTime,size",
+        supportsAllDrives=True,
+    ).execute()
+
+
+def _combined_canonical_csv(current_content: bytes, incoming_content: bytes) -> bytes:
+    current_rows = parse_canonical_csv(current_content)
+    incoming_rows = parse_canonical_csv(incoming_content)
+    existing_ids = {row["external_id"] for row in current_rows}
+    if any(row["external_id"] in existing_ids for row in incoming_rows):
+        raise HTTPException(409, "La carga contiene movimientos ya existentes; vuelve a previsualizar")
+    return serialize_canonical_csv(current_rows + incoming_rows)
 
 
 def sync_source(key: str, *, force: bool = False) -> dict[str, object]:
@@ -352,7 +542,8 @@ def _company_filter(query, company: str):
 def _movement_scope(query, company: str = "CONSOLIDADO", bank: str = "", start_date: date | None = None, end_date: date | None = None):
     query = _company_filter(query, company)
     if bank:
-        query = query.filter(FinanceMovement.bank == bank)
+        canonical_bank = _canonical_bank(bank)
+        query = query.filter(FinanceMovement.bank.in_(BANK_ALIASES.get(canonical_bank, {canonical_bank})))
     if start_date:
         query = query.filter(FinanceMovement.operation_date >= start_date)
     if end_date:
@@ -572,14 +763,50 @@ def export_movements(company: str = "CONSOLIDADO", search: str = "", bank: str =
         query = _movement_scope(db.query(FinanceMovement), company, bank, start_date, end_date)
         if search:
             pattern = f"%{search.strip()}%"
-            query = query.filter(or_(FinanceMovement.original_description.ilike(pattern), FinanceMovement.counterparty.ilike(pattern), FinanceMovement.reference.ilike(pattern)))
-        output = io.StringIO(); writer = csv.writer(output)
-        writer.writerow(["ID", "Empresa", "Banco", "Fecha", "Descripción", "Contraparte", "Importe neto", "Categoría", "Subcategoría", "UUID factura", "Archivo fuente", "Página"])
+            query = query.filter(or_(FinanceMovement.original_description.ilike(pattern), FinanceMovement.counterparty.ilike(pattern), FinanceMovement.reference.ilike(pattern), FinanceMovement.external_id.ilike(pattern)))
+
+        headers = ["ID", "Empresa", "Banco", "Fecha", "Descripción", "Contraparte", "Moneda", "Cargo", "Abono", "Importe neto", "Saldo", "Categoría", "Subcategoría", "UUID factura", "Archivo fuente", "Página"]
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Movimientos"
+        sheet.append(headers)
+
         for row in query.order_by(FinanceMovement.operation_date, FinanceMovement.id).all():
             item = _movement_dict(row)
-            writer.writerow([item["id_movimiento"], item["empresa"], item["banco"], item["fecha_operacion"], item["descripcion_original"], item["contraparte"], item["importe_neto"], item["categoria"], item["subcategoria"], item["factura_uuid"], item["archivo_fuente"], item["pagina_fuente"]])
-        filename = f"movimientos-{company.casefold()}-{date.today():%Y%m%d}.csv"
-        return Response(content=output.getvalue().encode("utf-8-sig"), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+            sheet.append([
+                item["id_movimiento"], item["empresa"], item["banco"], row.operation_date,
+                item["descripcion_original"], item["contraparte"], item["moneda"],
+                item["cargo"], item["abono"], item["importe_neto"], item["saldo"],
+                item["categoria"], item["subcategoria"], item["factura_uuid"],
+                item["archivo_fuente"], item["pagina_fuente"],
+            ])
+
+        header_fill = PatternFill("solid", fgColor="17365D")
+        for cell in sheet[1]:
+            cell.fill = header_fill
+            cell.font = Font(color="FFFFFF", bold=True)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        for row_number in range(2, sheet.max_row + 1):
+            sheet.cell(row_number, 4).number_format = "dd/mm/yyyy"
+            for column_number in (8, 9, 10, 11):
+                sheet.cell(row_number, column_number).number_format = '$#,##0.00;[Red]-$#,##0.00'
+
+        widths = (24, 12, 16, 13, 48, 32, 12, 16, 16, 18, 16, 24, 24, 38, 36, 10)
+        for column_number, width in enumerate(widths, start=1):
+            sheet.column_dimensions[get_column_letter(column_number)].width = width
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        sheet.sheet_view.showGridLines = False
+
+        output = io.BytesIO()
+        workbook.save(output)
+        filename = f"movimientos-{company.casefold()}-{date.today():%Y%m%d}.xlsx"
+        return Response(
+            content=output.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
     finally: db.close()
 
 
@@ -850,12 +1077,13 @@ async def preview_ingestion(source_key: str, file: UploadFile = File(...), profi
         if duplicate: raise HTTPException(409, "Este archivo ya fue publicado")
         if (file.filename or "").casefold().endswith(".pdf"):
             raise HTTPException(422, "El PDF se conserva como estado original, pero este formato bancario aún no tiene un parser validado en este servidor. Usa el CSV canónico para no interpretar movimientos incorrectamente.")
-        try: rows = parse_canonical_csv(content)
+        try: rows = parse_ingestion_csv(source_key, content, filename=file.filename or "estado.csv")
         except ValueError as exc: raise HTTPException(422, str(exc)) from exc
         existing = {value for (value,) in db.query(FinanceMovement.external_id).filter(FinanceMovement.source_key == source_key).all()}
         RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
         ingestion_id = str(uuid.uuid4()); staging = RUNTIME_DIR / f"{ingestion_id}.csv"
-        temporary = staging.with_suffix(".tmp"); temporary.write_bytes(content); os.chmod(temporary, 0o600); os.replace(temporary, staging)
+        canonical_content = serialize_canonical_csv(rows)
+        temporary = staging.with_suffix(".tmp"); temporary.write_bytes(canonical_content); os.chmod(temporary, 0o600); os.replace(temporary, staging)
         record = FinanceIngestion(id=ingestion_id, source_key=source_key, filename=Path(file.filename or "estado.csv").name, file_hash=digest, status="previsualizada", row_count=len(rows), new_rows=sum(row["external_id"] not in existing for row in rows), duplicate_rows=sum(row["external_id"] in existing for row in rows), staging_path=str(staging), created_by=profile.username)
         db.add(record); db.commit()
         return {"ingestion_id": record.id, "rows": record.row_count, "new_rows": record.new_rows, "duplicates": record.duplicate_rows, "sample": [{"id_movimiento": row["external_id"], "fecha_operacion": row["operation_date"].isoformat(), "descripcion_original": row["original_description"], "importe_neto": float(row["net_amount"])} for row in rows[:20]]}
@@ -870,17 +1098,28 @@ def publish_ingestion(ingestion_id: str, _profile=Depends(require_module_access(
         if not record or record.status != "previsualizada": raise HTTPException(409, "La carga no está disponible para publicar")
         staging, destination = Path(record.staging_path or ""), FINANCE_SOURCE_PATHS[record.source_key]
         if not staging.is_file(): raise HTTPException(410, "La previsualización expiró")
-        if not destination.parent.is_dir(): raise HTTPException(503, "La carpeta canónica no está montada")
-        incoming = parse_canonical_csv(staging.read_bytes())
-        current_content = destination.read_bytes() if destination.exists() else (",".join(CANONICAL_COLUMNS) + "\n").encode()
-        current = parse_canonical_csv(current_content)
-        existing_ids = {row["external_id"] for row in current}
-        if any(row["external_id"] in existing_ids for row in incoming): raise HTTPException(409, "La carga contiene movimientos ya existentes; vuelve a previsualizar")
-        backup = destination.with_name(f"{destination.stem}.backup-{datetime.utcnow():%Y%m%dT%H%M%SZ}{destination.suffix}")
-        if destination.exists(): shutil.copy2(destination, backup); record.backup_path = str(backup)
-        with tempfile.NamedTemporaryFile("wb", dir=destination.parent, delete=False) as handle:
-            handle.write(current_content.rstrip(b"\r\n") + b"\n" + staging.read_bytes().split(b"\n", 1)[-1]); temp_name = handle.name
-        os.replace(temp_name, destination)
+        file_id = _text(FINANCE_SOURCE_FILE_IDS.get(record.source_key))
+        use_drive = not destination.is_file() and bool(file_id)
+        if not use_drive and not destination.parent.is_dir():
+            raise HTTPException(503, "La fuente canónica no está disponible localmente ni en Google Drive")
+        try:
+            current_content, _modified = _read_source(record.source_key)
+            combined_content = _combined_canonical_csv(current_content, staging.read_bytes())
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if use_drive:
+            RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            backup = RUNTIME_DIR / f"{record.id}.backup.csv"
+            temporary_backup = backup.with_suffix(".tmp")
+            temporary_backup.write_bytes(current_content); os.chmod(temporary_backup, 0o600); os.replace(temporary_backup, backup)
+            record.backup_path = str(backup)
+            _update_drive_csv(file_id, combined_content)
+        else:
+            backup = destination.with_name(f"{destination.stem}.backup-{datetime.utcnow():%Y%m%dT%H%M%SZ}{destination.suffix}")
+            if destination.exists(): shutil.copy2(destination, backup); record.backup_path = str(backup)
+            with tempfile.NamedTemporaryFile("wb", dir=destination.parent, delete=False) as handle:
+                handle.write(combined_content); temp_name = handle.name
+            os.replace(temp_name, destination)
         record.status = "publicada"; record.published_at = datetime.utcnow(); db.commit()
         sync_source(record.source_key, force=True)
         return {"success": True, "backup_created": bool(record.backup_path), "published_rows": record.new_rows}
@@ -895,7 +1134,13 @@ def revert_ingestion(ingestion_id: str, _profile=Depends(require_module_access("
         if not record or record.status != "publicada" or not record.backup_path: raise HTTPException(409, "La carga no tiene un respaldo reversible")
         backup, destination = Path(record.backup_path), FINANCE_SOURCE_PATHS[record.source_key]
         if not backup.is_file(): raise HTTPException(410, "El respaldo ya no está disponible")
-        with tempfile.NamedTemporaryFile("wb", dir=destination.parent, delete=False) as handle: handle.write(backup.read_bytes()); temp_name = handle.name
-        os.replace(temp_name, destination); record.status = "revertida"; record.reverted_at = datetime.utcnow(); db.commit(); sync_source(record.source_key, force=True)
+        file_id = _text(FINANCE_SOURCE_FILE_IDS.get(record.source_key))
+        if not destination.is_file() and file_id:
+            _update_drive_csv(file_id, backup.read_bytes())
+        else:
+            if not destination.parent.is_dir(): raise HTTPException(503, "La fuente canónica no está disponible")
+            with tempfile.NamedTemporaryFile("wb", dir=destination.parent, delete=False) as handle: handle.write(backup.read_bytes()); temp_name = handle.name
+            os.replace(temp_name, destination)
+        record.status = "revertida"; record.reverted_at = datetime.utcnow(); db.commit(); sync_source(record.source_key, force=True)
         return {"success": True}
     finally: db.close()
