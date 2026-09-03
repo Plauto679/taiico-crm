@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 
 from config import GOOGLE_DRIVE_SOURCE_FOLDERS, METLIFE_PATHS
 from database import (
@@ -81,6 +82,29 @@ def normalize_name(value: str | None) -> str:
     return " ".join(str(value or "").strip().upper().split())
 
 
+def apply_source_rfc(db, client: Client, rfc: str | None) -> bool:
+    """Apply a canonical RFC only when it does not belong to another client."""
+    normalized = normalize_rfc(rfc)
+    if not valid_client_rfc(normalized):
+        return False
+    query = db.query(Client).filter(
+        func.upper(func.trim(Client.rfc)) == normalized,
+    )
+    if client.id:
+        query = query.filter(Client.id != client.id)
+    conflict = query.first()
+    metadata = dict(client.metadata_json or {})
+    metadata["source_rfc"] = normalized
+    if conflict is not None:
+        metadata["source_rfc_conflict_client_id"] = conflict.id
+        client.metadata_json = metadata
+        return False
+    metadata.pop("source_rfc_conflict_client_id", None)
+    client.rfc = normalized
+    client.metadata_json = metadata
+    return True
+
+
 def find_policy(db, policy_number: str | None):
     if not policy_number:
         return None
@@ -114,13 +138,12 @@ def find_or_create_client(db, payload: dict) -> Client:
         if normalize_name(client.full_name) == normalized:
             if not client.email and canonical_email:
                 client.email = canonical_email
-            if valid_client_rfc(source_rfc):
-                client.rfc = source_rfc
+            apply_source_rfc(db, client, source_rfc)
             return client
 
     client = Client(
         full_name=client_name,
-        rfc=source_rfc if valid_client_rfc(source_rfc) else None,
+        rfc=None,
         email=canonical_email or payload.get("email_link_or_value") or None,
         responsible_user_id="usr_pamela",
         status="active",
@@ -130,6 +153,7 @@ def find_or_create_client(db, payload: dict) -> Client:
             "source_rfc": source_rfc or None,
         },
     )
+    apply_source_rfc(db, client, source_rfc)
     db.add(client)
     db.flush()
     return client
@@ -239,8 +263,8 @@ def ingest_rows(db, source_document, parsed_rows, workbook_issues, parser_name, 
         renewal = None
         if policy and deadline:
             source_rfc = normalize_rfc(payload.get("rfc"))
-            if policy.client and valid_client_rfc(source_rfc):
-                policy.client.rfc = source_rfc
+            if policy.client:
+                apply_source_rfc(db, policy.client, source_rfc)
             if policy.client and not policy.client.email:
                 try:
                     policy.client.email = lookup_client_email(policy.client.full_name)
