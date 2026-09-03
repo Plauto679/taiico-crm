@@ -15,11 +15,12 @@ interface RenovacionesViewProps {
     aarcoRenewals?: RenovacionAarco[];
     promotoriaSuraRenewals?: RenovacionPromotoriaSura[];
     insurer: string;
+    initialTab?: 'VIDA' | 'GMM';
 }
 
-export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRenewals = [], aarcoRenewals = [], promotoriaSuraRenewals = [], insurer }: RenovacionesViewProps) {
+export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRenewals = [], aarcoRenewals = [], promotoriaSuraRenewals = [], insurer, initialTab = 'VIDA' }: RenovacionesViewProps) {
     const router = useRouter();
-    const [activeTab, setActiveTab] = useState<'VIDA' | 'GMM'>('VIDA');
+    const [activeTab, setActiveTab] = useState<'VIDA' | 'GMM'>(initialTab);
     const [selectedRow, setSelectedRow] = useState<any>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [visibleRenewals, setVisibleRenewals] = useState<any[]>([]);
@@ -68,6 +69,13 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
     const handleRowClick = (row: any) => {
         setSelectedRow(row);
         setIsModalOpen(true);
+    };
+
+    const handleTabChange = (tab: 'VIDA' | 'GMM') => {
+        setActiveTab(tab);
+        const params = new URLSearchParams(window.location.search);
+        params.set('renewalType', tab);
+        router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
     };
 
     const updateSelectedRenewal = (updates: Record<string, unknown>) => {
@@ -306,13 +314,13 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                         <>
                             <button
                                 className={`px-4 py-2 font-medium ${activeTab === 'VIDA' ? 'border-b-2 border-white text-white' : 'text-white/70 hover:text-white'}`}
-                                onClick={() => setActiveTab('VIDA')}
+                                onClick={() => handleTabChange('VIDA')}
                             >
                                 Vida
                             </button>
                             <button
                                 className={`px-4 py-2 font-medium ${activeTab === 'GMM' ? 'border-b-2 border-white text-white' : 'text-white/70 hover:text-white'}`}
-                                onClick={() => setActiveTab('GMM')}
+                                onClick={() => handleTabChange('GMM')}
                             >
                                 GMM
                             </button>
