@@ -62,15 +62,13 @@ class MetLifeGmmCollectionAdapter(MetLifeGmmPortalAdapter):
                 page = portal_page(context, METLIFE_PORTAL_URL)
 
                 step = self.record_step("collection_open_new_portal", url=METLIFE_PORTAL_URL)
-                page.goto(METLIFE_PORTAL_URL, wait_until="domcontentloaded", timeout=90_000)
-                self.complete_step(step, current_url=page.url)
+                reused_session = self.prepare_clientes_beta(page)
+                self.complete_step(step, current_url=page.url, reused_session=reused_session)
 
                 step = self.record_step("collection_authenticate")
-                self.login(page)
-                self.complete_step(step, current_url=page.url)
+                self.complete_step(step, current_url=page.url, reused_session=reused_session)
 
                 step = self.record_step("collection_open_clientes_beta")
-                self.open_clientes_beta(page)
                 self.complete_step(step, current_url=page.url)
 
                 step = self.record_step("collection_search_rfc", rfc=task.rfc)

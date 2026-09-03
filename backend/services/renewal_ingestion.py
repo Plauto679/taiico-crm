@@ -23,6 +23,7 @@ from database import (
 )
 from drive.client import build_drive_service, download_drive_file
 from services.client_email_directory import lookup_client_email
+from services.client_folders import normalize_rfc, valid_client_rfc
 from parsers.metlife_gmm_renovaciones import (
     PARSER_VERSION as GMM_PARSER_VERSION,
     parse_metlife_gmm_renewal_workbook,
@@ -102,6 +103,7 @@ def find_or_create_client(db, payload: dict) -> Client:
     client_name = str(payload.get("client_name") or "METLIFE CLIENTE POR CONFIRMAR").strip()
     normalized = normalize_name(client_name)
     canonical_email = None
+    source_rfc = normalize_rfc(payload.get("rfc"))
     try:
         canonical_email = lookup_client_email(client_name)
     except Exception:
@@ -112,17 +114,20 @@ def find_or_create_client(db, payload: dict) -> Client:
         if normalize_name(client.full_name) == normalized:
             if not client.email and canonical_email:
                 client.email = canonical_email
+            if valid_client_rfc(source_rfc):
+                client.rfc = source_rfc
             return client
 
     client = Client(
         full_name=client_name,
+        rfc=source_rfc if valid_client_rfc(source_rfc) else None,
         email=canonical_email or payload.get("email_link_or_value") or None,
         responsible_user_id="usr_pamela",
         status="active",
         metadata_json={
             "created_from": "canonical_metlife_renewal_ingestion",
             "requires_human_review": True,
-            "source_rfc": payload.get("rfc"),
+            "source_rfc": source_rfc or None,
         },
     )
     db.add(client)
@@ -233,6 +238,9 @@ def ingest_rows(db, source_document, parsed_rows, workbook_issues, parser_name, 
 
         renewal = None
         if policy and deadline:
+            source_rfc = normalize_rfc(payload.get("rfc"))
+            if policy.client and valid_client_rfc(source_rfc):
+                policy.client.rfc = source_rfc
             if policy.client and not policy.client.email:
                 try:
                     policy.client.email = lookup_client_email(policy.client.full_name)
@@ -409,6 +417,47 @@ def sync_local_canonical_renewals(
         raise
     finally:
         db.close()
+
+
+def refresh_and_sync_canonical_renewals(
+    source_key: str,
+    *,
+    auto_create_missing_policies: bool = True,
+) -> dict:
+    """Download the current Drive workbook, validate it, then reconcile SQL."""
+    spec = SUPPORTED_SOURCES.get(source_key)
+    canonical_path = LOCAL_CANONICAL_PATHS.get(source_key)
+    config = GOOGLE_DRIVE_SOURCE_FOLDERS.get(source_key) or {}
+    file_id = config.get("file_id")
+    if not spec or not canonical_path:
+        raise ValueError(f"No canonical renewal parser is configured for {source_key}")
+    if not file_id:
+        raise ValueError(f"Missing canonical Drive file ID for {source_key}")
+
+    canonical_path = Path(canonical_path)
+    canonical_path.parent.mkdir(parents=True, exist_ok=True)
+    parser = spec[0]
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{canonical_path.stem}-refresh-",
+            suffix=canonical_path.suffix or ".xlsx",
+            dir=canonical_path.parent,
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+        download_drive_file(build_drive_service(), file_id, temporary_path)
+        # Preserve the installed workbook when the downloaded source is invalid.
+        parser(temporary_path)
+        temporary_path.replace(canonical_path)
+        temporary_path = None
+        return sync_local_canonical_renewals(
+            source_key,
+            auto_create_missing_policies=auto_create_missing_policies,
+        )
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 @router.post("/canonical/run")

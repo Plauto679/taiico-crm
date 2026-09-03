@@ -41,6 +41,7 @@ from services.metlife_agent_directory import (
     resolve_agent_contact,
 )
 from services.session_auth import current_username
+from services.client_folders import normalize_rfc, valid_client_rfc
 from services.auth import AccessProfile
 from services.authorization import (
     current_access_profile,
@@ -495,6 +496,7 @@ def metlife_gmm_retrieval_queue_candidates(
         "candidates": candidates,
     }
 
+
 def upsert_retrieval_task(db, payload: dict) -> tuple[PolicyDocumentRetrievalTask, bool]:
     existing = db.query(PolicyDocumentRetrievalTask).filter(
         PolicyDocumentRetrievalTask.insurer_id == payload["insurer_id"],
@@ -504,6 +506,11 @@ def upsert_retrieval_task(db, payload: dict) -> tuple[PolicyDocumentRetrievalTas
     ).first()
 
     if existing:
+        incoming_rfc = normalize_rfc(payload.get("rfc"))
+        preserve_recovered_rfc = (
+            not valid_client_rfc(incoming_rfc)
+            and valid_client_rfc(normalize_rfc(existing.rfc))
+        )
         for field in [
             "original_policy_number",
             "client_name",
@@ -513,6 +520,7 @@ def upsert_retrieval_task(db, payload: dict) -> tuple[PolicyDocumentRetrievalTas
             "priority",
             "document_status",
             "expediente_link",
+            "source_name",
             "source_path",
             "source_sheet_name",
             "source_row_number",
@@ -520,6 +528,16 @@ def upsert_retrieval_task(db, payload: dict) -> tuple[PolicyDocumentRetrievalTas
             "source_payload",
             "normalized_payload",
         ]:
+            if field == "rfc" and preserve_recovered_rfc:
+                continue
+            if field == "normalized_payload" and preserve_recovered_rfc:
+                normalized_payload = dict(payload.get(field) or {})
+                normalized_payload["rfc"] = existing.rfc
+                for key, value in (existing.normalized_payload or {}).items():
+                    if key.startswith("rfc_recovered_"):
+                        normalized_payload[key] = value
+                setattr(existing, field, normalized_payload)
+                continue
             setattr(existing, field, payload.get(field))
         existing.updated_at = datetime.utcnow()
         return existing, False
@@ -1021,15 +1039,20 @@ async def preview_metlife_gmm_retrieval_queue(
         "sample_tasks": sample,
     }
 
-@router.post("/metlife/gmm/retrieval-queue/build")
-async def build_metlife_gmm_retrieval_queue(
-    source_path: Optional[str] = Body(None, embed=True),
-    start_date: Optional[str] = Body(None, embed=True),
-    end_date: Optional[str] = Body(None, embed=True),
-    days: Optional[int] = Body(None, embed=True),
-    limit: int = Body(25, embed=True),
-):
-    queue = metlife_gmm_retrieval_queue_candidates(source_path, start_date, end_date, days)
+def build_metlife_gmm_retrieval_queue_records(
+    source_path: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    days: Optional[int] = None,
+    limit: int = 25,
+) -> dict:
+    """Refresh the queue from the canonical workbook, the operational truth."""
+    queue = metlife_gmm_retrieval_queue_candidates(
+        source_path,
+        start_date,
+        end_date,
+        days,
+    )
     db = SessionLocal()
     try:
         created = 0
@@ -1068,11 +1091,34 @@ async def build_metlife_gmm_retrieval_queue(
             "row_issues_count": queue["row_issues_count"],
             "sample_tasks": [serialize_retrieval_task(task) for task in tasks[: max(0, min(limit, 100))]],
         }
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to build MetLife GMM retrieval queue: {e}")
+        raise
     finally:
         db.close()
+
+
+@router.post("/metlife/gmm/retrieval-queue/build")
+async def build_metlife_gmm_retrieval_queue(
+    source_path: Optional[str] = Body(None, embed=True),
+    start_date: Optional[str] = Body(None, embed=True),
+    end_date: Optional[str] = Body(None, embed=True),
+    days: Optional[int] = Body(None, embed=True),
+    limit: int = Body(25, embed=True),
+):
+    try:
+        return build_metlife_gmm_retrieval_queue_records(
+            source_path=source_path,
+            start_date=start_date,
+            end_date=end_date,
+            days=days,
+            limit=limit,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to build MetLife GMM retrieval queue: {e}",
+        ) from e
 
 @router.get("/retrieval-queue")
 async def list_policy_document_retrieval_queue(

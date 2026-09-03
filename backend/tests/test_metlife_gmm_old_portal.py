@@ -2,11 +2,14 @@ import sys
 import unittest
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from adapters.metlife_gmm_old_portal import (
+    MetLifeGmmOldPortalAdapter,
     canonical_policy_number,
     client_folder_name,
     policy_row_matches,
@@ -62,6 +65,39 @@ class MetLifeGmmOldPortalTests(unittest.TestCase):
                 created_at=datetime(2026, 8, 29, 9, 7),
             ),
             "2026-08-29 09-07 Renovacion póliza 1344950 2026 - 2027",
+        )
+
+    def test_search_falls_back_from_rfc_to_policy_and_name(self):
+        adapter = MetLifeGmmOldPortalAdapter(
+            username="operator",
+            password="secret",
+        )
+        calls = []
+        adapter.search_rfc = lambda _page, value: calls.append(("rfc", value))
+        adapter.search_policy = lambda _page, value: calls.append(("policy", value))
+        adapter.search_name = lambda _page, value: calls.append(("name", value))
+        matched_row = MagicMock()
+        adapter.wait_for_matching_policy_rows = MagicMock(
+            side_effect=[[], [], [(matched_row, "SABM7809274J4")]]
+        )
+
+        adapter.search_with_fallbacks(
+            SimpleNamespace(url="https://servicios.metlife.com.mx/search"),
+            self.task(),
+            stop_after=None,
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                ("rfc", "SABM7809274J4"),
+                ("policy", "1066235"),
+                ("name", "JOSE MIGUEL SANCHEZ BAUTISTA"),
+            ],
+        )
+        self.assertEqual(
+            [step.status for step in adapter.steps],
+            ["failed", "failed", "completed"],
         )
 
 

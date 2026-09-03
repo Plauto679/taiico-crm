@@ -117,6 +117,49 @@ class MetLifeGmmMfaContinuationTests(unittest.TestCase):
         )
         first_button.click.assert_called_once_with()
 
+    def test_clientes_beta_search_falls_back_in_required_order(self):
+        adapter = self.make_adapter()
+        calls = []
+        adapter.search_by_rfc = lambda _page, value: calls.append(("rfc", value))
+        adapter.search_by_policy = lambda _page, value: calls.append(("policy", value))
+        adapter.search_by_name = lambda _page, value: calls.append(("name", value))
+        label = MagicMock()
+        adapter.wait_for_matching_policy = MagicMock(
+            side_effect=[
+                RuntimeError("no RFC result"),
+                RuntimeError("no policy result"),
+                label,
+            ]
+        )
+        page = MagicMock()
+        page.url = "https://agentes.metlife.mx/app/graph-clients"
+
+        adapter.search_with_fallbacks(
+            page,
+            MetLifeGmmPortalTask(
+                id="task",
+                policy_number="1353851",
+                original_policy_number="1066235",
+                rfc="SABM7809274J4",
+                client_name="JOSE MIGUEL SANCHEZ BAUTISTA",
+            ),
+            stop_after=None,
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                ("rfc", "SABM7809274J4"),
+                ("policy", "1353851"),
+                ("name", "JOSE MIGUEL SANCHEZ BAUTISTA"),
+            ],
+        )
+        label.click.assert_called_once_with()
+        self.assertEqual(
+            [step.status for step in adapter.steps],
+            ["failed", "failed", "completed"],
+        )
+
     def test_download_waits_for_rows_and_uses_dom_click_for_unchecked_boxes(self):
         with tempfile.TemporaryDirectory() as download_root:
             adapter = MetLifeGmmPortalAdapter(

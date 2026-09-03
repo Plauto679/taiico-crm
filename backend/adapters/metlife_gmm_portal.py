@@ -15,9 +15,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from services.drive_folder_naming import is_process_folder_for, process_folder_descriptor, process_folder_name
+from services.client_folders import normalize_rfc, valid_client_rfc
 
 
 METLIFE_PORTAL_URL = "https://agentes.metlife.mx/"
+METLIFE_CLIENTES_BETA_URL = "https://agentes.metlife.mx/app/graph-clients"
 TARGET_DRIVE_FOLDER_ID_ENV = "GOOGLE_DRIVE_RENEWALS_METLIFE_GMM_FOLDER_ID"
 USERNAME_ENV = "METLIFE_AGENT_PORTAL_USERNAME"
 PASSWORD_ENV = "METLIFE_AGENT_PORTAL_PASSWORD"
@@ -29,11 +31,14 @@ DEFAULT_CHROME_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Googl
 AdapterStopAfter = Literal[
     "login",
     "clientes_beta",
+    "search_rfc",
     "search_policy",
+    "search_name",
     "confirm_policy_match",
     "download_policy_document",
     "upload_to_drive",
 ]
+SEARCH_RESULT_TIMEOUT_MS = 10_000
 
 
 @dataclass
@@ -124,6 +129,7 @@ def ensure_persistent_chrome(profile_dir: Path) -> None:
             f"--remote-debugging-port={chrome_cdp_port()}",
             "--remote-debugging-address=127.0.0.1",
             f"--user-data-dir={profile_dir}",
+            "--disable-extensions",
             "--no-first-run",
             "--no-default-browser-check",
             METLIFE_PORTAL_URL,
@@ -285,7 +291,11 @@ class MetLifeGmmPortalAdapter:
     ):
         self.headless = headless
         self.download_root = Path(download_root or tempfile.mkdtemp(prefix="taiico-metlife-downloads-"))
-        self.username, self.password = ensure_credentials(username, password)
+        # Credentials are only required when the persistent browser is not
+        # already authenticated. This lets scheduled runs reuse a valid portal
+        # session without triggering a new login/MFA challenge.
+        self.username = username or os.getenv(USERNAME_ENV)
+        self.password = password or os.getenv(PASSWORD_ENV)
         self.session_profile_dir = Path(session_profile_dir or stable_chrome_profile_dir())
         self.steps: list[AdapterStepResult] = []
 
@@ -308,11 +318,35 @@ class MetLifeGmmPortalAdapter:
         if stop_after == step_name:
             raise StopIteration(step_name)
 
+    @staticmethod
+    def authenticated_app_session(page) -> bool:
+        current_url = page.url if isinstance(page.url, str) else ""
+        parsed = urlparse(current_url)
+        return parsed.netloc.casefold() == "agentes.metlife.mx" and parsed.path.startswith("/app/")
+
+    def prepare_clientes_beta(self, page) -> bool:
+        """Open Clientes Beta while preserving an already authenticated SPA session."""
+        reused_session = self.authenticated_app_session(page)
+        if reused_session:
+            if "/graph-clients" not in urlparse(page.url).path:
+                page.goto(
+                    METLIFE_CLIENTES_BETA_URL,
+                    wait_until="domcontentloaded",
+                    timeout=60_000,
+                )
+            page.locator("#searchName").wait_for(state="visible", timeout=60_000)
+            return True
+
+        page.goto(METLIFE_PORTAL_URL, wait_until="domcontentloaded", timeout=60_000)
+        self.login(page)
+        self.open_clientes_beta(page)
+        return False
+
     def run(
         self,
         task: MetLifeGmmPortalTask,
         *,
-        stop_after: AdapterStopAfter = "confirm_policy_match",
+        stop_after: AdapterStopAfter | None = "confirm_policy_match",
         upload_to_drive: bool = False,
         target_drive_folder_id: str | None = None,
         resume_mfa: bool = False,
@@ -342,27 +376,24 @@ class MetLifeGmmPortalAdapter:
                     self.complete_step(step, current_url=page.url)
                 else:
                     step = self.record_step("open_browser", url=METLIFE_PORTAL_URL)
-                    page.goto(METLIFE_PORTAL_URL, wait_until="domcontentloaded", timeout=60_000)
-                    self.complete_step(step, current_url=page.url)
+                    reused_session = self.prepare_clientes_beta(page)
+                    self.complete_step(step, current_url=page.url, reused_session=reused_session)
                     self.maybe_stop(stop_after, "open_browser")
 
                     step = self.record_step("authenticate_portal")
-                    self.login(page)
-                    self.complete_step(step, current_url=page.url)
+                    self.complete_step(step, current_url=page.url, reused_session=reused_session)
                     self.maybe_stop(stop_after, "login")
 
                 step = self.record_step("clientes_beta")
-                self.open_clientes_beta(page)
+                if resume_mfa:
+                    self.open_clientes_beta(page)
                 self.complete_step(step, current_url=page.url)
                 self.maybe_stop(stop_after, "clientes_beta")
 
-                step = self.record_step("search_policy", rfc=task.rfc, policy_number=task.policy_number)
-                self.search_by_rfc(page, task.rfc)
-                self.complete_step(step, current_url=page.url)
-                self.maybe_stop(stop_after, "search_policy")
+                self.search_with_fallbacks(page, task, stop_after=stop_after)
 
                 step = self.record_step("confirm_policy_match", rfc=task.rfc, policy_number=task.policy_number)
-                self.open_matching_policy(page, task.policy_number)
+                self.open_policy_documents(page)
                 self.complete_step(step, current_url=page.url)
                 self.maybe_stop(stop_after, "confirm_policy_match")
 
@@ -439,6 +470,9 @@ class MetLifeGmmPortalAdapter:
             )
 
     def login(self, page):
+        self.username, self.password = ensure_credentials(
+            self.username, self.password
+        )
         for _ in range(60):
             body_text = page.locator("body").inner_text(timeout=10_000)
             if "Clientes Beta" in body_text:
@@ -494,28 +528,37 @@ class MetLifeGmmPortalAdapter:
         page.wait_for_load_state("networkidle", timeout=60_000)
         page.wait_for_url(re.compile(r".*/graph-clients.*|.*/clients.*"), timeout=60_000)
 
-    def search_by_rfc(self, page, rfc: str):
+    def search(self, page, search_label: str, value: str) -> None:
+        value = " ".join(str(value or "").split())
+        if not value:
+            raise MetLifePortalAdapterError(
+                f"No hay valor para buscar por {search_label}"
+            )
         buscar = page.get_by_text("Buscar por", exact=True).first.locator("..")
         buscar.click()
-        page.get_by_text("RFC Contratante", exact=True).click()
+        page.get_by_text(search_label, exact=True).click()
 
         search_input = page.locator("#searchName")
         search_input.wait_for(state="visible", timeout=15_000)
         try:
-            search_input.fill(rfc)
+            search_input.fill("")
+            search_input.fill(value)
         except Exception:
-            page.keyboard.insert_text(rfc)
+            page.keyboard.press("Meta+A")
+            page.keyboard.insert_text(value)
         page.get_by_test_id("searchIconId").click()
-        page.wait_for_load_state("networkidle", timeout=60_000)
-        page.wait_for_selector(f"text={rfc}", timeout=60_000)
 
-    def select_matching_policy(self, page, *policy_numbers: str):
+    def search_by_rfc(self, page, rfc: str):
+        self.search(page, "RFC Contratante", rfc)
+
+    def search_by_policy(self, page, policy_number: str):
+        self.search(page, "No. de Póliza", policy_number)
+
+    def search_by_name(self, page, client_name: str):
+        self.search(page, "Contratante", client_name)
+
+    def matching_policy_labels(self, page, *policy_numbers: str):
         supplied = [value for value in policy_numbers if policy_digits(value)]
-        if not supplied:
-            raise MetLifePortalAdapterError("No policy number was supplied for the portal search.")
-
-        # Clientes Beta is React/Material UI.  The policy itself is the clickable
-        # span; the surrounding card has generated MuiPaper/jss class names.
         labels = page.locator("span").filter(has_text=re.compile("MEDICALIFE", re.I))
         candidates: list[tuple[int, Any]] = []
         for index in range(labels.count()):
@@ -526,18 +569,73 @@ class MetLifeGmmPortalAdapter:
             score = policy_candidate_match_score(text, supplied[0], *supplied[1:])
             if score:
                 candidates.append((score, label))
-
         best_score = max((score for score, _ in candidates), default=0)
-        best = [label for score, label in candidates if score == best_score]
-        if len(best) != 1:
-            wanted = ", ".join(
-                policy_digits(value).lstrip("0") or "0" for value in supplied
-            )
-            raise MetLifePortalAdapterError(
-                "Expected one matching GMM policy label for "
-                f"{wanted}; found {len(best)} matches."
-            )
-        best[0].click()
+        return [label for score, label in candidates if score == best_score]
+
+    def wait_for_matching_policy(self, page, *policy_numbers: str):
+        deadline = time.monotonic() + (SEARCH_RESULT_TIMEOUT_MS / 1000)
+        while time.monotonic() < deadline:
+            best = self.matching_policy_labels(page, *policy_numbers)
+            if len(best) == 1:
+                return best[0]
+            if len(best) > 1:
+                break
+            time.sleep(0.25)
+        wanted = ", ".join(
+            policy_digits(value).lstrip("0") or "0"
+            for value in policy_numbers
+            if policy_digits(value)
+        )
+        raise MetLifePortalAdapterError(
+            f"Expected one matching GMM policy label for {wanted}; "
+            f"found {len(self.matching_policy_labels(page, *policy_numbers))} matches."
+        )
+
+    def search_with_fallbacks(
+        self,
+        page,
+        task: MetLifeGmmPortalTask,
+        *,
+        stop_after: AdapterStopAfter | None,
+    ) -> None:
+        attempts = []
+        if valid_client_rfc(normalize_rfc(task.rfc)):
+            attempts.append(("search_rfc", task.rfc, self.search_by_rfc))
+        attempts.extend(
+            [
+                ("search_policy", task.policy_number, self.search_by_policy),
+                ("search_name", task.client_name, self.search_by_name),
+            ]
+        )
+        policy_numbers = (task.policy_number, task.original_policy_number or "")
+        errors: list[str] = []
+        for step_name, value, search in attempts:
+            step = self.record_step(step_name, query=value)
+            try:
+                search(page, value)
+                label = self.wait_for_matching_policy(page, *policy_numbers)
+                label.click()
+                page.get_by_text("Cobranza", exact=True).last.wait_for(
+                    state="visible", timeout=SEARCH_RESULT_TIMEOUT_MS
+                )
+                self.complete_step(step, current_url=page.url, exact_policy_match=True)
+                self.maybe_stop(stop_after, step_name)
+                return
+            except StopIteration:
+                raise
+            except Exception as exc:
+                self.fail_step(step, exc)
+                errors.append(f"{step_name}: {exc}")
+        raise MetLifePortalAdapterError(
+            "No se localizó la póliza en Clientes Beta tras RFC, póliza y nombre: "
+            + " | ".join(errors)
+        )
+
+    def select_matching_policy(self, page, *policy_numbers: str):
+        supplied = [value for value in policy_numbers if policy_digits(value)]
+        if not supplied:
+            raise MetLifePortalAdapterError("No policy number was supplied for the portal search.")
+        self.wait_for_matching_policy(page, *supplied).click()
         page.wait_for_load_state("networkidle", timeout=60_000)
         page.get_by_text("Cobranza", exact=True).last.wait_for(
             state="visible", timeout=60_000
@@ -545,6 +643,9 @@ class MetLifeGmmPortalAdapter:
 
     def open_matching_policy(self, page, policy_number: str):
         self.select_matching_policy(page, policy_number)
+        self.open_policy_documents(page)
+
+    def open_policy_documents(self, page):
         page.get_by_text("Documentos de la póliza", exact=True).click()
         page.wait_for_load_state("networkidle", timeout=60_000)
         page.get_by_text(re.compile(r"^Nombre del documento$", re.I)).last.wait_for(

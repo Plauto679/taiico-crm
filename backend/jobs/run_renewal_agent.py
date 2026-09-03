@@ -13,15 +13,13 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from sqlalchemy import and_, or_
-
-
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = BACKEND_DIR.parent
 sys.path.insert(0, str(BACKEND_DIR))
 load_dotenv(BACKEND_DIR / ".env", override=True)
 
 from adapters.metlife_gmm_portal import (  # noqa: E402
+    MetLifeGmmPortalAdapter,
     MetLifeGmmPortalTask,
     chrome_cdp_port,
     chrome_server_ready,
@@ -47,6 +45,7 @@ from database import (  # noqa: E402
     SessionLocal,
 )
 from services.client_email_directory import lookup_client_email  # noqa: E402
+from services.client_folders import normalize_rfc, valid_client_rfc  # noqa: E402
 from services.metlife_agent_directory import (  # noqa: E402
     AgentContactResolutionError,
     resolve_agent_contact,
@@ -59,6 +58,7 @@ from services.automatic_mails import (  # noqa: E402
 from services.renewal_agent_api import TAIICO_AGENT_CODES  # noqa: E402
 from services.renovaciones import (  # noqa: E402
     SmtpDeliveryUncertainError,
+    build_metlife_gmm_retrieval_queue_records,
     build_metlife_gmm_agent_email_body,
     build_metlife_gmm_renewal_email_body,
     persist_adapter_steps,
@@ -67,6 +67,9 @@ from services.renovaciones import (  # noqa: E402
     renewal_email_recipients,
     renewal_smtp_settings,
     send_email_smtp,
+)
+from services.renewal_ingestion import (  # noqa: E402
+    refresh_and_sync_canonical_renewals,
 )
 
 
@@ -99,6 +102,13 @@ AUTOMATION_PROTECTED_RENEWAL_STATUSES = {
     "enviado",
     "revision manual necesaria",
 }
+RETRYABLE_RETRIEVAL_TASK_STATUSES = (
+    "approved",
+    "queued",
+    "failed",
+    "in_progress",
+    "retrieved",
+)
 
 
 def renewal_status_blocks_automation(value: str | None) -> bool:
@@ -299,14 +309,13 @@ def update_crm_renewal_fields(
     expediente_link: str | None,
     renewal_status: str | None = None,
 ) -> None:
-    if not expediente_link:
-        return
     policy = db.query(Policy).filter(
         Policy.policy_number == str(task.policy_number).strip()
     ).first()
     if policy is None:
         return
-    policy.document_link = expediente_link
+    if expediente_link:
+        policy.document_link = expediente_link
     renewal = db.query(Renewal).filter(
         Renewal.original_policy_id == policy.id
     ).first()
@@ -322,6 +331,63 @@ def update_crm_renewal_fields(
     if renewal_status:
         renewal.insurer_response = renewal_status
     renewal.updated_at = datetime.utcnow()
+
+
+def persist_manual_review(task_id: str, reason: str) -> bool:
+    """Assign terminal manual review without requiring a downloaded document."""
+    db = SessionLocal()
+    try:
+        task = db.get(PolicyDocumentRetrievalTask, task_id)
+        if task is None:
+            raise RuntimeError(f"No existe la tarea de renovación {task_id}")
+        update_crm_renewal_fields(
+            db,
+            task,
+            expediente_link=None,
+            renewal_status="Revision Manual Necesaria",
+        )
+        payload = dict(task.normalized_payload or {})
+        payload["manual_review"] = {
+            "reason": reason,
+            "assigned_at": datetime.utcnow().isoformat(),
+        }
+        task.normalized_payload = payload
+        db.commit()
+        return True
+    finally:
+        db.close()
+
+
+def persist_recovered_rfc(task_id: str, rfc: str) -> None:
+    """Persist an RFC recovered from an exact policy match in the old portal."""
+    normalized = normalize_rfc(rfc)
+    if not valid_client_rfc(normalized):
+        raise ValueError(f"RFC recuperado inválido: {rfc}")
+    db = SessionLocal()
+    try:
+        task = db.get(PolicyDocumentRetrievalTask, task_id)
+        if task is None:
+            raise RuntimeError(f"No existe la tarea de renovación {task_id}")
+        task.rfc = normalized
+        payload = dict(task.normalized_payload or {})
+        payload["rfc"] = normalized
+        payload["rfc_recovered_from_old_portal"] = True
+        task.normalized_payload = payload
+        policy = db.query(Policy).filter(
+            Policy.insurer_id == "metlife",
+            Policy.policy_number == str(task.policy_number).strip(),
+        ).first()
+        if policy is not None and policy.client is not None:
+            policy.client.rfc = normalized
+            client_metadata = dict(policy.client.metadata_json or {})
+            client_metadata["rfc_recovered_from_old_portal"] = {
+                "task_id": task.id,
+                "recovered_at": datetime.utcnow().isoformat(),
+            }
+            policy.client.metadata_json = client_metadata
+        db.commit()
+    finally:
+        db.close()
 
 
 def persist_collection_check(
@@ -438,23 +504,24 @@ def selected_tasks(
     cutoff: date,
     *,
     process_date: date | None = None,
+    start_date: date | None = None,
 ) -> list[PolicyDocumentRetrievalTask]:
     db = SessionLocal()
     try:
-        tasks = (
-            db.query(PolicyDocumentRetrievalTask)
-            .filter(
-                PolicyDocumentRetrievalTask.insurer_id == "metlife",
-                PolicyDocumentRetrievalTask.product_branch == "GMM",
-                or_(
-                    PolicyDocumentRetrievalTask.status == "approved",
-                    and_(
-                        PolicyDocumentRetrievalTask.status == "queued",
-                        PolicyDocumentRetrievalTask.attempt_count > 0,
-                    ),
-                ),
-                PolicyDocumentRetrievalTask.renewal_deadline <= cutoff,
+        query = db.query(PolicyDocumentRetrievalTask).filter(
+            PolicyDocumentRetrievalTask.insurer_id == "metlife",
+            PolicyDocumentRetrievalTask.product_branch == "GMM",
+            PolicyDocumentRetrievalTask.status.in_(
+                RETRYABLE_RETRIEVAL_TASK_STATUSES
+            ),
+            PolicyDocumentRetrievalTask.renewal_deadline <= cutoff,
+        )
+        if start_date is not None:
+            query = query.filter(
+                PolicyDocumentRetrievalTask.renewal_deadline >= start_date
             )
+        tasks = (
+            query
             .order_by(
                 PolicyDocumentRetrievalTask.renewal_deadline.asc(),
                 PolicyDocumentRetrievalTask.attempt_count.asc(),
@@ -500,6 +567,37 @@ def selected_tasks(
         )
     finally:
         db.close()
+
+
+def refresh_renewal_queue(
+    now: datetime,
+    cutoff: date,
+    *,
+    start_date: date | None = None,
+) -> dict:
+    """Refresh Excel -> SQL -> queue for the requested execution window."""
+    effective_start = start_date or now.date()
+    synchronization = refresh_and_sync_canonical_renewals(
+        "renovaciones.metlife_gmm",
+        auto_create_missing_policies=True,
+    )
+    result = build_metlife_gmm_retrieval_queue_records(
+        start_date=effective_start.isoformat(),
+        end_date=cutoff.isoformat(),
+        limit=0,
+    )
+    emit(
+        "queue_refreshed",
+        created=result["created"],
+        updated=result["updated"],
+        total_queued=result["total_queued"],
+        window_start=result["window_start"],
+        window_end=result["window_end"],
+        sql_rows_imported=synchronization["run"]["rows_imported"],
+        sql_rows_updated=synchronization["run"]["rows_updated"],
+    )
+    result["renewal_sync"] = synchronization
+    return result
 
 
 def create_run(
@@ -598,7 +696,9 @@ def persist_result(
             task.expediente_link = expediente_link
             task.target_drive_folder_id = result_data.get("drive_folder_id")
             task.target_drive_folder_path = expediente_link
-            task.retrieval_adapter = OLD_PORTAL_ADAPTER_NAME
+            task.retrieval_adapter = (
+                result_data.get("retrieval_adapter") or OLD_PORTAL_ADAPTER_NAME
+            )
             task.completed_at = datetime.utcnow()
             task.last_error = error
             update_crm_renewal_fields(db, task, expediente_link, renewal_status)
@@ -696,13 +796,17 @@ def is_portal_failure(result_data: dict) -> bool:
             "open_browser",
             "authenticate_portal",
             "clientes_beta",
+            "search_rfc",
             "search_policy",
+            "search_name",
             "confirm_policy_match",
             "download_policy_document",
             "open_old_portal",
             "authenticate_old_portal",
             "open_contractual_search",
             "search_rfc",
+            "search_policy",
+            "search_name",
             "download_documents",
         }
         for name in failed_steps
@@ -733,61 +837,124 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
         upload_to_drive=True,
     )
     data = result_to_dict(result)
+    data["retrieval_adapter"] = OLD_PORTAL_ADAPTER_NAME
+    recovered_rfc = normalize_rfc(result.rfc or "")
+    if valid_client_rfc(recovered_rfc) and recovered_rfc != normalize_rfc(task.rfc or ""):
+        persist_recovered_rfc(task.id, recovered_rfc)
+        task.rfc = recovered_rfc
+
+    old_portal_detail = result.error_message or result.status
     if result.status != "completed":
-        detail = result.error_message or result.status
+        emit(
+            "portal_fallback_started",
+            policy=task.policy_number,
+            from_portal="old",
+            to_portal="clientes_beta",
+        )
+        new_result = MetLifeGmmPortalAdapter(headless=False).run(
+            MetLifeGmmPortalTask(
+                id=task.id,
+                policy_number=task.policy_number,
+                rfc=task.rfc or "",
+                client_name=task.client_name,
+                renewal_deadline=task.renewal_deadline,
+                original_policy_number=task.original_policy_number,
+            ),
+            stop_after=None,
+            upload_to_drive=True,
+            target_drive_folder_id=target_drive_folder_id(),
+        )
+        new_data = result_to_dict(new_result)
+        new_data["steps"] = [
+            *(data.get("steps") or []),
+            *(new_data.get("steps") or []),
+        ]
+        new_data["retrieval_adapter"] = "metlife_gmm_portal"
+        data = new_data
+        result = new_result
+        emit(
+            "portal_fallback_finished",
+            policy=task.policy_number,
+            status=result.status,
+        )
+
+    if result.status != "completed":
+        detail = (
+            f"Portal antiguo: {old_portal_detail} | Clientes Beta: "
+            f"{result.error_message or result.status}"
+        )
         collection_data = None
         collection_handled_failure = False
         manual_review_assigned = False
-        if should_check_collection_after_failure(detail):
-            emit(
-                "collection_check_started",
-                policy=task.policy_number,
-                rfc=task.rfc,
-            )
-            collection_result = check_metlife_gmm_collection(
-                MetLifeGmmPortalTask(
-                    id=task.id,
-                    policy_number=task.policy_number,
-                    original_policy_number=task.original_policy_number,
-                    rfc=task.rfc or "",
-                    client_name=task.client_name,
-                    renewal_deadline=task.renewal_deadline,
-                ),
-                headless=False,
-            )
-            collection_data = collection_result_to_dict(collection_result)
-            data["steps"] = [
-                *(data.get("steps") or []),
-                *(collection_data.get("steps") or []),
-            ]
-            paid_until = collection_result.paid_until or COLLECTION_FAILURE_DATE
-            collection_handled_failure = collection_result.status == "completed"
-            manual_review_assigned = persist_collection_check(
-                task.id,
-                paid_until=paid_until,
-                succeeded=collection_handled_failure,
-                error=collection_result.error_message,
-            )
-            if collection_handled_failure:
-                detail = (
-                    f"{detail} | Cobranza: Pagado Hasta "
-                    f"{paid_until.strftime('%d/%m/%Y')}"
+        # Cobranza is intentionally the final fallback, after both policy portals.
+        if result.status != "completed":
+            normalized_task_rfc = normalize_rfc(task.rfc or "")
+            if valid_client_rfc(normalized_task_rfc):
+                emit(
+                    "collection_check_started",
+                    policy=task.policy_number,
+                    rfc=normalized_task_rfc,
                 )
-                if manual_review_assigned:
-                    detail += " | CRM: Revision Manual Necesaria"
+                collection_result = check_metlife_gmm_collection(
+                    MetLifeGmmPortalTask(
+                        id=task.id,
+                        policy_number=task.policy_number,
+                        original_policy_number=task.original_policy_number,
+                        rfc=normalized_task_rfc,
+                        client_name=task.client_name,
+                        renewal_deadline=task.renewal_deadline,
+                    ),
+                    headless=False,
+                )
+                collection_data = collection_result_to_dict(collection_result)
+                data["steps"] = [
+                    *(data.get("steps") or []),
+                    *(collection_data.get("steps") or []),
+                ]
+                paid_until = collection_result.paid_until or COLLECTION_FAILURE_DATE
+                collection_handled_failure = collection_result.status == "completed"
+                manual_review_assigned = persist_collection_check(
+                    task.id,
+                    paid_until=paid_until,
+                    succeeded=collection_handled_failure,
+                    error=collection_result.error_message,
+                )
+                if collection_handled_failure:
+                    detail = (
+                        f"{detail} | Cobranza: Pagado Hasta "
+                        f"{paid_until.strftime('%d/%m/%Y')}"
+                    )
+                    if manual_review_assigned:
+                        detail += " | CRM: Revision Manual Necesaria"
+                else:
+                    detail = (
+                        f"{detail} | Falló consulta de cobranza: "
+                        f"{collection_result.error_message or 'error desconocido'} | "
+                        "Pagado Hasta: 01/01/2000"
+                    )
+                emit(
+                    "collection_check_finished",
+                    policy=task.policy_number,
+                    status=collection_result.status,
+                    paid_until=paid_until.isoformat(),
+                    manual_review=manual_review_assigned,
+                )
             else:
-                detail = (
-                    f"{detail} | Falló consulta de cobranza: "
-                    f"{collection_result.error_message or 'error desconocido'} | "
-                    "Pagado Hasta: 01/01/2000"
+                error = (
+                    "No fue posible recuperar un RFC válido mediante la búsqueda "
+                    "exacta por póliza; cobranza no consultada"
                 )
-            emit(
-                "collection_check_finished",
-                policy=task.policy_number,
-                status=collection_result.status,
-                paid_until=paid_until.isoformat(),
-                manual_review=manual_review_assigned,
-            )
+                persist_collection_check(
+                    task.id,
+                    paid_until=COLLECTION_FAILURE_DATE,
+                    succeeded=False,
+                    error=error,
+                )
+                manual_review_assigned = persist_manual_review(task.id, error)
+                detail = (
+                    f"{detail} | {error} | Pagado Hasta: 01/01/2000 | "
+                    "CRM: Revision Manual Necesaria"
+                )
         persist_result(
             run_id,
             task.id,
@@ -1148,9 +1315,23 @@ def _process_one_subprocess(
     return item, portal_failure
 
 
-def execute_batch(now: datetime, *, limit: int | None = None) -> dict:
-    cutoff = renewal_cutoff(now)
-    tasks = selected_tasks(cutoff, process_date=now.date())
+def execute_batch(
+    now: datetime,
+    *,
+    limit: int | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict:
+    effective_start = start_date or now.date()
+    cutoff = end_date or renewal_cutoff(now)
+    if effective_start > cutoff:
+        raise ValueError("La fecha inicial no puede ser posterior a la final")
+    refresh_renewal_queue(now, cutoff, start_date=effective_start)
+    tasks = selected_tasks(
+        cutoff,
+        process_date=now.date(),
+        start_date=start_date,
+    )
     if limit is not None:
         tasks = tasks[:limit]
     run_id = create_run(tasks, cutoff)
@@ -1214,9 +1395,17 @@ def run(
     force: bool = False,
     dry_run: bool = False,
     limit: int | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> int:
     if limit is not None and limit < 1:
         raise ValueError("El límite debe ser mayor a cero")
+    if (start_date is None) != (end_date is None):
+        raise ValueError(
+            "Las fechas inicial y final deben proporcionarse juntas"
+        )
+    if start_date is not None and start_date > end_date:
+        raise ValueError("La fecha inicial no puede ser posterior a la final")
     now = local_now()
     path = state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1224,11 +1413,20 @@ def run(
     with lock_path.open("a+") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         state = read_state(path)
-        due = force or should_run(now, state.get("last_started_date"))
+        # An explicit range is an extraordinary execution request and does not
+        # depend on the daily schedule (equivalent to --force for eligibility).
+        due = (
+            force
+            or start_date is not None
+            or should_run(now, state.get("last_started_date"))
+        )
         if dry_run:
+            cutoff = end_date or renewal_cutoff(now)
+            effective_start = start_date or now.date()
             tasks = selected_tasks(
-                renewal_cutoff(now),
+                cutoff,
                 process_date=now.date(),
+                start_date=start_date,
             )
             if limit is not None:
                 tasks = tasks[:limit]
@@ -1240,7 +1438,8 @@ def run(
                         "scheduled_hour": scheduled_hour(),
                         "timezone": str(now.tzinfo),
                         "last_started_date": state.get("last_started_date"),
-                        "cutoff_date": renewal_cutoff(now).isoformat(),
+                        "window_start": effective_start.isoformat(),
+                        "cutoff_date": cutoff.isoformat(),
                         "selected_count": len(tasks),
                         "recipients": internal_recipients(),
                         "whatsapp_enabled": WHATSAPP_ENABLED,
@@ -1261,7 +1460,12 @@ def run(
         }
         write_state(path, started_state)
         try:
-            result = execute_batch(now, limit=limit)
+            result = execute_batch(
+                now,
+                limit=limit,
+                start_date=start_date,
+                end_date=end_date,
+            )
         except Exception as exc:
             failed_state = {
                 **started_state,
@@ -1316,6 +1520,8 @@ def main() -> int:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--start-date", type=date.fromisoformat)
+    parser.add_argument("--end-date", type=date.fromisoformat)
     parser.add_argument("--process-task-run-id")
     parser.add_argument("--process-task-id")
     arguments = parser.parse_args()
@@ -1330,6 +1536,8 @@ def main() -> int:
         force=arguments.force,
         dry_run=arguments.dry_run,
         limit=arguments.limit,
+        start_date=arguments.start_date,
+        end_date=arguments.end_date,
     )
 
 

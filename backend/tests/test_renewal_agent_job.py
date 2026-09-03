@@ -13,11 +13,13 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from jobs.run_renewal_agent import (
+    RETRYABLE_RETRIEVAL_TASK_STATUSES,
     WHATSAPP_ENABLED,
     execute_batch,
     max_consecutive_portal_failures,
     missing_client_email_body,
     process_one,
+    refresh_renewal_queue,
     renewal_cutoff,
     renewal_status_blocks_automation,
     run,
@@ -26,9 +28,98 @@ from jobs.run_renewal_agent import (
     should_run,
     task_processing_order,
 )
+from services.renovaciones import upsert_retrieval_task
 
 
 class RenewalAgentJobTests(unittest.TestCase):
+    def test_queue_refresh_preserves_a_recovered_rfc_when_excel_is_blank(self):
+        existing = SimpleNamespace(
+            rfc="AASG731220967",
+            normalized_payload={
+                "rfc": "AASG731220967",
+                "rfc_recovered_from_old_portal": True,
+            },
+        )
+        query = SimpleNamespace(
+            filter=lambda *_args, **_kwargs: SimpleNamespace(
+                first=lambda: existing
+            )
+        )
+        db = SimpleNamespace(query=lambda *_args, **_kwargs: query)
+        payload = {
+            "insurer_id": "metlife",
+            "product_branch": "GMM",
+            "policy_number": "1342974",
+            "renewal_deadline": date(2026, 9, 3),
+            "rfc": "",
+            "normalized_payload": {"rfc": "", "agent_code": "73640"},
+        }
+
+        task, created = upsert_retrieval_task(db, payload)
+
+        self.assertFalse(created)
+        self.assertEqual(task.rfc, "AASG731220967")
+        self.assertEqual(task.normalized_payload["rfc"], "AASG731220967")
+        self.assertTrue(
+            task.normalized_payload["rfc_recovered_from_old_portal"]
+        )
+
+    def test_fresh_and_interrupted_tasks_are_retryable(self):
+        self.assertEqual(
+            set(RETRYABLE_RETRIEVAL_TASK_STATUSES),
+            {"approved", "queued", "failed", "in_progress", "retrieved"},
+        )
+
+    def test_refresh_queue_uses_the_complete_forty_five_day_window(self):
+        now = datetime(
+            2026,
+            9,
+            2,
+            7,
+            0,
+            tzinfo=ZoneInfo("America/Mexico_City"),
+        )
+        cutoff = date(2026, 10, 17)
+        refreshed = {
+            "created": 149,
+            "updated": 0,
+            "total_queued": 149,
+            "window_start": "2026-09-02",
+            "window_end": "2026-10-17",
+        }
+        synchronization = {
+            "run": {"rows_imported": 10, "rows_updated": 139}
+        }
+        with patch(
+            "jobs.run_renewal_agent.refresh_and_sync_canonical_renewals",
+            return_value=synchronization,
+        ) as sync, patch(
+            "jobs.run_renewal_agent.build_metlife_gmm_retrieval_queue_records",
+            return_value=refreshed,
+        ) as build, patch("jobs.run_renewal_agent.emit") as emit:
+            result = refresh_renewal_queue(now, cutoff)
+
+        sync.assert_called_once_with(
+            "renovaciones.metlife_gmm",
+            auto_create_missing_policies=True,
+        )
+        build.assert_called_once_with(
+            start_date="2026-09-02",
+            end_date="2026-10-17",
+            limit=0,
+        )
+        emit.assert_called_once_with(
+            "queue_refreshed",
+            created=149,
+            updated=0,
+            total_queued=149,
+            window_start="2026-09-02",
+            window_end="2026-10-17",
+            sql_rows_imported=10,
+            sql_rows_updated=139,
+        )
+        self.assertEqual(result["renewal_sync"], synchronization)
+
     def test_external_agent_delivery_never_addresses_the_client(self):
         from adapters.metlife_gmm_portal import MetLifeGmmPortalResult
 
@@ -102,7 +193,7 @@ class RenewalAgentJobTests(unittest.TestCase):
             id="task-agent-invalid",
             policy_number="1454603",
             original_policy_number="1454603",
-            rfc="RFC123456ABC",
+            rfc="BOFK941022ME5",
             client_name="Cliente Sin Agente",
             renewal_deadline=date(2026, 9, 11),
             attempt_count=1,
@@ -169,6 +260,88 @@ class RenewalAgentJobTests(unittest.TestCase):
             should_check_collection_after_failure("SMTP connection refused")
         )
 
+    def test_missing_rfc_is_searched_by_policy_and_recovered(self):
+        from adapters.metlife_gmm_collection import MetLifeGmmCollectionResult
+        from adapters.metlife_gmm_portal import (
+            AdapterStepResult,
+            MetLifeGmmPortalResult,
+        )
+
+        task = SimpleNamespace(
+            id="task-no-rfc",
+            policy_number="1342974",
+            original_policy_number="1342974",
+            rfc="",
+            client_name="ALMA MARIANA JAIMES VELEZ",
+            renewal_deadline=date(2026, 9, 3),
+            attempt_count=1,
+        )
+        result = MetLifeGmmPortalResult(
+            status="failed",
+            task_id=task.id,
+            policy_number=task.policy_number,
+            rfc="AASG731220967",
+            steps=[
+                AdapterStepResult(
+                    step_name="search_policy",
+                    status="completed",
+                    started_at="2026-09-03T00:00:00",
+                    completed_at="2026-09-03T00:00:01",
+                ),
+                AdapterStepResult(
+                    step_name="download_documents",
+                    status="failed",
+                    started_at="2026-09-03T00:00:01",
+                    completed_at="2026-09-03T00:00:02",
+                    error_message="Descarga temporalmente no disponible",
+                ),
+            ],
+            error_message="Descarga temporalmente no disponible",
+        )
+        collection_result = MetLifeGmmCollectionResult(
+            status="failed",
+            task_id=task.id,
+            policy_number=task.policy_number,
+            rfc="AASG731220967",
+            paid_until=None,
+            steps=[],
+            error_message="Cobranza no disponible",
+        )
+        with patch(
+            "jobs.run_renewal_agent.update_task_attempt",
+            return_value=task,
+        ), patch(
+            "jobs.run_renewal_agent.MetLifeGmmOldPortalAdapter",
+        ) as old_adapter, patch(
+            "jobs.run_renewal_agent.MetLifeGmmPortalAdapter",
+        ) as new_adapter, patch(
+            "jobs.run_renewal_agent.persist_recovered_rfc",
+        ) as persist_recovered_rfc, patch(
+            "jobs.run_renewal_agent.check_metlife_gmm_collection",
+            return_value=collection_result,
+        ), patch(
+            "jobs.run_renewal_agent.persist_collection_check",
+            return_value=False,
+        ), patch(
+            "jobs.run_renewal_agent.persist_result",
+        ) as persist, patch(
+            "jobs.run_renewal_agent.record_action",
+        ), patch(
+            "jobs.run_renewal_agent.emit",
+        ):
+            old_adapter.return_value.run.return_value = result
+            new_adapter.return_value.run.return_value = result
+            item, portal_failure = process_one("run-1", task.id)
+
+        old_adapter.return_value.run.assert_called_once()
+        persist_recovered_rfc.assert_called_once_with(task.id, "AASG731220967")
+        self.assertEqual(task.rfc, "AASG731220967")
+        self.assertEqual(item["status"], "failed")
+        self.assertIn("Portal antiguo: Descarga temporalmente no disponible", item["detail"])
+        self.assertIn("Cobranza no disponible", item["detail"])
+        self.assertTrue(portal_failure)
+        self.assertFalse(persist.call_args.kwargs["retrieval_succeeded"])
+
     def test_old_portal_failure_runs_independent_collection_check(self):
         from adapters.metlife_gmm_collection import MetLifeGmmCollectionResult
         from adapters.metlife_gmm_portal import AdapterStepResult, MetLifeGmmPortalResult
@@ -211,6 +384,8 @@ class RenewalAgentJobTests(unittest.TestCase):
         ), patch(
             "jobs.run_renewal_agent.MetLifeGmmOldPortalAdapter",
         ) as old_adapter, patch(
+            "jobs.run_renewal_agent.MetLifeGmmPortalAdapter",
+        ) as new_adapter, patch(
             "jobs.run_renewal_agent.check_metlife_gmm_collection",
             return_value=collection_result,
         ) as collection_check, patch(
@@ -224,6 +399,7 @@ class RenewalAgentJobTests(unittest.TestCase):
             "jobs.run_renewal_agent.emit",
         ):
             old_adapter.return_value.run.return_value = retrieval_result
+            new_adapter.return_value.run.return_value = retrieval_result
             item, portal_failure = process_one("run-1", task.id)
 
         collection_check.assert_called_once()
@@ -245,7 +421,7 @@ class RenewalAgentJobTests(unittest.TestCase):
             id="task-2",
             policy_number="12345",
             original_policy_number="12345",
-            rfc="RFC123456ABC",
+            rfc="BOFK941022ME5",
             client_name="Cliente",
             renewal_deadline=date(2026, 9, 10),
             attempt_count=1,
@@ -262,7 +438,7 @@ class RenewalAgentJobTests(unittest.TestCase):
                     started_at="2026-08-27T09:00:00",
                 )
             ],
-            error_message="Se esperó una póliza original 12345 para RFC123456ABC",
+            error_message="Se esperó una póliza original 12345 para BOFK941022ME5",
         )
         collection_result = MetLifeGmmCollectionResult(
             status="failed",
@@ -280,6 +456,8 @@ class RenewalAgentJobTests(unittest.TestCase):
         ), patch(
             "jobs.run_renewal_agent.MetLifeGmmOldPortalAdapter",
         ) as old_adapter, patch(
+            "jobs.run_renewal_agent.MetLifeGmmPortalAdapter",
+        ) as new_adapter, patch(
             "jobs.run_renewal_agent.check_metlife_gmm_collection",
             return_value=collection_result,
         ), patch(
@@ -293,6 +471,7 @@ class RenewalAgentJobTests(unittest.TestCase):
             "jobs.run_renewal_agent.emit",
         ):
             old_adapter.return_value.run.return_value = retrieval_result
+            new_adapter.return_value.run.return_value = retrieval_result
             item, portal_failure = process_one("run-1", task.id)
 
         persist_collection.assert_called_once_with(
@@ -325,11 +504,12 @@ class RenewalAgentJobTests(unittest.TestCase):
             settings=settings,
         )
 
-    def test_retry_query_keeps_failed_attempts_eligible(self):
+    def test_retry_query_includes_new_and_interrupted_tasks(self):
         source = Path(__file__).resolve().parents[1] / "jobs" / "run_renewal_agent.py"
         contents = source.read_text()
-        self.assertIn('PolicyDocumentRetrievalTask.status == "queued"', contents)
-        self.assertIn("PolicyDocumentRetrievalTask.attempt_count > 0", contents)
+        self.assertIn("RETRYABLE_RETRIEVAL_TASK_STATUSES", contents)
+        self.assertIn("PolicyDocumentRetrievalTask.status.in_", contents)
+        self.assertNotIn("PolicyDocumentRetrievalTask.attempt_count > 0", contents)
 
     def test_successful_delivery_uses_distinct_client_and_agent_statuses(self):
         source = Path(__file__).resolve().parents[1] / "jobs" / "run_renewal_agent.py"
@@ -503,6 +683,8 @@ class RenewalAgentJobTests(unittest.TestCase):
             os.environ,
             {"RENEWAL_AGENT_MAX_CONSECUTIVE_PORTAL_FAILURES": "7"},
         ), patch(
+            "jobs.run_renewal_agent.refresh_renewal_queue",
+        ), patch(
             "jobs.run_renewal_agent.selected_tasks",
             return_value=tasks,
         ), patch(
@@ -565,6 +747,8 @@ class RenewalAgentJobTests(unittest.TestCase):
         }
 
         with patch(
+            "jobs.run_renewal_agent.refresh_renewal_queue",
+        ), patch(
             "jobs.run_renewal_agent.selected_tasks",
             return_value=tasks,
         ), patch(
@@ -592,6 +776,61 @@ class RenewalAgentJobTests(unittest.TestCase):
         self.assertEqual(result, completed)
         self.assertEqual(process_one_subprocess.call_count, 5)
         self.assertEqual(len(create_run.call_args.args[0]), 5)
+
+    def test_batch_honors_explicit_catch_up_window(self):
+        now = datetime(
+            2026,
+            9,
+            3,
+            7,
+            0,
+            tzinfo=ZoneInfo("America/Mexico_City"),
+        )
+        start_date = date(2026, 8, 2)
+        end_date = date(2026, 9, 18)
+        completed = {
+            "run_id": "run-catch-up",
+            "status": "completed",
+            "selected": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "aborted": False,
+        }
+
+        with patch(
+            "jobs.run_renewal_agent.refresh_renewal_queue",
+        ) as refresh, patch(
+            "jobs.run_renewal_agent.selected_tasks",
+            return_value=[],
+        ) as select, patch(
+            "jobs.run_renewal_agent.create_run",
+            return_value="run-catch-up",
+        ), patch(
+            "jobs.run_renewal_agent.send_email_smtp",
+        ), patch(
+            "jobs.run_renewal_agent.renewal_smtp_settings",
+            return_value={"sender": "clientes@taiico.com"},
+        ), patch(
+            "jobs.run_renewal_agent.finish_run",
+            return_value=completed,
+        ):
+            result = execute_batch(
+                now,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+        refresh.assert_called_once_with(
+            now,
+            end_date,
+            start_date=start_date,
+        )
+        select.assert_called_once_with(
+            end_date,
+            process_date=now.date(),
+            start_date=start_date,
+        )
+        self.assertEqual(result, completed)
 
     def test_started_date_is_written_before_batch_and_prevents_second_run(self):
         now = datetime(

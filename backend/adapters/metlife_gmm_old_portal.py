@@ -18,6 +18,7 @@ from adapters.metlife_gmm_portal import (
     build_drive_service,
     chrome_cdp_url,
     ensure_persistent_chrome,
+    ensure_credentials,
     now_iso,
     portal_page,
     policy_digits,
@@ -46,10 +47,16 @@ OldPortalStopAfter = Literal[
     "login",
     "open_contractual_search",
     "search_rfc",
+    "search_policy",
+    "search_name",
     "confirm_policy_match",
     "download_documents",
     "upload_to_client_folder",
 ]
+
+
+RFC_PATTERN = re.compile(r"\b[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}\b", re.I)
+SEARCH_RESULT_TIMEOUT_MS = 10_000
 
 
 def canonical_policy_number(value: object) -> str:
@@ -229,26 +236,26 @@ class MetLifeGmmOldPortalAdapter(MetLifeGmmPortalAdapter):
                 page = portal_page(context, METLIFE_OLD_PORTAL_URL)
 
                 step = self.record_step("open_old_portal", url=METLIFE_OLD_PORTAL_URL)
-                page.goto(METLIFE_OLD_PORTAL_URL, wait_until="domcontentloaded", timeout=90_000)
-                self.complete_step(step, current_url=page.url)
+                reused_session = self.contractual_search_ready(page)
+                if not reused_session:
+                    page.goto(METLIFE_OLD_PORTAL_URL, wait_until="domcontentloaded", timeout=90_000)
+                self.complete_step(step, current_url=page.url, reused_session=reused_session)
 
                 step = self.record_step("authenticate_old_portal")
-                self.login_old_portal(page)
-                self.complete_step(step, current_url=page.url)
+                if not reused_session:
+                    self.login_old_portal(page)
+                self.complete_step(step, current_url=page.url, reused_session=reused_session)
                 if stop_after == "login":
                     raise StopIteration(stop_after)
 
                 step = self.record_step("open_contractual_search")
-                self.open_contractual_search(page)
-                self.complete_step(step, current_url=page.url)
+                if not reused_session:
+                    self.open_contractual_search(page)
+                self.complete_step(step, current_url=page.url, reused_session=reused_session)
                 if stop_after == "open_contractual_search":
                     raise StopIteration(stop_after)
 
-                step = self.record_step("search_rfc", rfc=task.rfc)
-                self.search_rfc(page, task.rfc)
-                self.complete_step(step, current_url=page.url)
-                if stop_after == "search_rfc":
-                    raise StopIteration(stop_after)
+                self.search_with_fallbacks(page, task, stop_after=stop_after)
 
                 step = self.record_step(
                     "confirm_policy_match",
@@ -322,6 +329,9 @@ class MetLifeGmmOldPortalAdapter(MetLifeGmmPortalAdapter):
         )
 
     def login_old_portal(self, page) -> None:
+        self.username, self.password = ensure_credentials(
+            self.username, self.password
+        )
         body = page.locator("body")
         for _ in range(90):
             text = body.inner_text(timeout=10_000)
@@ -355,32 +365,215 @@ class MetLifeGmmOldPortalAdapter(MetLifeGmmPortalAdapter):
             re.compile(r"B[uú]squeda de documentaci[oó]n contractual", re.I)
         ).wait_for(state="visible", timeout=90_000)
 
+    @staticmethod
+    def contractual_search_ready(page) -> bool:
+        try:
+            return page.locator("#rfc").is_visible()
+        except Exception:
+            return False
+
     def search_rfc(self, page, rfc: str) -> None:
         normalized = normalize_rfc(rfc)
         if not valid_client_rfc(normalized):
             raise MetLifePortalAdapterError(f"RFC inválido para búsqueda: {rfc}")
-        rfc_input = page.locator("input:visible").first
+        rfc_input = page.locator("#rfc")
+        rfc_input.wait_for(state="visible", timeout=15_000)
+        self.clear_search_fields(page)
         rfc_input.fill(normalized)
         page.get_by_role("button", name="Consultar", exact=True).click()
-        page.get_by_text(normalized, exact=True).first.wait_for(state="visible", timeout=90_000)
+
+    def search_policy(self, page, policy_number: str) -> None:
+        normalized = canonical_policy_number(policy_number)
+        if not normalized:
+            raise MetLifePortalAdapterError("No hay número de póliza para la búsqueda")
+        candidates = (
+            "#pol",
+            "#poliza",
+            "#policy",
+            "input[placeholder*='Póliza' i]",
+            "input[placeholder*='Poliza' i]",
+            "input[name='pol']",
+            "input[name='poliza']",
+            "input[name*='poliza' i]",
+        )
+        policy_input = None
+        for selector in candidates:
+            locator = page.locator(selector).first
+            if locator.count() and locator.is_visible():
+                policy_input = locator
+                break
+        if policy_input is None:
+            try:
+                labelled = page.get_by_label(re.compile(r"^P[oó]liza$", re.I)).first
+                if labelled.count() and labelled.is_visible():
+                    policy_input = labelled
+            except Exception:
+                policy_input = None
+        if policy_input is None:
+            raise MetLifePortalAdapterError("No se encontró el campo Póliza en el portal viejo")
+        self.clear_search_fields(page)
+        policy_input.fill(normalized)
+        page.get_by_role("button", name="Consultar", exact=True).click()
+
+    def search_name(self, page, client_name: str | None) -> None:
+        normalized = " ".join(str(client_name or "").split())
+        if not normalized:
+            raise MetLifePortalAdapterError("No hay nombre de contratante para la búsqueda")
+        candidates = (
+            "#nombre",
+            "#contratante",
+            "input[placeholder*='Nombre/Contr' i]",
+            "input[name*='nombre' i]",
+            "input[name*='contratante' i]",
+        )
+        name_input = None
+        for selector in candidates:
+            locator = page.locator(selector).first
+            if locator.count() and locator.is_visible():
+                name_input = locator
+                break
+        if name_input is None:
+            try:
+                labelled = page.get_by_label(
+                    re.compile(r"Nombre\s*/?\s*Contr|Contratante", re.I)
+                ).first
+                if labelled.count() and labelled.is_visible():
+                    name_input = labelled
+            except Exception:
+                name_input = None
+        if name_input is None:
+            raise MetLifePortalAdapterError(
+                "No se encontró el campo Nombre/Contratante en el portal viejo"
+            )
+        self.clear_search_fields(page)
+        name_input.fill(normalized)
+        page.get_by_role("button", name="Consultar", exact=True).click()
+
+    @staticmethod
+    def clear_search_fields(page) -> None:
+        for index in range(page.locator("input:visible").count()):
+            field = page.locator("input:visible").nth(index)
+            try:
+                if field.is_editable():
+                    field.fill("")
+            except Exception:
+                continue
+
+    def matching_policy_rows(
+        self,
+        page,
+        task: MetLifeGmmPortalTask,
+        *,
+        require_task_rfc: bool = True,
+    ):
+        rows = page.locator("table tbody tr[role='row']")
+        matches: list[tuple[Any, str]] = []
+        expected_rfc = normalize_rfc(task.rfc)
+        require_rfc_match = require_task_rfc and valid_client_rfc(expected_rfc)
+        for index in range(rows.count()):
+            row = rows.nth(index)
+            text = row.inner_text(timeout=5_000)
+            if not policy_row_matches(text, task):
+                continue
+            row_rfcs = [normalize_rfc(item) for item in RFC_PATTERN.findall(text)]
+            if require_rfc_match and expected_rfc not in row_rfcs:
+                continue
+            matches.append((row, row_rfcs[0] if len(set(row_rfcs)) == 1 else ""))
+        return matches
+
+    def wait_for_matching_policy_rows(
+        self,
+        page,
+        task: MetLifeGmmPortalTask,
+        *,
+        require_task_rfc: bool,
+    ):
+        deadline = time.monotonic() + (SEARCH_RESULT_TIMEOUT_MS / 1000)
+        matches = []
+        while time.monotonic() < deadline:
+            matches = self.matching_policy_rows(
+                page,
+                task,
+                require_task_rfc=require_task_rfc,
+            )
+            if len(matches) == 1:
+                return matches
+            if len(matches) > 1:
+                break
+            time.sleep(0.25)
+        return matches
+
+    def search_with_fallbacks(
+        self,
+        page,
+        task: MetLifeGmmPortalTask,
+        *,
+        stop_after: OldPortalStopAfter | None,
+    ) -> None:
+        attempts = []
+        if valid_client_rfc(normalize_rfc(task.rfc)):
+            attempts.append(("search_rfc", task.rfc, self.search_rfc))
+        attempts.extend(
+            [
+                ("search_policy", portal_policy_number(task), self.search_policy),
+                ("search_name", task.client_name, self.search_name),
+            ]
+        )
+        errors: list[str] = []
+        for step_name, value, search in attempts:
+            step = self.record_step(step_name, query=value)
+            try:
+                search(page, value)
+                matches = self.wait_for_matching_policy_rows(
+                    page,
+                    task,
+                    require_task_rfc=step_name == "search_rfc",
+                )
+                if len(matches) != 1:
+                    raise MetLifePortalAdapterError(
+                        f"la búsqueda produjo {len(matches)} coincidencias exactas de póliza"
+                    )
+                recovered_rfc = matches[0][1]
+                if step_name != "search_rfc" and valid_client_rfc(recovered_rfc):
+                    task.rfc = recovered_rfc
+                self.complete_step(
+                    step,
+                    current_url=page.url,
+                    exact_policy_match=True,
+                    recovered_rfc=recovered_rfc or None,
+                )
+                if stop_after == step_name:
+                    raise StopIteration(stop_after)
+                return
+            except StopIteration:
+                raise
+            except Exception as exc:
+                self.fail_step(step, exc)
+                errors.append(f"{step_name}: {exc}")
+        raise MetLifePortalAdapterError(
+            "No se localizó la póliza en el portal antiguo tras RFC, póliza y nombre: "
+            + " | ".join(errors)
+        )
 
     def open_policy_documents(self, page, task: MetLifeGmmPortalTask) -> None:
         # DataTables nests the result table inside layout tables whose parent
         # rows repeat the complete result text. Only role="row" entries are
         # actual policy records and may be used for an exact match.
-        rows = page.locator("table tbody tr[role='row']")
-        matches = []
-        for index in range(rows.count()):
-            row = rows.nth(index)
-            text = row.inner_text(timeout=5_000)
-            if normalize_rfc(task.rfc) in normalize_rfc(text) and policy_row_matches(text, task):
-                matches.append(row)
+        matches = self.matching_policy_rows(page, task)
+        require_rfc_match = valid_client_rfc(normalize_rfc(task.rfc))
         if len(matches) != 1:
             raise MetLifePortalAdapterError(
                 f"Se esperó una póliza original {portal_policy_number(task)} para {task.rfc}; "
                 f"se encontraron {len(matches)} coincidencias"
             )
-        row = matches[0]
+        row, recovered_rfc = matches[0]
+        if not require_rfc_match:
+            if not valid_client_rfc(recovered_rfc):
+                raise MetLifePortalAdapterError(
+                    f"Se encontró la póliza original {portal_policy_number(task)}, "
+                    "pero no fue posible recuperar un RFC único"
+                )
+            task.rfc = recovered_rfc
         links = row.locator("a")
         if links.count():
             links.last.click()

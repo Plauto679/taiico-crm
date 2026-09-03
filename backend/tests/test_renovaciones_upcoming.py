@@ -10,11 +10,13 @@ from services import renovaciones
 class _Query:
     def __init__(self, rows):
         self.rows = rows
+        self.filters = []
 
     def join(self, *_args, **_kwargs):
         return self
 
-    def filter(self, *_args, **_kwargs):
+    def filter(self, *args, **_kwargs):
+        self.filters.extend(args)
         return self
 
     def all(self):
@@ -62,7 +64,8 @@ class UpcomingRenewalsTests(unittest.TestCase):
             ),
         ]
         db = MagicMock()
-        db.query.return_value = _Query(rows)
+        query = _Query(rows)
+        db.query.return_value = query
 
         with (
             patch.object(renovaciones, "SessionLocal", return_value=db),
@@ -82,6 +85,8 @@ class UpcomingRenewalsTests(unittest.TestCase):
             )
 
         self.assertEqual([row["RFC"] for row in result], ["RFC010101AAA", "RFC010101AAA"])
+        self.assertEqual(query.filters[0].right.value, date(2026, 9, 1))
+        self.assertEqual(query.filters[1].right.value, date(2026, 11, 1))
         db.close.assert_called_once()
 
 
