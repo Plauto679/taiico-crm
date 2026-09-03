@@ -21,11 +21,7 @@ load_dotenv(BACKEND_DIR / ".env", override=True)
 from adapters.metlife_gmm_portal import (  # noqa: E402
     MetLifeGmmPortalAdapter,
     MetLifeGmmPortalTask,
-    chrome_cdp_port,
-    chrome_server_ready,
-    ensure_persistent_chrome,
     result_to_dict,
-    stable_chrome_profile_dir,
 )
 from adapters.metlife_gmm_collection import (  # noqa: E402
     COLLECTION_FAILURE_DATE,
@@ -630,19 +626,6 @@ def create_run(
         db.close()
 
 
-def undo_transient_retry_accounting(run_id: str) -> None:
-    db = SessionLocal()
-    try:
-        run = db.get(PolicyDocumentRetrievalRun, run_id)
-        if run is None:
-            return
-        run.processed_count = max((run.processed_count or 0) - 1, 0)
-        run.failed_count = max((run.failed_count or 0) - 1, 0)
-        db.commit()
-    finally:
-        db.close()
-
-
 def update_task_attempt(task_id: str) -> PolicyDocumentRetrievalTask:
     db = SessionLocal()
     try:
@@ -1232,33 +1215,6 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
 
 
 def process_one_subprocess(run_id: str, task_id: str) -> tuple[dict, bool]:
-    return _process_one_subprocess(run_id, task_id, allow_chrome_restart=True)
-
-
-def restart_persistent_chrome() -> None:
-    subprocess.run(
-        [
-            "pkill",
-            "-f",
-            f"--remote-debugging-port={chrome_cdp_port()}",
-        ],
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    for _ in range(20):
-        if not chrome_server_ready():
-            break
-        time.sleep(0.25)
-    ensure_persistent_chrome(stable_chrome_profile_dir())
-
-
-def _process_one_subprocess(
-    run_id: str,
-    task_id: str,
-    *,
-    allow_chrome_restart: bool,
-) -> tuple[dict, bool]:
     command = [
         sys.executable,
         str(Path(__file__).resolve()),
@@ -1299,19 +1255,6 @@ def _process_one_subprocess(
     else:
         item = result_payload["item"]
         portal_failure = bool(result_payload["portal_failure"])
-    if (
-        allow_chrome_restart
-        and item.get("status") == "failed"
-        and "event loop is already running" in item.get("detail", "").lower()
-    ):
-        emit("task_retrying", task_id=task_id, reason="restart_persistent_chrome")
-        undo_transient_retry_accounting(run_id)
-        restart_persistent_chrome()
-        return _process_one_subprocess(
-            run_id,
-            task_id,
-            allow_chrome_restart=False,
-        )
     return item, portal_failure
 
 
