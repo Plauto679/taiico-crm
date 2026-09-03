@@ -3,9 +3,10 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { DataTable } from '@/components/ui/DataTable';
+import { DateRangeFilter } from '@/components/ui/DateRangeFilter';
 import { RenovacionGMM, RenovacionVida, RenovacionSura, RenovacionAarco, RenovacionPromotoriaSura } from '@/lib/types/renovaciones';
 import { exportToExcel } from '@/lib/utils/export';
-import { updateRenewalStatus } from '@/modules/renovaciones/service';
+import { getUpcomingRenewals, updateRenewalStatus } from '@/modules/renovaciones/service';
 import { EditStatusModal } from './EditStatusModal';
 
 interface RenovacionesViewProps {
@@ -16,9 +17,11 @@ interface RenovacionesViewProps {
     promotoriaSuraRenewals?: RenovacionPromotoriaSura[];
     insurer: string;
     initialTab?: 'VIDA' | 'GMM';
+    initialStartDate: string;
+    initialEndDate: string;
 }
 
-export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRenewals = [], aarcoRenewals = [], promotoriaSuraRenewals = [], insurer, initialTab = 'VIDA' }: RenovacionesViewProps) {
+export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRenewals = [], aarcoRenewals = [], promotoriaSuraRenewals = [], insurer, initialTab = 'VIDA', initialStartDate, initialEndDate }: RenovacionesViewProps) {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<'VIDA' | 'GMM'>(initialTab);
     const [selectedRow, setSelectedRow] = useState<any>(null);
@@ -29,6 +32,9 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
     const [suraData, setSuraData] = useState<RenovacionSura[]>(suraRenewals);
     const [aarcoData, setAarcoData] = useState<RenovacionAarco[]>(aarcoRenewals);
     const [promotoriaSuraData, setPromotoriaSuraData] = useState<RenovacionPromotoriaSura[]>(promotoriaSuraRenewals);
+    const [dateRange, setDateRange] = useState({ start: initialStartDate, end: initialEndDate });
+    const [isLoading, setIsLoading] = useState(false);
+    const [loadError, setLoadError] = useState('');
 
     const activeRenewals = insurer === 'Metlife'
         ? (activeTab === 'VIDA' ? vidaData : gmmData)
@@ -47,6 +53,63 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
     useEffect(() => {
         setVisibleRenewals(activeRenewals);
     }, [activeTab, insurer, vidaData, gmmData, suraData, aarcoData, promotoriaSuraData]);
+
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        let changed = false;
+        if (!params.has('insurer')) {
+            params.set('insurer', insurer);
+            changed = true;
+        }
+        if (!params.has('startDate')) {
+            params.set('startDate', initialStartDate);
+            changed = true;
+        }
+        if (!params.has('endDate')) {
+            params.set('endDate', initialEndDate);
+            changed = true;
+        }
+        if (insurer === 'Metlife' && !params.has('renewalType')) {
+            params.set('renewalType', initialTab);
+            changed = true;
+        }
+        if (changed) {
+            window.history.replaceState(
+                window.history.state,
+                '',
+                `${window.location.pathname}?${params.toString()}`,
+            );
+        }
+    }, [initialEndDate, initialStartDate, initialTab, insurer]);
+
+    const loadVisibleRenewals = async (tab: 'VIDA' | 'GMM', startDate: string, endDate: string) => {
+        setIsLoading(true);
+        setLoadError('');
+        try {
+            const type = insurer === 'Metlife' ? tab : 'ALL';
+            const rows = await getUpcomingRenewals(30, type, insurer, startDate, endDate);
+            if (insurer === 'Metlife' && tab === 'VIDA') {
+                setVidaData(rows as RenovacionVida[]);
+            } else if (insurer === 'Metlife') {
+                setGmmData(rows as RenovacionGMM[]);
+            } else if (insurer === 'SURA') {
+                setSuraData(rows as RenovacionSura[]);
+            } else if (insurer === 'AARCO_AXA') {
+                setAarcoData(rows as RenovacionAarco[]);
+            } else {
+                setPromotoriaSuraData(rows as unknown as RenovacionPromotoriaSura[]);
+            }
+        } catch (error) {
+            setLoadError(error instanceof Error ? error.message : 'No se pudieron cargar las renovaciones.');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleDateRangeApply = async (startDate: string, endDate: string) => {
+        setDateRange({ start: startDate, end: endDate });
+        await loadVisibleRenewals(activeTab, startDate, endDate);
+    };
 
     const handleExport = () => {
         let data: any[] = visibleRenewals;
@@ -72,10 +135,16 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
     };
 
     const handleTabChange = (tab: 'VIDA' | 'GMM') => {
+        if (tab === activeTab || isLoading) return;
         setActiveTab(tab);
         const params = new URLSearchParams(window.location.search);
         params.set('renewalType', tab);
-        router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
+        window.history.replaceState(
+            window.history.state,
+            '',
+            `${window.location.pathname}?${params.toString()}`,
+        );
+        void loadVisibleRenewals(tab, dateRange.start, dateRange.end);
     };
 
     const updateSelectedRenewal = (updates: Record<string, unknown>) => {
@@ -308,17 +377,27 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
 
     return (
         <div className="flex flex-col h-full space-y-4">
+            <DateRangeFilter
+                initialStartDate={dateRange.start}
+                initialEndDate={dateRange.end}
+                startLabel="Fin de vigencia desde"
+                endLabel="Fin de vigencia hasta"
+                initializeUrl={false}
+                onApply={handleDateRangeApply}
+            />
             <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-2 flex-none">
                 <div className="flex min-w-0 space-x-2 sm:space-x-4">
                     {insurer === 'Metlife' && (
                         <>
                             <button
+                                disabled={isLoading}
                                 className={`px-4 py-2 font-medium ${activeTab === 'VIDA' ? 'border-b-2 border-white text-white' : 'text-white/70 hover:text-white'}`}
                                 onClick={() => handleTabChange('VIDA')}
                             >
                                 Vida
                             </button>
                             <button
+                                disabled={isLoading}
                                 className={`px-4 py-2 font-medium ${activeTab === 'GMM' ? 'border-b-2 border-white text-white' : 'text-white/70 hover:text-white'}`}
                                 onClick={() => handleTabChange('GMM')}
                             >
@@ -349,6 +428,17 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                     Exportar Excel
                 </button>
             </div>
+
+            {isLoading && (
+                <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700" role="status">
+                    Cargando renovaciones de {insurer === 'Metlife' ? activeTab : insurer}…
+                </div>
+            )}
+            {loadError && (
+                <div className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700" role="alert">
+                    {loadError}
+                </div>
+            )}
 
             <div className="flex-1 min-h-0 overflow-hidden">
                 {insurer === 'Metlife' ? (

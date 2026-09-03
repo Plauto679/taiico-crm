@@ -1,6 +1,5 @@
 import { getUpcomingRenewals } from '@/modules/renovaciones/service';
 import { RenovacionesView } from '@/components/renovaciones/RenovacionesView';
-import { DateRangeFilter } from '@/components/ui/DateRangeFilter';
 import { RenovacionGMM, RenovacionVida, RenovacionSura, RenovacionAarco, RenovacionPromotoriaSura } from '@/lib/types/renovaciones';
 import { getDefaultDateRange } from '@/lib/dateRange';
 import Link from 'next/link';
@@ -77,15 +76,6 @@ export default async function RenovacionesPage({
                     </div>
                 </div>
 
-                {/* Date Filter */}
-                <DateRangeFilter
-                    key={`${insurer}:${startDate}:${endDate}`}
-                    initialStartDate={startDate}
-                    initialEndDate={endDate}
-                    startLabel="Fin de vigencia desde"
-                    endLabel="Fin de vigencia hasta"
-                    initializeUrl={false}
-                />
             </div>
 
             <div className="flex-1 min-h-0 px-4 pb-4 sm:px-8 sm:pb-8">
@@ -98,6 +88,8 @@ export default async function RenovacionesPage({
                     promotoriaSuraRenewals={promotoriaSuraRenewals}
                     insurer={insurer}
                     initialTab={renewalType}
+                    initialStartDate={startDate}
+                    initialEndDate={endDate}
                 />
             </div>
         </div>

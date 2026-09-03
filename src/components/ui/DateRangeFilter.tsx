@@ -10,6 +10,7 @@ interface DateRangeFilterProps {
     startLabel?: string;
     endLabel?: string;
     initializeUrl?: boolean;
+    onApply?: (startDate: string, endDate: string) => Promise<void> | void;
 }
 
 export function DateRangeFilter({
@@ -18,11 +19,13 @@ export function DateRangeFilter({
     startLabel = 'Fecha Inicio',
     endLabel = 'Fecha Fin',
     initializeUrl = true,
+    onApply,
 }: DateRangeFilterProps = {}) {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
-    const [isPending, startTransition] = useTransition();
+    const [isNavigationPending, startTransition] = useTransition();
+    const [isApplyPending, setIsApplyPending] = useState(false);
 
     const defaults = getDefaultDateRange();
 
@@ -30,6 +33,7 @@ export function DateRangeFilter({
     const [startDate, setStartDate] = useState(initialStartDate || searchParams.get('startDate') || defaults.start);
     const [endDate, setEndDate] = useState(initialEndDate || searchParams.get('endDate') || defaults.end);
     const hasInvalidRange = Boolean(startDate && endDate && startDate > endDate);
+    const isPending = isNavigationPending || isApplyPending;
 
     useEffect(() => {
         if (!initializeUrl || searchParams.has('startDate') || searchParams.has('endDate')) return;
@@ -40,24 +44,36 @@ export function DateRangeFilter({
         router.replace(`${pathname}?${params.toString()}`, { scroll: false });
     }, [defaults.end, defaults.start, initializeUrl, pathname, router, searchParams]);
 
-    const navigateWithDates = (nextStartDate: string, nextEndDate: string) => {
+    const navigateWithDates = async (nextStartDate: string, nextEndDate: string) => {
         const params = new URLSearchParams(searchParams.toString());
         params.set('startDate', nextStartDate);
         params.set('endDate', nextEndDate);
+        const url = `${pathname}?${params.toString()}`;
+
+        if (onApply) {
+            window.history.replaceState(window.history.state, '', url);
+            setIsApplyPending(true);
+            try {
+                await onApply(nextStartDate, nextEndDate);
+            } finally {
+                setIsApplyPending(false);
+            }
+            return;
+        }
 
         startTransition(() => {
-            router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+            router.replace(url, { scroll: false });
         });
     };
 
-    const handleApply = () => navigateWithDates(startDate, endDate);
+    const handleApply = () => void navigateWithDates(startDate, endDate);
 
     const handleClear = () => {
         // Reset to defaults instead of empty
         const defs = getDefaultDateRange();
         setStartDate(defs.start);
         setEndDate(defs.end);
-        navigateWithDates(defs.start, defs.end);
+        void navigateWithDates(defs.start, defs.end);
     };
 
     return (
