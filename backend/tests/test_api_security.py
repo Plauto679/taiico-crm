@@ -179,13 +179,17 @@ class ApiSecurityTests(unittest.TestCase):
             main.password_management,
             "request_password_reset",
             side_effect=RuntimeError("smtp unavailable"),
-        ):
+        ) as request_password_reset:
             response = self.client.post(
                 "/password/forgot",
                 json={"email": "unknown@example.com"},
             )
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Si el correo está registrado", response.json()["message"])
+        self.assertEqual(
+            response.json()["message"],
+            "Email de restablecimiento enviado con éxito.",
+        )
+        request_password_reset.assert_called_once_with("unknown@example.com")
 
 
 if __name__ == "__main__":

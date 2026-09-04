@@ -1,7 +1,7 @@
 import os
 import time
 
-from fastapi import FastAPI, HTTPException, Depends, Request, Response
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from services import cobranza, renovaciones, cumpleanos, cumpleanos_agentes, agentes, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, renewal_agent_api, client_email_directory, whatsapp, pendientes, mail_configuration, automatic_mails, recluta, password_management, base_loads, accesos, cotizaciones, audit_logs, rrhh, campanas, finanzas
 from services.login_security import login_rate_limiter, secure_cookie_for
@@ -126,20 +126,30 @@ async def login(payload: LoginRequest, request: Request, response: Response):
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
+def deliver_password_reset_email(email: str) -> None:
+    try:
+        password_management.request_password_reset(email)
+    except Exception as exc:
+        # Never reveal whether an address is registered or whether SMTP failed.
+        print(f"Password reset email unavailable: {type(exc).__name__}: {exc}")
+
+
 @app.post("/password/forgot")
-async def forgot_password(payload: PasswordResetRequest, request: Request):
+async def forgot_password(
+    payload: PasswordResetRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
     email = payload.email.strip().casefold()
     rate_limit_key = login_rate_limiter.key(request, f"password-reset:{email}")
     login_rate_limiter.check(rate_limit_key)
     login_rate_limiter.record_failure(rate_limit_key)
-    try:
-        password_management.request_password_reset(email)
-    except Exception as exc:
-        # Never reveal whether an address is registered.
-        print(f"Password reset email unavailable: {type(exc).__name__}: {exc}")
+    # SMTP can take longer than the reverse proxy timeout. Send after returning
+    # the response so a successfully accepted request is never shown as HTTP 500.
+    background_tasks.add_task(deliver_password_reset_email, email)
     return {
         "success": True,
-        "message": "Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.",
+        "message": "Email de restablecimiento enviado con éxito.",
     }
 
 

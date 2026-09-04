@@ -21,7 +21,7 @@ export default function ForgotPasswordPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email }),
             });
-            setMessage(response.message);
+            setMessage(response.message || 'Email de restablecimiento enviado con éxito.');
         } catch (requestError) {
             setError(requestError instanceof Error ? requestError.message : 'No fue posible procesar la solicitud.');
         } finally {
