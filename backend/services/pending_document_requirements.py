@@ -4,6 +4,7 @@ import re
 
 
 SINIESTROS_DOCUMENT_REQUIREMENTS = [
+    "Solicitud del asegurado",
     "Identificación",
     "Comprobante de domicilio",
     "Informe Médico",

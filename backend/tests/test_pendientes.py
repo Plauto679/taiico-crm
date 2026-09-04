@@ -1169,6 +1169,7 @@ class PendingWorkbookTests(unittest.TestCase):
         self.assertEqual(
             _requirements_for_row({"summary": {}}, "siniestros"),
             [
+                "Solicitud del asegurado",
                 "Identificación",
                 "Comprobante de domicilio",
                 "Informe Médico",
