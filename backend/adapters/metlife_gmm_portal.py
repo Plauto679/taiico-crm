@@ -39,6 +39,8 @@ AdapterStopAfter = Literal[
     "upload_to_drive",
 ]
 SEARCH_RESULT_TIMEOUT_MS = 10_000
+SEARCH_MENU_SELECTOR = "div.MuiPopover-root[role='presentation']"
+SEARCH_MENU_CLOSE_TIMEOUT_MS = 5_000
 
 
 @dataclass
@@ -528,15 +530,87 @@ class MetLifeGmmPortalAdapter:
         page.wait_for_load_state("networkidle", timeout=60_000)
         page.wait_for_url(re.compile(r".*/graph-clients.*|.*/clients.*"), timeout=60_000)
 
+    @staticmethod
+    def _visible_locators(locator) -> list[Any]:
+        visible = []
+        for index in range(locator.count()):
+            candidate = locator.nth(index)
+            if candidate.is_visible():
+                visible.append(candidate)
+        return visible
+
+    def close_residual_search_menu(self, page) -> None:
+        """Dismiss any open Material UI search menu left by a prior attempt."""
+        menus = self._visible_locators(page.locator(SEARCH_MENU_SELECTOR))
+        for menu in menus:
+            page.keyboard.press("Escape")
+            try:
+                menu.wait_for(state="hidden", timeout=SEARCH_MENU_CLOSE_TIMEOUT_MS)
+            except Exception as exc:
+                raise MetLifePortalAdapterError(
+                    "El menú residual de 'Buscar por' no se pudo cerrar"
+                ) from exc
+
+        if self._visible_locators(page.locator(SEARCH_MENU_SELECTOR)):
+            raise MetLifePortalAdapterError(
+                "El menú residual de 'Buscar por' continúa visible"
+            )
+
+    def select_search_option(self, page, search_label: str) -> None:
+        """Select exactly one visible option and wait until its menu is gone."""
+        menu_locator = page.locator(SEARCH_MENU_SELECTOR)
+        try:
+            menu_locator.last.wait_for(
+                state="visible", timeout=SEARCH_MENU_CLOSE_TIMEOUT_MS
+            )
+        except Exception as exc:
+            raise MetLifePortalAdapterError(
+                "El menú de 'Buscar por' no apareció"
+            ) from exc
+
+        visible_menus = self._visible_locators(menu_locator)
+        if len(visible_menus) != 1:
+            raise MetLifePortalAdapterError(
+                "Se esperaba un único menú visible de 'Buscar por'; "
+                f"se encontraron {len(visible_menus)}"
+            )
+
+        visible_options = self._visible_locators(
+            page.get_by_role("option", name=search_label, exact=True)
+        )
+        if len(visible_options) != 1:
+            raise MetLifePortalAdapterError(
+                f"Se esperaba una única opción visible '{search_label}'; "
+                f"se encontraron {len(visible_options)}"
+            )
+
+        visible_options[0].click()
+        try:
+            visible_menus[0].wait_for(
+                state="hidden", timeout=SEARCH_MENU_CLOSE_TIMEOUT_MS
+            )
+        except Exception as exc:
+            raise MetLifePortalAdapterError(
+                f"El menú de 'Buscar por' no desapareció tras seleccionar "
+                f"'{search_label}'"
+            ) from exc
+
+        if self._visible_locators(page.locator(SEARCH_MENU_SELECTOR)):
+            raise MetLifePortalAdapterError(
+                f"El menú de 'Buscar por' continúa visible tras seleccionar "
+                f"'{search_label}'"
+            )
+
     def search(self, page, search_label: str, value: str) -> None:
         value = " ".join(str(value or "").split())
         if not value:
             raise MetLifePortalAdapterError(
                 f"No hay valor para buscar por {search_label}"
             )
+        self.close_residual_search_menu(page)
         buscar = page.get_by_text("Buscar por", exact=True).first.locator("..")
         buscar.click()
-        page.get_by_text(search_label, exact=True).click()
+        self.select_search_option(page, search_label)
 
         search_input = page.locator("#searchName")
         search_input.wait_for(state="visible", timeout=15_000)

@@ -160,6 +160,87 @@ class MetLifeGmmMfaContinuationTests(unittest.TestCase):
             ["failed", "failed", "completed"],
         )
 
+    def test_search_closes_residual_menu_selects_visible_option_and_waits_for_close(self):
+        adapter = self.make_adapter()
+        page = MagicMock()
+
+        residual_menu = MagicMock()
+        opened_menu = MagicMock()
+        menu_locator = MagicMock()
+        menu_locator.count.side_effect = [1, 0, 1, 0]
+        menu_locator.nth.side_effect = [residual_menu, opened_menu]
+        menu_locator.last = opened_menu
+        residual_menu.is_visible.return_value = True
+        opened_menu.is_visible.return_value = True
+
+        options = MagicMock()
+        hidden_option = MagicMock()
+        visible_option = MagicMock()
+        options.count.return_value = 2
+        options.nth.side_effect = [hidden_option, visible_option]
+        hidden_option.is_visible.return_value = False
+        visible_option.is_visible.return_value = True
+
+        search_input = MagicMock()
+
+        def locator(selector):
+            if selector == "div.MuiPopover-root[role='presentation']":
+                return menu_locator
+            if selector == "#searchName":
+                return search_input
+            raise AssertionError(f"Unexpected selector: {selector}")
+
+        page.locator.side_effect = locator
+        page.get_by_role.return_value = options
+
+        adapter.search(page, "RFC Contratante", " SABM7809274J4 ")
+
+        page.keyboard.press.assert_called_once_with("Escape")
+        residual_menu.wait_for.assert_called_once_with(state="hidden", timeout=5_000)
+        page.get_by_role.assert_called_once_with(
+            "option", name="RFC Contratante", exact=True
+        )
+        hidden_option.click.assert_not_called()
+        visible_option.click.assert_called_once_with()
+        opened_menu.wait_for.assert_has_calls(
+            [
+                unittest.mock.call(state="visible", timeout=5_000),
+                unittest.mock.call(state="hidden", timeout=5_000),
+            ]
+        )
+        search_input.fill.assert_has_calls(
+            [unittest.mock.call(""), unittest.mock.call("SABM7809274J4")]
+        )
+        page.get_by_test_id.assert_called_once_with("searchIconId")
+
+    def test_search_rejects_duplicate_visible_options(self):
+        adapter = self.make_adapter()
+        page = MagicMock()
+        menu = MagicMock()
+        menu.is_visible.return_value = True
+        menu_locator = MagicMock()
+        menu_locator.count.side_effect = [0, 0, 1]
+        menu_locator.nth.return_value = menu
+
+        first_option = MagicMock()
+        second_option = MagicMock()
+        first_option.is_visible.return_value = True
+        second_option.is_visible.return_value = True
+        options = MagicMock()
+        options.count.return_value = 2
+        options.nth.side_effect = [first_option, second_option]
+
+        page.locator.return_value = menu_locator
+        page.get_by_role.return_value = options
+
+        with self.assertRaisesRegex(
+            Exception, "una única opción visible 'RFC Contratante'"
+        ):
+            adapter.search(page, "RFC Contratante", "SABM7809274J4")
+
+        first_option.click.assert_not_called()
+        second_option.click.assert_not_called()
+
     def test_download_waits_for_rows_and_uses_dom_click_for_unchecked_boxes(self):
         with tempfile.TemporaryDirectory() as download_root:
             adapter = MetLifeGmmPortalAdapter(
