@@ -28,6 +28,19 @@ SURA_PATHS = {
     "CARTERA": BASE_DIR / "Relaciones de cartera" / "Cartera SURA.xlsx",
 }
 
+# Canonical prospecting-portfolio workbooks. SQL remains the fast query index
+# used by the UI, while these files preserve the business-editable Excel copy.
+CARTERA_SOURCE_FILE_IDS = {
+    "metlife": os.getenv(
+        "GOOGLE_DRIVE_CARTERA_METLIFE_FILE_ID",
+        "1UEUJoGnLwzeGTNjybJJx2mZ2XGn2HHOm",
+    ),
+    "sura": os.getenv(
+        "GOOGLE_DRIVE_CARTERA_SURA_FILE_ID",
+        "1IipKFaUcbwplNgyQQy1Re5f3D7QspcQM",
+    ),
+}
+
 AARCO_PATHS = {
     "COBRANZA": BASE_DIR / "Bases de cobranza y comisiones" / "AARCO base cobranza.xlsx",
     "RENOVACIONES": BASE_DIR / "Fechas de emision de Polizas y renovaciones" / "AARCO & AXA.xlsx",
