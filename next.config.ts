@@ -5,6 +5,10 @@ const nextConfig: NextConfig = {
     // MetLife workbooks can be up to 100 MB. Leave room for multipart framing
     // before the same-origin route streams the request to FastAPI.
     proxyClientMaxBodySize: "110mb",
+    // Pending-record writes must finish syncing the canonical Excel file with
+    // Drive before the UI can safely confirm success. Some writes take longer
+    // than the default 30-second proxy timeout.
+    proxyTimeout: 90_000,
   },
   async headers() {
     return [
