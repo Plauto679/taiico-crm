@@ -9,7 +9,10 @@ export default async function CarteraPage({
     searchParams: Promise<{ insurer?: string; type?: string }>;
 }) {
     const resolvedParams = await searchParams;
-    const insurer = resolvedParams.insurer || 'Metlife';
+    const requestedInsurer = resolvedParams.insurer || 'Metlife';
+    const insurer = ['axa', 'aarco', 'aarco_axa'].includes(requestedInsurer.toLowerCase())
+        ? 'AARCO'
+        : requestedInsurer;
     const type = resolvedParams.type || (insurer === 'Metlife' ? 'VIDA' : 'ALL');
 
     const data = await getCarteraData(insurer, type);

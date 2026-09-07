@@ -5,7 +5,7 @@ import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { ArrowUp, ArrowDown, ArrowUpDown, Check, ChevronDown, Search, X } from 'lucide-react';
 
-interface Column<T> {
+export interface Column<T> {
     header: string;
     accessorKey: keyof T | ((row: T) => React.ReactNode);
     cell?: (row: T) => React.ReactNode;

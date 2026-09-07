@@ -4,7 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { CheckCircle2, Download, Plus, Search, X } from 'lucide-react';
 import clsx from 'clsx';
-import { DataTable } from '@/components/ui/DataTable';
+import { DataTable, type Column } from '@/components/ui/DataTable';
 import { CarteraRecord, CarteraRecordInput } from '@/lib/types/cartera';
 import { createCarteraRecord, updateCarteraRecord } from '@/modules/cartera/service';
 import { exportToExcel } from '@/lib/utils/export';
@@ -13,7 +13,9 @@ interface Props { data: CarteraRecord[]; insurer: string; type: string; }
 
 const emptyRecord = (insurer: string, type: string): CarteraRecordInput => ({
     policy_number: '', current_policy_number: '', contractor: '', prospector: '',
-    percentage: 0, payment_start_date: null, insurer: insurer.toLowerCase(), policy_type: type === 'ALL' ? 'VIDA' : type,
+    percentage: 0, payment_start_date: null,
+    insurer: insurer === 'AARCO' ? 'aarco' : insurer.toLowerCase(), carrier: '',
+    policy_type: type === 'ALL' ? 'VIDA' : type,
 });
 
 export function CarteraView({ data, insurer, type }: Props) {
@@ -28,7 +30,11 @@ export function CarteraView({ data, insurer, type }: Props) {
     const [generalSearch, setGeneralSearch] = useState('');
     const [exportRows, setExportRows] = useState(data);
 
-    useEffect(() => setVisibleData(data), [data]);
+    useEffect(() => {
+        // A server refresh is authoritative and must replace the optimistic rows.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setVisibleData(data);
+    }, [data]);
 
     useEffect(() => {
         if (!successMessage) return;
@@ -45,14 +51,20 @@ export function CarteraView({ data, insurer, type }: Props) {
         router.push(`/cartera?${params}`);
     };
 
-    const columns = [
-        { header: 'Póliza', accessorKey: 'policy_number' },
-        ...(insurer === 'Metlife' && type === 'GMM' ? [{ header: 'Póliza actual', accessorKey: 'current_policy_number' }] : []),
+    const columns: Column<CarteraRecord>[] = [];
+    if (insurer === 'AARCO') {
+        columns.push({ header: 'Aseguradora', accessorKey: (row) => row.carrier || 'Sin especificar', filterValue: (row) => row.carrier || 'Sin especificar' });
+    }
+    columns.push({ header: 'Póliza', accessorKey: 'policy_number' });
+    if (insurer === 'Metlife' && type === 'GMM') {
+        columns.push({ header: 'Póliza actual', accessorKey: 'current_policy_number' });
+    }
+    columns.push(
         { header: 'Contratante', accessorKey: 'contractor' },
         { header: 'Prospectador', accessorKey: 'prospector' },
         { header: 'Inicio de pago', accessorKey: 'payment_start_date' },
-        { header: 'Porcentaje', accessorKey: (row: CarteraRecord) => `${Number(row.percentage || 0).toFixed(0)}%`, filterValue: (row: CarteraRecord) => Number(row.percentage || 0).toFixed(0) },
-    ];
+        { header: 'Porcentaje', accessorKey: (row) => `${Number(row.percentage || 0).toFixed(0)}%`, filterValue: (row) => Number(row.percentage || 0).toFixed(0) },
+    );
 
     const searchedData = useMemo(() => {
         const query = generalSearch.trim().toLocaleLowerCase('es');
@@ -61,6 +73,7 @@ export function CarteraView({ data, insurer, type }: Props) {
         return visibleData.filter((item) => [
             item.policy_number,
             item.current_policy_number,
+            item.carrier,
             item.contractor,
             item.prospector,
             item.payment_start_date,
@@ -73,6 +86,7 @@ export function CarteraView({ data, insurer, type }: Props) {
 
     const exportCurrentView = () => {
         const rows = exportRows.map((item) => ({
+            ...(insurer === 'AARCO' ? { 'Aseguradora': item.carrier || '' } : {}),
             'Póliza': item.policy_number,
             ...(insurer === 'Metlife' && type === 'GMM' ? { 'Póliza actual': item.current_policy_number || '' } : {}),
             'Contratante': item.contractor,
@@ -93,12 +107,13 @@ export function CarteraView({ data, insurer, type }: Props) {
         const form = new FormData(event.currentTarget);
         const payload: CarteraRecordInput = {
             policy_number: String(form.get('policy_number') || '').trim(),
-            current_policy_number: String(form.get('current_policy_number') || '').trim() || null as any,
+            current_policy_number: String(form.get('current_policy_number') || '').trim() || null,
             contractor: String(form.get('contractor') || '').trim(),
             prospector: String(form.get('prospector') || '').trim(),
             percentage: Number(form.get('percentage') || 0),
             payment_start_date: String(form.get('payment_start_date') || '').trim() || null,
-            insurer: insurer.toLowerCase(),
+            insurer: insurer === 'AARCO' ? 'aarco' : insurer.toLowerCase(),
+            carrier: insurer === 'AARCO' ? String(form.get('carrier') || '').trim() : null,
             policy_type: type === 'ALL' ? (record?.policy_type || 'VIDA') : type,
         };
         try {
@@ -128,7 +143,11 @@ export function CarteraView({ data, insurer, type }: Props) {
         </div>}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/30 pb-3">
             <div className="flex flex-wrap gap-2">
-                {['Metlife', 'SURA', 'Axa', 'AARCO'].map((item) => <button key={item} onClick={() => navigate(item)} className={clsx('rounded-md px-4 py-2 text-sm font-semibold transition-colors', insurer === item ? 'bg-[#5996D1] text-white ring-2 ring-white/70' : 'text-white hover:bg-white/10')}>{item}</button>)}
+                {[
+                    { value: 'Metlife', label: 'Metlife' },
+                    { value: 'SURA', label: 'SURA' },
+                    { value: 'AARCO', label: 'AARCO' },
+                ].map((item) => <button key={item.value} onClick={() => navigate(item.value)} className={clsx('rounded-md px-4 py-2 text-sm font-semibold transition-colors', insurer === item.value ? 'bg-[#5996D1] text-white ring-2 ring-white/70' : 'text-white hover:bg-white/10')}>{item.label}</button>)}
             </div>
             <button type="button" onClick={() => { setCreating(true); setEditing(null); setError(''); }} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 font-semibold text-white shadow hover:bg-blue-700"><Plus className="h-5 w-5" /> Nuevo registro</button>
         </div>
@@ -150,14 +169,15 @@ export function CarteraView({ data, insurer, type }: Props) {
             />
         </div>
         <div className="min-h-0 flex-1 overflow-auto overscroll-contain rounded-lg bg-white shadow">
-            <DataTable data={searchedData} columns={columns as any} filterMode="multi-select" onProcessedDataChange={captureProcessedRows} onRowClick={setEditing} className="max-h-full min-w-full overflow-auto border-0 shadow-none" />
+            <DataTable data={searchedData} columns={columns} filterMode="multi-select" onProcessedDataChange={captureProcessedRows} onRowClick={setEditing} className="max-h-full min-w-full overflow-auto border-0 shadow-none" />
         </div>
         {record && <div className="fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) { setEditing(null); setCreating(false); } }}>
             <form onSubmit={submit} className="my-auto w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
                 <div className="flex items-start justify-between border-b px-6 py-5"><div><h2 className="text-2xl font-bold text-slate-900">{editing ? 'Editar registro' : 'Nuevo registro'}</h2><p className="text-sm text-slate-500">{insurer}{type !== 'ALL' ? ` · ${type}` : ''}</p></div><button type="button" onClick={() => { setEditing(null); setCreating(false); }} className="rounded-full p-2 text-slate-400 hover:bg-slate-100"><X /></button></div>
                 <div className="grid gap-4 p-6 sm:grid-cols-2">
+                    {insurer === 'AARCO' && <Field label="Aseguradora" name="carrier" defaultValue={record.carrier || ''} placeholder="Ej. AXA, Mapfre, HDI…" required />}
                     <Field label="Póliza" name="policy_number" defaultValue={record.policy_number} required />
-                    {insurer === 'Metlife' && type === 'GMM' && <Field label="Póliza actual" name="current_policy_number" defaultValue={record.current_policy_number} />}
+                    {insurer === 'Metlife' && type === 'GMM' && <Field label="Póliza actual" name="current_policy_number" defaultValue={record.current_policy_number || ''} />}
                     <Field label="Contratante" name="contractor" defaultValue={record.contractor} required wide />
                     <Field label="Prospectador" name="prospector" defaultValue={record.prospector} required />
                     <Field label="Inicio de pago" name="payment_start_date" type="date" defaultValue={record.payment_start_date || ''} />

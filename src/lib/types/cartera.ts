@@ -13,12 +13,13 @@ export interface ClientProfile {
 export interface CarteraRecord {
     id: string;
     policy_number: string;
-    current_policy_number: string;
+    current_policy_number: string | null;
     contractor: string;
     prospector: string;
     percentage: number;
     payment_start_date: string | null;
     insurer: string;
+    carrier: string | null;
     policy_type: string;
 }
 

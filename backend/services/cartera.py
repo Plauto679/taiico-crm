@@ -12,7 +12,7 @@ from openpyxl import load_workbook
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 
-from config import CARTERA_SOURCE_FILE_IDS, METLIFE_PATHS, SURA_PATHS
+from config import AARCO_PATHS, CARTERA_SOURCE_FILE_IDS, METLIFE_PATHS, SURA_PATHS
 from database import Client, Insurer, Policy, Product, SessionLocal, User
 from drive.client import download_drive_file_bytes
 from services.auth import AccessProfile
@@ -31,14 +31,24 @@ class CarteraRecordPayload(BaseModel):
     percentage: float = Field(ge=0, le=100)
     payment_start_date: date | None = None
     insurer: str = Field(min_length=2, max_length=50)
+    carrier: str | None = Field(default=None, max_length=100)
     policy_type: str = Field(default="VIDA", min_length=2, max_length=20)
 
 
 def _normalized_insurer(value: str) -> str:
-    insurer = value.strip().casefold()
-    if insurer not in {"metlife", "sura", "axa", "aarco"}:
+    insurer = " ".join(value.strip().casefold().split())
+    insurer = {
+        "aarco & axa": "aarco_axa",
+        "axa & aarco": "aarco_axa",
+        "axa_aarco": "aarco_axa",
+    }.get(insurer, insurer)
+    if insurer not in {"metlife", "sura", "axa", "aarco", "aarco_axa"}:
         raise HTTPException(status_code=422, detail="Aseguradora no válida")
     return insurer
+
+
+def _source_key_for_insurer(insurer: str) -> str:
+    return "aarco_axa" if insurer in {"aarco", "axa", "aarco_axa"} else insurer
 
 
 def _percentage_for_ui(value) -> float:
@@ -81,6 +91,7 @@ def _serialize(policy: Policy) -> dict:
         "percentage": effective_prospector_percentage(policy),
         "payment_start_date": metadata.get("payment_start_date"),
         "insurer": policy.insurer_id,
+        "carrier": str(metadata.get("carrier") or metadata.get("aseguradora") or "").strip(),
         "policy_type": policy.product.branch if policy.product else "",
     }
 
@@ -115,6 +126,8 @@ def _canonical_sheet(payload: CarteraRecordPayload):
         return Path(METLIFE_PATHS["CARTERA"]), "GMM" if payload.policy_type.upper() == "GMM" else "Vida"
     if insurer == "sura":
         return Path(SURA_PATHS["CARTERA"]), "SURA"
+    if insurer in {"axa", "aarco", "aarco_axa"}:
+        return Path(AARCO_PATHS["CARTERA"]), None
     return None
 
 
@@ -146,7 +159,7 @@ def _upload_drive_workbook(file_id: str, contents: bytes) -> None:
 
 
 def _canonical_contents(insurer: str, path: Path) -> tuple[bytes, str]:
-    file_id = CARTERA_SOURCE_FILE_IDS.get(insurer, "").strip()
+    file_id = CARTERA_SOURCE_FILE_IDS.get(_source_key_for_insurer(insurer), "").strip()
     if file_id:
         return download_drive_file_bytes(file_id), file_id
     if not path.exists():
@@ -176,7 +189,7 @@ def _write_canonical(payload: CarteraRecordPayload, original_policy_number: str 
     with _WORKBOOK_LOCK:
         snapshot, file_id = _canonical_contents(insurer, path)
         workbook = load_workbook(io.BytesIO(snapshot))
-        sheet = workbook[sheet_name]
+        sheet = workbook[sheet_name] if sheet_name else workbook.active
         headers = {str(cell.value or "").strip().casefold(): cell.column for cell in sheet[1] if cell.value}
         if not any(key in headers for key in ("inicio de pago", "fecha inicio de pago")):
             column = sheet.max_column + 1
@@ -202,6 +215,7 @@ def _write_canonical(payload: CarteraRecordPayload, original_policy_number: str 
         assign(("poliza actual", "póliza actual"), (payload.current_policy_number or payload.policy_number).strip())
         assign(("contratante",), payload.contractor.strip())
         assign(("prospectador",), payload.prospector.strip())
+        assign(("aseguradora",), str(payload.carrier or "").strip())
         # Canonical workbooks store percentages as ratios (0.8 = 80%).
         assign(("porcentaje",), payload.percentage / 100 if payload.percentage > 1 else payload.percentage)
         assign(("inicio de pago", "fecha inicio de pago"), payload.payment_start_date)
@@ -239,7 +253,14 @@ def parse_cartera_workbook(contents: bytes, insurer: str) -> list[dict]:
     """
     insurer_id = _normalized_insurer(insurer)
     workbook = load_workbook(io.BytesIO(contents), data_only=True)
-    sheet_names = ("Vida", "GMM") if insurer_id == "metlife" else ("SURA",)
+    if insurer_id == "metlife":
+        sheet_names = ("Vida", "GMM")
+    elif insurer_id == "sura":
+        sheet_names = ("SURA",)
+    else:
+        # The combined workbook is intentionally parsed by headers rather than
+        # by its tab name so administrators may rename the worksheet freely.
+        sheet_names = tuple(workbook.sheetnames)
     rows_by_policy: dict[str, dict] = {}
     for sheet_name in sheet_names:
         if sheet_name not in workbook.sheetnames:
@@ -258,6 +279,13 @@ def parse_cartera_workbook(contents: bytes, insurer: str) -> list[dict]:
             policy_number = _policy_text(value(row_number, "Póliza", "Poliza"))
             if not policy_number:
                 continue
+            row_insurer = insurer_id
+            carrier = ""
+            if insurer_id == "aarco_axa":
+                # AARCO is the broker/source. This free-text column identifies
+                # the actual carrier and must support every company it brokers.
+                row_insurer = "aarco"
+                carrier = " ".join(str(value(row_number, "Aseguradora") or "").strip().split())
             percentage_value = value(row_number, "Porcentaje")
             try:
                 percentage = Decimal(str(percentage_value or 0))
@@ -266,14 +294,17 @@ def parse_cartera_workbook(contents: bytes, insurer: str) -> list[dict]:
             payment_start = value(row_number, "Inicio de pago", "Fecha inicio de pago")
             if isinstance(payment_start, datetime):
                 payment_start = payment_start.date()
-            rows_by_policy[policy_number] = {
+            row_key = f"{row_insurer}:{policy_number}"
+            rows_by_policy[row_key] = {
                 "policy_number": policy_number,
                 "current_policy_number": _policy_text(value(row_number, "Póliza actual", "Poliza actual")) or policy_number,
                 "contractor": str(value(row_number, "Contratante") or "").strip(),
                 "prospector": str(value(row_number, "Prospectador") or "").strip(),
                 "percentage": percentage,
                 "payment_start_date": payment_start.isoformat() if isinstance(payment_start, date) else None,
-                "policy_type": sheet_name.upper() if sheet_name in {"Vida", "GMM"} else "GMM",
+                "policy_type": sheet_name.upper() if sheet_name in {"Vida", "GMM"} else "VIDA",
+                "insurer": row_insurer,
+                "carrier": carrier,
             }
     return list(rows_by_policy.values())
 
@@ -281,7 +312,8 @@ def parse_cartera_workbook(contents: bytes, insurer: str) -> list[dict]:
 def sync_cartera_source(insurer: str, *, contents: bytes | None = None, db=None) -> dict:
     """Refresh the fast SQL index from its canonical Drive workbook."""
     insurer_id = _normalized_insurer(insurer)
-    file_id = CARTERA_SOURCE_FILE_IDS.get(insurer_id, "").strip()
+    source_key = _source_key_for_insurer(insurer_id)
+    file_id = CARTERA_SOURCE_FILE_IDS.get(source_key, "").strip()
     if contents is None:
         if not file_id:
             raise RuntimeError(f"No hay un archivo de Drive configurado para {insurer_id}")
@@ -291,16 +323,21 @@ def sync_cartera_source(insurer: str, *, contents: bytes | None = None, db=None)
     owns_session = db is None
     created = updated = conflicts = 0
     try:
-        insurer_record = session.query(Insurer).filter(Insurer.id == insurer_id).first()
-        if not insurer_record:
-            raise RuntimeError(f"La aseguradora {insurer_id} no está configurada")
+        row_insurers = {row.get("insurer") or insurer_id for row in rows}
+        configured_insurers = {
+            item.id for item in session.query(Insurer).filter(Insurer.id.in_(row_insurers)).all()
+        }
+        missing_insurers = row_insurers - configured_insurers
+        if missing_insurers:
+            raise RuntimeError(f"La aseguradora {sorted(missing_insurers)[0]} no está configurada")
         owner = session.query(User).filter(User.id == "usr_pamela").first()
         owner = owner or session.query(User).filter(User.id == "usr_admin").first()
         if not owner:
             raise RuntimeError("No se encontró un usuario responsable")
+        indexed_insurers = {"aarco", "axa"} if source_key == "aarco_axa" else row_insurers
         existing = {
-            policy.policy_number: policy
-            for policy in session.query(Policy).filter(Policy.insurer_id == insurer_id).all()
+            (policy.insurer_id, policy.policy_number): policy
+            for policy in session.query(Policy).filter(Policy.insurer_id.in_(indexed_insurers)).all()
         }
         policies_by_number = {
             policy.policy_number: policy
@@ -309,7 +346,10 @@ def sync_cartera_source(insurer: str, *, contents: bytes | None = None, db=None)
             ).all()
         }
         for row in rows:
-            policy = existing.get(row["policy_number"])
+            row_insurer = row.get("insurer") or insurer_id
+            policy = existing.get((row_insurer, row["policy_number"]))
+            if not policy and source_key == "aarco_axa":
+                policy = existing.get(("axa", row["policy_number"]))
             contractor = row["contractor"]
             if policy:
                 metadata = dict(policy.metadata_json or {})
@@ -319,6 +359,7 @@ def sync_cartera_source(insurer: str, *, contents: bytes | None = None, db=None)
                     "prospector": row["prospector"],
                     "current_policy_number": row["current_policy_number"],
                     "payment_start_date": row["payment_start_date"],
+                    "carrier": row.get("carrier") or metadata.get("carrier") or "",
                     "cartera_source": "google_drive",
                 }
                 if contractor:
@@ -331,18 +372,18 @@ def sync_cartera_source(insurer: str, *, contents: bytes | None = None, db=None)
                 conflicts += 1
                 continue
             client = Client(
-                full_name=contractor or f"{insurer_id.upper()} CLIENT P-{row['policy_number']}",
+                full_name=contractor or f"{row_insurer.upper()} CLIENT P-{row['policy_number']}",
                 responsible_user_id=owner.id,
                 status="active",
                 metadata_json={"prospectador": row["prospector"]},
             )
             session.add(client)
             session.flush()
-            product = _product_for(session, insurer_id, row["policy_type"])
+            product = _product_for(session, row_insurer, row["policy_type"])
             session.add(Policy(
                 policy_number=row["policy_number"],
                 client_id=client.id,
-                insurer_id=insurer_id,
+                insurer_id=row_insurer,
                 product_id=product.id,
                 effective_start_date=date.today(),
                 effective_end_date=date.today(),
@@ -355,13 +396,14 @@ def sync_cartera_source(insurer: str, *, contents: bytes | None = None, db=None)
                     "prospector": row["prospector"],
                     "current_policy_number": row["current_policy_number"],
                     "payment_start_date": row["payment_start_date"],
+                    "carrier": row.get("carrier") or "",
                     "cartera_source": "google_drive",
                 },
             ))
             created += 1
         session.commit()
         return {
-            "insurer": insurer_id,
+            "insurer": source_key,
             "source_file_id": file_id,
             "source_rows": len(rows),
             "created": created,
@@ -376,6 +418,81 @@ def sync_cartera_source(insurer: str, *, contents: bytes | None = None, db=None)
             session.close()
 
 
+def sync_cartera_sql_to_canonical(insurer: str, *, db=None) -> dict:
+    """Backfill SQL-indexed policies into the canonical workbook in one upload.
+
+    Existing workbook rows are updated in place and rows unknown to SQL are
+    preserved. A blank carrier in legacy SQL never erases an insurer captured
+    manually in Excel.
+    """
+    insurer_id = _normalized_insurer(insurer)
+    source_key = _source_key_for_insurer(insurer_id)
+    if source_key == "metlife":
+        raise RuntimeError("La exportación masiva de MetLife requiere separar Vida y GMM")
+    path = Path(SURA_PATHS["CARTERA"] if source_key == "sura" else AARCO_PATHS["CARTERA"])
+    with _WORKBOOK_LOCK:
+        snapshot, file_id = _canonical_contents(insurer_id, path)
+        workbook = load_workbook(io.BytesIO(snapshot))
+        sheet = workbook["SURA"] if source_key == "sura" and "SURA" in workbook.sheetnames else workbook.active
+        if source_key == "aarco_axa" and sheet.title == "SURA" and "AARCO" not in workbook.sheetnames:
+            sheet.title = "AARCO"
+
+        required_headers = ["Aseguradora", "Póliza", "Póliza actual", "Contratante", "Prospectador", "Porcentaje", "Inicio de pago"]
+        headers = {_header_key(cell.value): cell.column for cell in sheet[1] if cell.value}
+        for label in required_headers:
+            key = _header_key(label)
+            if key not in headers:
+                column = sheet.max_column + 1
+                sheet.cell(1, column).value = label
+                headers[key] = column
+
+        rows_by_policy: dict[str, int] = {}
+        policy_column = headers[_header_key("Póliza")]
+        for row_number in range(2, sheet.max_row + 1):
+            policy_number = _policy_text(sheet.cell(row_number, policy_column).value)
+            if policy_number:
+                rows_by_policy[policy_number] = row_number
+
+        session = db or SessionLocal()
+        owns_session = db is None
+        try:
+            query_insurers = ("aarco", "axa") if source_key == "aarco_axa" else (insurer_id,)
+            policies = session.query(Policy).join(Client).filter(Policy.insurer_id.in_(query_insurers)).order_by(Policy.policy_number).all()
+            for policy in policies:
+                metadata = dict(policy.metadata_json or {})
+                row_number = rows_by_policy.get(policy.policy_number)
+                if not row_number:
+                    row_number = sheet.max_row + 1
+                    rows_by_policy[policy.policy_number] = row_number
+
+                def assign(label: str, value) -> None:
+                    sheet.cell(row_number, headers[_header_key(label)]).value = value
+
+                carrier = str(metadata.get("carrier") or metadata.get("aseguradora") or "").strip()
+                if carrier:
+                    assign("Aseguradora", carrier)
+                assign("Póliza", policy.policy_number)
+                assign("Póliza actual", metadata.get("current_policy_number") or policy.policy_number)
+                assign("Contratante", policy.client.full_name if policy.client else "")
+                assign("Prospectador", metadata.get("prospector") or "")
+                percentage = float(policy.commission_percentage or 0)
+                assign("Porcentaje", percentage / 100 if abs(percentage) > 1 else percentage)
+                raw_date = metadata.get("payment_start_date")
+                try:
+                    payment_start = date.fromisoformat(str(raw_date)) if raw_date else None
+                except ValueError:
+                    payment_start = None
+                assign("Inicio de pago", payment_start)
+
+            output = io.BytesIO()
+            workbook.save(output)
+            _save_canonical_contents(path, file_id, output.getvalue())
+            return {"insurer": source_key, "source_file_id": file_id, "exported": len(policies)}
+        finally:
+            if owns_session:
+                session.close()
+
+
 @router.get("/data")
 def get_cartera_data(
     insurer: str = Query(..., description="Insurer name"),
@@ -385,7 +502,8 @@ def get_cartera_data(
     canonical_snapshot = None
     try:
         insurer_id = _normalized_insurer(insurer)
-        query = db.query(Policy).join(Client).filter(Policy.insurer_id == insurer_id)
+        insurer_ids = ("axa", "aarco") if _source_key_for_insurer(insurer_id) == "aarco_axa" else (insurer_id,)
+        query = db.query(Policy).join(Client).filter(Policy.insurer_id.in_(insurer_ids))
         if type.upper() != "ALL":
             query = query.join(Product).filter(Product.branch == type.upper())
         return [_serialize(policy) for policy in query.order_by(Policy.policy_number).all()]
@@ -407,8 +525,13 @@ def create_cartera_record(
     try:
         policy_number = payload.policy_number.strip()
         insurer_id = _normalized_insurer(payload.insurer)
+        source_is_combined = _source_key_for_insurer(insurer_id) == "aarco_axa"
+        if source_is_combined:
+            insurer_id = "aarco"
         existing_policy = db.query(Policy).filter(Policy.policy_number == policy_number).first()
-        if existing_policy and existing_policy.insurer_id != insurer_id:
+        if existing_policy and existing_policy.insurer_id != insurer_id and not (
+            source_is_combined and existing_policy.insurer_id in {"aarco", "axa"}
+        ):
             raise HTTPException(
                 status_code=409,
                 detail="La póliza ya existe asociada a otra aseguradora",
@@ -448,6 +571,7 @@ def create_cartera_record(
                 "prospector": payload.prospector.strip(),
                 "current_policy_number": (payload.current_policy_number or policy_number).strip(),
                 "payment_start_date": payload.payment_start_date.isoformat() if payload.payment_start_date else None,
+                "carrier": str(payload.carrier or "").strip(),
                 "cartera_manual": True,
             }
         else:
@@ -466,6 +590,7 @@ def create_cartera_record(
                     "prospector": payload.prospector.strip(),
                     "current_policy_number": (payload.current_policy_number or policy_number).strip(),
                     "payment_start_date": payload.payment_start_date.isoformat() if payload.payment_start_date else None,
+                    "carrier": str(payload.carrier or "").strip(),
                     "cartera_manual": True,
                 },
             )
@@ -506,6 +631,8 @@ def update_cartera_record(
         if duplicate:
             raise HTTPException(status_code=409, detail="Ya existe una póliza con ese número")
         insurer_id = _normalized_insurer(payload.insurer)
+        if _source_key_for_insurer(insurer_id) == "aarco_axa":
+            insurer_id = "aarco"
         original_policy_number = policy.policy_number
         policy.policy_number = policy_number
         policy.insurer_id = insurer_id
@@ -516,6 +643,7 @@ def update_cartera_record(
             "prospector": payload.prospector.strip(),
             "current_policy_number": (payload.current_policy_number or policy_number).strip(),
             "payment_start_date": payload.payment_start_date.isoformat() if payload.payment_start_date else None,
+            "carrier": str(payload.carrier or "").strip(),
         }
         policy.client.full_name = payload.contractor.strip()
         canonical_snapshot = _write_canonical(payload, original_policy_number)
@@ -545,7 +673,7 @@ def search_cartera(query: str = Query(..., min_length=1)):
         return [{
             "poliza": policy.policy_number,
             "contratante": policy.client.full_name if policy.client else "",
-            "aseguradora": policy.insurer_id.upper(),
+            "aseguradora": str((policy.metadata_json or {}).get("carrier") or policy.insurer_id).upper(),
             "estatus": policy.status,
             "ramo": policy.product.branch if policy.product else "",
         } for policy in policies]

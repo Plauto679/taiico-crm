@@ -39,11 +39,16 @@ CARTERA_SOURCE_FILE_IDS = {
         "GOOGLE_DRIVE_CARTERA_SURA_FILE_ID",
         "1IipKFaUcbwplNgyQQy1Re5f3D7QspcQM",
     ),
+    "aarco_axa": os.getenv(
+        "GOOGLE_DRIVE_CARTERA_AARCO_AXA_FILE_ID",
+        "1OlGUMj--g03FywdpX0ePl9AixdNYAFzL",
+    ),
 }
 
 AARCO_PATHS = {
     "COBRANZA": BASE_DIR / "Bases de cobranza y comisiones" / "AARCO base cobranza.xlsx",
     "RENOVACIONES": BASE_DIR / "Fechas de emision de Polizas y renovaciones" / "AARCO & AXA.xlsx",
+    "CARTERA": BASE_DIR / "Relaciones de cartera" / "Cartera AARCO.xlsx",
 }
 
 PROMOTORIA_SURA_PATHS = {
