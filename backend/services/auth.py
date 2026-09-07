@@ -63,6 +63,7 @@ MODULES = (
     "recluta",
     "dashboards",
     "configuracion_mail",
+    "mails_automaticos",
     "carga_bases",
     "accesos",
     "cotizaciones",
@@ -78,6 +79,7 @@ MODULE_COLUMNS = {
     for module in MODULES
 }
 MODULE_COLUMNS["configuracion_mail"] = "Permiso_Configuracion_Mail"
+MODULE_COLUMNS["mails_automaticos"] = "Permiso_Mails_Automaticos"
 MODULE_COLUMNS["cumpleanos_agentes"] = "Permiso_Cumpleanos_Agentes"
 MODULE_COLUMNS["agentes"] = "Permiso_Agentes"
 MODULE_COLUMNS["carga_bases"] = "Permiso_Carga_Bases"
@@ -102,6 +104,7 @@ MODULE_LABELS = {
     "recluta": "Recluta",
     "dashboards": "Dashboards",
     "configuracion_mail": "Configuración de Mail",
+    "mails_automaticos": "Mails automáticos",
     "carga_bases": "Carga de bases",
     "accesos": "Accesos",
     "cotizaciones": "Cotizaciones",
@@ -259,6 +262,7 @@ def _default_module_permissions(role: str, promotorias: tuple[str, ...]) -> dict
     permissions["campanas"] = "ninguno"
     permissions["finanzas"] = "ninguno"
     permissions["gestion_comercial"] = "ninguno"
+    permissions["mails_automaticos"] = "ninguno"
     for module in UNIVERSAL_READ_MODULES:
         permissions[module] = "lectura"
     return permissions
@@ -289,14 +293,18 @@ def _read_user_directory(
         if "*" in promotorias:
             promotorias = PROMOTORIAS
         defaults = _default_module_permissions(role, promotorias)
-        permissions = {
-            module: (
-                _normalize_permission(row.get(column, ""))
-                if column in table.columns
-                else defaults[module]
-            )
-            for module, column in MODULE_COLUMNS.items()
-        }
+        permissions = {}
+        for module, column in MODULE_COLUMNS.items():
+            if column in table.columns:
+                permissions[module] = _normalize_permission(row.get(column, ""))
+            elif module == "mails_automaticos" and MODULE_COLUMNS["configuracion_mail"] in table.columns:
+                # Preserve existing access until the user is saved from the
+                # Access module and the dedicated column is persisted.
+                permissions[module] = _normalize_permission(
+                    row.get(MODULE_COLUMNS["configuracion_mail"], "")
+                )
+            else:
+                permissions[module] = defaults[module]
         for module in UNIVERSAL_READ_MODULES:
             permissions[module] = "lectura"
         profiles[username] = AccessProfile(

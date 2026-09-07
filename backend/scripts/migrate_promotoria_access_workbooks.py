@@ -33,6 +33,7 @@ MODULE_COLUMNS = (
     "Permiso_Recluta",
     "Permiso_Dashboards",
     "Permiso_Configuracion_Mail",
+    "Permiso_Mails_Automaticos",
 )
 
 

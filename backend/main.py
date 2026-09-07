@@ -248,7 +248,7 @@ app.include_router(client_email_directory.router, dependencies=[Depends(require_
 app.include_router(whatsapp.router, dependencies=[Depends(require_module_access("renovaciones", operation=True))])
 app.include_router(pendientes.router, dependencies=[Depends(require_module_access("pendientes"))])
 app.include_router(mail_configuration.router, dependencies=[Depends(require_module_access("configuracion_mail"))])
-app.include_router(automatic_mails.router, dependencies=[Depends(require_module_access("configuracion_mail"))])
+app.include_router(automatic_mails.router, dependencies=[Depends(require_module_access("mails_automaticos"))])
 app.include_router(recluta.router, dependencies=[Depends(require_module_access("recluta"))])
 app.include_router(base_loads.router, dependencies=[Depends(require_module_access("carga_bases", operation=True))])
 app.include_router(accesos.router, dependencies=[Depends(require_module_access("accesos", operation=True))])

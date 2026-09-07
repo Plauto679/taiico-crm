@@ -51,6 +51,39 @@ class WorkbookAuthenticationTests(unittest.TestCase):
             self.assertTrue(auth.verify_credentials("person@example.com", "local-secret"))
             self.assertFalse(auth.verify_credentials("person@example.com", "wrong"))
 
+    def test_automatic_mails_temporarily_inherits_legacy_mail_permission(self):
+        workbook = workbook_bytes([{
+            "Usuario": "person@example.com",
+            "Password": "secret",
+            "Rol": "Admin",
+            "Promotoria": "TAIICO",
+            "Permiso_Configuracion_Mail": "Operación",
+        }])
+
+        _, profiles = auth._read_user_directory(workbook)
+
+        self.assertEqual(
+            profiles["person@example.com"].module_permissions["mails_automaticos"],
+            "operacion",
+        )
+
+    def test_automatic_mails_dedicated_permission_overrides_legacy_fallback(self):
+        workbook = workbook_bytes([{
+            "Usuario": "person@example.com",
+            "Password": "secret",
+            "Rol": "Admin",
+            "Promotoria": "TAIICO",
+            "Permiso_Configuracion_Mail": "Operación",
+            "Permiso_Mails_Automaticos": "Lectura",
+        }])
+
+        _, profiles = auth._read_user_directory(workbook)
+
+        self.assertEqual(
+            profiles["person@example.com"].module_permissions["mails_automaticos"],
+            "lectura",
+        )
+
     def test_username_is_case_insensitive_and_trimmed(self):
         workbook = workbook_bytes([
             {"Usuario": "Person@Example.com", "Password": "local-secret"},

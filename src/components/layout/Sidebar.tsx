@@ -21,7 +21,7 @@ const NAV_ITEMS = [
     { name: 'Recluta', href: '/recluta', icon: UserRoundSearch, module: 'recluta' },
     { name: 'Dashboards', href: '/dashboards', icon: BarChart3, module: 'dashboards' },
     { name: 'Configuración de Mail', href: '/configuracion-mail', icon: Mail, module: 'configuracion_mail' },
-    { name: 'Mails automáticos', href: '/mails-automaticos', icon: MailCheck, module: 'configuracion_mail' },
+    { name: 'Mails automáticos', href: '/mails-automaticos', icon: MailCheck, module: 'mails_automaticos' },
     { name: 'Carga de bases', href: '/carga-bases', icon: DatabaseZap, module: 'carga_bases' },
     { name: 'Accesos', href: '/accesos', icon: UserCog, module: 'accesos' },
     { name: 'Cotizaciones', href: '/cotizaciones', icon: FilePenLine, module: 'cotizaciones' },

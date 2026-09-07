@@ -374,7 +374,7 @@ def schedule_period_key(config: dict, now: datetime) -> str:
 @router.get("")
 def list_automatic_mails(profile: AccessProfile = Depends(current_access_profile)):
     return {
-        "can_operate": profile.can_operate("configuracion_mail"),
+        "can_operate": profile.can_operate("mails_automaticos"),
         "automations": all_automation_configs(),
     }
 
@@ -385,7 +385,7 @@ def update_automatic_mail(
     payload: AutomaticMailUpdate,
     profile: AccessProfile = Depends(current_access_profile),
 ):
-    if not profile.can_operate("configuracion_mail"):
+    if not profile.can_operate("mails_automaticos"):
         raise HTTPException(status_code=403, detail="No tienes permiso para editar esta configuración")
     try:
         return save_automation_config(automation_id, payload)
