@@ -2,11 +2,11 @@ import { fetchFromApi } from '@/lib/api';
 import { Cliente, ClientIdentityCandidatesResponse, ClientRegistryAudit } from '@/lib/types/clientes';
 
 export async function getClients(): Promise<Cliente[]> {
-    return fetchFromApi('/clientes/');
+    return fetchFromApi('/clientes');
 }
 
 export async function addClient(client: Cliente): Promise<Cliente> {
-    return fetchFromApi('/clientes/', {
+    return fetchFromApi('/clientes', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -15,7 +15,11 @@ export async function addClient(client: Cliente): Promise<Cliente> {
     });
 }
 
-export async function updateClient(clientId: string | null | undefined, originalNombre: string, client: Cliente): Promise<any> {
+export async function updateClient(
+    clientId: string | null | undefined,
+    originalNombre: string,
+    client: Cliente,
+): Promise<{ success: boolean; client: Cliente }> {
     return fetchFromApi('/clientes/update', {
         method: 'POST',
         headers: {

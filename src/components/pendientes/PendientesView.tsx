@@ -3,29 +3,40 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Download, Mail, Plus } from 'lucide-react';
 import { DataTable } from '@/components/ui/DataTable';
-import { PendingRow, PendingSourceData } from '@/lib/types/pendientes';
+import { CommercialPendingData, PendingRow, PendingSourceData } from '@/lib/types/pendientes';
 import { exportToExcel } from '@/lib/utils/export';
 import { getPendingSource } from '@/modules/pendientes/service';
 import { formatHistoryDate, PendingHistoryModal } from './PendingHistoryModal';
 import { RegisterPendingModal } from './RegisterPendingModal';
 import { PendingReportModal } from './PendingReportModal';
+import { CommercialPendingPanel } from './CommercialPendingPanel';
 
 interface PendientesViewProps {
     emisionServicios: PendingSourceData;
     siniestros: PendingSourceData;
+    commercial: CommercialPendingData;
 }
 
-export function PendientesView({ emisionServicios, siniestros }: PendientesViewProps) {
-    const [activeTab, setActiveTab] = useState<'emision-servicios' | 'siniestros'>('emision-servicios');
+export function PendientesView({ emisionServicios, siniestros, commercial }: PendientesViewProps) {
+    const initialTab = !emisionServicios.load_error
+        ? 'emision-servicios'
+        : !siniestros.load_error
+            ? 'siniestros'
+            : 'commercial';
+    const [activeTab, setActiveTab] = useState<'emision-servicios' | 'siniestros' | 'commercial'>(initialTab);
     const [selectedRow, setSelectedRow] = useState<PendingRow | null>(null);
     const [emisionData, setEmisionData] = useState(emisionServicios);
     const [siniestrosData, setSiniestrosData] = useState(siniestros);
     const [showRegisterModal, setShowRegisterModal] = useState(false);
     const [showReportModal, setShowReportModal] = useState(false);
-    const [visibleRows, setVisibleRows] = useState<PendingRow[]>(emisionServicios.rows);
+    const [visibleRows, setVisibleRows] = useState<PendingRow[]>(
+        initialTab === 'siniestros' ? siniestros.rows : emisionServicios.rows,
+    );
     const [notice, setNotice] = useState<string | null>(null);
-    const activeData = activeTab === 'emision-servicios' ? emisionData : siniestrosData;
+    const tabularSource = activeTab === 'commercial' ? 'emision-servicios' : activeTab;
+    const activeData = tabularSource === 'emision-servicios' ? emisionData : siniestrosData;
     const canOperate = activeData.access.can_operate;
+    const canOperateCommercial = emisionData.access.can_operate || siniestrosData.access.can_operate;
     const inconsistencyCount = (
         emisionData.inconsistencies.length + siniestrosData.inconsistencies.length
     );
@@ -77,7 +88,7 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
     };
 
     const handleCreated = (row: PendingRow) => {
-        if (activeTab === 'emision-servicios') {
+        if (tabularSource === 'emision-servicios') {
             setEmisionData((current) => ({ ...current, rows: [...current.rows, row] }));
         } else {
             setSiniestrosData((current) => ({ ...current, rows: [...current.rows, row] }));
@@ -91,14 +102,14 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
             ...current,
             rows: current.rows.map((item) => item.id === row.id ? row : item),
         });
-        if (activeTab === 'emision-servicios') setEmisionData(replaceRow);
+        if (tabularSource === 'emision-servicios') setEmisionData(replaceRow);
         else setSiniestrosData(replaceRow);
         setSelectedRow(row);
     };
 
     const handleDeleted = async () => {
-        const refreshed = await getPendingSource(activeTab);
-        if (activeTab === 'emision-servicios') setEmisionData(refreshed);
+        const refreshed = await getPendingSource(tabularSource);
+        if (tabularSource === 'emision-servicios') setEmisionData(refreshed);
         else setSiniestrosData(refreshed);
         setVisibleRows(refreshed.rows);
         setSelectedRow(null);
@@ -121,18 +132,26 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
                             onClick={() => selectTab('emision-servicios')}
                             className={`border-b-2 px-4 py-3 text-sm font-semibold ${activeTab === 'emision-servicios' ? 'border-white text-white' : 'border-transparent text-blue-100 hover:text-white'}`}
                         >
-                            Emisión y Servicios
+                            Emisión y Servicios {emisionData.load_error && <AlertTriangle className="ml-1 inline h-4 w-4" />}
                         </button>
                         <button
                             type="button"
                             onClick={() => selectTab('siniestros')}
                             className={`border-b-2 px-4 py-3 text-sm font-semibold ${activeTab === 'siniestros' ? 'border-white text-white' : 'border-transparent text-blue-100 hover:text-white'}`}
                         >
-                            Siniestros
+                            Siniestros {siniestrosData.load_error && <AlertTriangle className="ml-1 inline h-4 w-4" />}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => { setActiveTab('commercial'); setSelectedRow(null); setShowRegisterModal(false); }}
+                            className={`border-b-2 px-4 py-3 text-sm font-semibold ${activeTab === 'commercial' ? 'border-white text-white' : 'border-transparent text-blue-100 hover:text-white'}`}
+                        >
+                            Comerciales
                         </button>
                     </div>
                     <div className="flex items-center gap-3">
-                        <p className="text-sm text-blue-100">{activeData.rows.length} registros</p>
+                        <p className="text-sm text-blue-100">{activeTab === 'commercial' ? commercial.rows.length : activeData.rows.length} registros</p>
+                        {activeTab !== 'commercial' && !activeData.load_error && <>
                         <button type="button" onClick={downloadExcel} className="inline-flex items-center gap-2 rounded-lg border border-white/60 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10">
                             <Download className="h-4 w-4" /> Descargar Excel
                         </button>
@@ -144,15 +163,28 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
                                 <Plus className="h-4 w-4" /> Registrar Pendiente
                             </button>
                         </>}
+                        </>}
                     </div>
                 </div>
 
-                <div className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg bg-white shadow">
-                    <DataTable key={activeTab} data={activeData.rows} columns={columns} filterMode="multi-select" onRowClick={setSelectedRow} onProcessedDataChange={handleProcessedDataChange} className="h-full max-w-full overflow-auto border-0 shadow-none" />
-                </div>
-                <p className="flex-none text-sm text-blue-100">
+                {activeTab === 'commercial' ? (
+                    <CommercialPendingPanel initialData={commercial} canOperate={canOperateCommercial} />
+                ) : activeData.load_error ? (
+                    <div role="alert" className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-amber-200 bg-amber-50 p-8 text-center shadow">
+                        <div className="max-w-xl text-amber-900">
+                            <AlertTriangle className="mx-auto mb-3 h-10 w-10" />
+                            <h2 className="text-lg font-bold">No fue posible cargar {activeData.title}</h2>
+                            <p className="mt-2 text-sm">{activeData.load_error}</p>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg bg-white shadow">
+                        <DataTable key={activeTab} data={activeData.rows} columns={columns} filterMode="multi-select" onRowClick={setSelectedRow} onProcessedDataChange={handleProcessedDataChange} className="h-full max-w-full overflow-auto border-0 shadow-none" />
+                    </div>
+                )}
+                {activeTab !== 'commercial' && !activeData.load_error && <p className="flex-none text-sm text-blue-100">
                     Haz clic en un registro para consultar el historial completo de actualizaciones.
-                </p>
+                </p>}
             </div>
 
             {notice && (
@@ -161,10 +193,10 @@ export function PendientesView({ emisionServicios, siniestros }: PendientesViewP
                     {notice}
                 </div>
             )}
-            {selectedRow && <PendingHistoryModal key={`${activeTab}:${selectedRow.id}`} row={selectedRow} source={activeTab} access={activeData.access} onUpdated={handleUpdated} onDeleted={handleDeleted} onClose={() => setSelectedRow(null)} />}
+            {selectedRow && <PendingHistoryModal key={`${tabularSource}:${selectedRow.id}`} row={selectedRow} source={tabularSource} access={activeData.access} onUpdated={handleUpdated} onDeleted={handleDeleted} onClose={() => setSelectedRow(null)} />}
             {showRegisterModal && (
                 <RegisterPendingModal
-                    source={activeTab}
+                    source={tabularSource}
                     onClose={() => setShowRegisterModal(false)}
                     onCreated={handleCreated}
                     access={activeData.access}

@@ -112,9 +112,14 @@ def build_identity_candidates(clients: list[dict[str, Any]], counts: dict[str, d
                     label: values.get(client_id, 0) for label, values in counts.items()
                 },
             })
+        # A valid RFC identifies a distinct client and therefore a distinct
+        # expediente. Even when names or contact details match, records with
+        # different RFCs must never be proposed as homologation candidates.
+        if len(rfcs) > 1:
+            continue
         members.sort(key=lambda member: (not bool(member["rfc"]), member["nombre"].casefold()))
-        conflicting_rfcs = len(rfcs) > 1
-        canonical_options = [member["id"] for member in members if member["rfc"]] if not conflicting_rfcs else []
+        conflicting_rfcs = False
+        canonical_options = [member["id"] for member in members if member["rfc"]]
         confidence = "alta" if reasons.intersection({"RFC coincidente", "Correo coincidente", "Teléfono coincidente"}) else "media"
         candidates.append({
             "group_id": "|".join(sorted(ids)),

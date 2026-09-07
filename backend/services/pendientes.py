@@ -47,6 +47,11 @@ from services.pending_document_requirements import (
 from services.mail_configuration import smtp_settings_for
 from services.renovaciones import send_email_smtp
 from services.xlsx_integrity import repair_workbook_integrity
+from services.gestion_comercial import (
+    CommercialTaskUpdate,
+    list_commercial_pending,
+    update_commercial_task,
+)
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -2292,6 +2297,22 @@ def pending_client_directory(
         ]
     finally:
         db.close()
+
+
+@router.get("/commercial")
+def get_commercial_pending(
+    profile: AccessProfile = Depends(current_access_profile),
+):
+    return list_commercial_pending(profile)
+
+
+@router.patch("/commercial/{task_id}")
+def patch_commercial_pending(
+    task_id: str,
+    payload: CommercialTaskUpdate,
+    profile: AccessProfile = Depends(require_module_access("pendientes", operation=True)),
+):
+    return {"updated": True, "task": update_commercial_task(task_id, payload.status, profile)}
 
 
 @router.get("/{source_key}")

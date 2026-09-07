@@ -459,12 +459,163 @@ class Task(Base):
     assigned_user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
     related_entity_type = Column(String(50), nullable=True) # policy, client, payment, claim, renewal, lead
     related_entity_id = Column(String(36), nullable=True)
+    metadata_json = Column("metadata", JSON, default={})
     due_date = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     assigned_user = relationship("User", back_populates="tasks")
+
+
+class ClientContact(Base):
+    __tablename__ = "client_contacts"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    client_id = Column(String(36), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    position = Column(String(255), nullable=True)
+    area = Column(String(255), nullable=True)
+    phone = Column(String(50), nullable=True)
+    whatsapp = Column(String(50), nullable=True)
+    email = Column(String(320), nullable=True)
+    decision_role = Column(String(50), default="contact", nullable=False)
+    is_primary = Column(Boolean, default=False, nullable=False)
+    is_economic_decision_maker = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+
+class CommercialStage(Base):
+    __tablename__ = "commercial_stages"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    code = Column(String(80), unique=True, nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    position = Column(Integer, nullable=False)
+    base_conversion_rate = Column(Numeric(5, 2), default=0, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    metadata_json = Column("metadata", JSON, default={})
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+
+class CommercialOpportunity(Base):
+    __tablename__ = "commercial_opportunities"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    client_id = Column(String(36), ForeignKey("clients.id"), nullable=True, index=True)
+    client_name = Column(String(255), nullable=False)
+    product_id = Column(String(36), ForeignKey("products.id"), nullable=True, index=True)
+    product_name = Column(String(255), nullable=False)
+    business_line = Column(String(80), nullable=True)
+    owner_agent_rfc = Column(String(50), nullable=False, index=True)
+    owner_agent_name = Column(String(255), nullable=False)
+    owner_promotoria = Column(String(100), nullable=False, index=True)
+    potential_premium = Column(Numeric(14, 2), default=0, nullable=False)
+    currency = Column(String(10), default="MXN", nullable=False)
+    stage_id = Column(String(36), ForeignKey("commercial_stages.id"), nullable=False, index=True)
+    status = Column(String(30), default="active", nullable=False, index=True)
+    priority = Column(String(20), default="medium", nullable=False, index=True)
+    source = Column(String(100), nullable=True)
+    referred_by = Column(String(255), nullable=True)
+    estimated_close_date = Column(Date, nullable=True)
+    detected_need = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+    competition = Column(String(255), nullable=True)
+    decision_maker_access = Column(Boolean, nullable=True)
+    financial_statements_available = Column(Boolean, nullable=True)
+    economic_capacity = Column(String(50), nullable=True)
+    relationship_level = Column(String(50), nullable=True)
+    closed_premium = Column(Numeric(14, 2), nullable=True)
+    issued_premium = Column(Numeric(14, 2), nullable=True)
+    paid_premium = Column(Numeric(14, 2), nullable=True)
+    policy_id = Column(String(36), ForeignKey("policies.id"), nullable=True, index=True)
+    lost_reason = Column(String(100), nullable=True)
+    close_comment = Column(Text, nullable=True)
+    next_activity_at = Column(DateTime, nullable=True, index=True)
+    created_by = Column(String(320), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+    client = relationship("Client")
+    product = relationship("Product")
+    stage = relationship("CommercialStage")
+    policy = relationship("Policy")
+
+
+class CommercialOpportunityQuote(Base):
+    __tablename__ = "commercial_opportunity_quotes"
+    __table_args__ = (
+        UniqueConstraint("quote_id", name="uq_commercial_opportunity_quote_id"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    opportunity_id = Column(String(36), ForeignKey("commercial_opportunities.id", ondelete="CASCADE"), nullable=False, index=True)
+    quote_id = Column(String(100), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+
+class CommercialOpportunityStageHistory(Base):
+    __tablename__ = "commercial_opportunity_stage_history"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    opportunity_id = Column(String(36), ForeignKey("commercial_opportunities.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage_id = Column(String(36), ForeignKey("commercial_stages.id"), nullable=False, index=True)
+    entered_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    exited_at = Column(DateTime, nullable=True)
+    changed_by = Column(String(320), nullable=False)
+    reason = Column(Text, nullable=True)
+    metadata_json = Column("metadata", JSON, default={})
+
+
+class CommercialStageTaskRule(Base):
+    __tablename__ = "commercial_stage_task_rules"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    stage_id = Column(String(36), ForeignKey("commercial_stages.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    responsible_role = Column(String(100), nullable=True)
+    assigned_user_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    sla_business_days = Column(Integer, default=2, nullable=False)
+    is_required = Column(Boolean, default=True, nullable=False)
+    blocks_stage_change = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+
+class CommercialOpportunityTask(Base):
+    __tablename__ = "commercial_opportunity_tasks"
+    __table_args__ = (
+        UniqueConstraint("stage_history_id", "rule_id", name="uq_commercial_stage_task_once"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    opportunity_id = Column(String(36), ForeignKey("commercial_opportunities.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage_history_id = Column(String(36), ForeignKey("commercial_opportunity_stage_history.id", ondelete="CASCADE"), nullable=False, index=True)
+    rule_id = Column(String(36), ForeignKey("commercial_stage_task_rules.id"), nullable=False, index=True)
+    task_id = Column(String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+
+class CommercialActivity(Base):
+    __tablename__ = "commercial_activities"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    opportunity_id = Column(String(36), ForeignKey("commercial_opportunities.id", ondelete="CASCADE"), nullable=False, index=True)
+    activity_type = Column(String(80), nullable=False)
+    description = Column(Text, nullable=True)
+    scheduled_at = Column(DateTime, nullable=False, index=True)
+    responsible_user_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    contact_id = Column(String(36), ForeignKey("client_contacts.id"), nullable=True, index=True)
+    reminder_at = Column(DateTime, nullable=True)
+    status = Column(String(30), default="pending", nullable=False, index=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_by = Column(String(320), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
 
 # 12. Conversation Model
 class Conversation(Base):

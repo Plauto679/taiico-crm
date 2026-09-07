@@ -29,6 +29,17 @@ class ApiSecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["detail"], "Authentication required")
 
+    def test_client_collection_routes_accept_both_slash_variants_without_redirect(self):
+        for path in ("/clientes", "/clientes/"):
+            with self.subTest(path=path):
+                response = self.client.post(
+                    path,
+                    json={"nombre": "Cliente de prueba"},
+                    follow_redirects=False,
+                )
+                self.assertEqual(response.status_code, 401)
+                self.assertNotIn("location", response.headers)
+
     def test_every_service_router_has_server_side_session_dependency(self):
         public_paths = {"/", "/login", "/password/forgot", "/password/reset"}
         unprotected = []

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, MailCheck, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, Menu, X, Landmark, UserRoundCog } from 'lucide-react';
+import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, MailCheck, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, Menu, X, Landmark, UserRoundCog, ChartNoAxesCombined } from 'lucide-react';
 import { SmartLink } from '@/components/navigation/SmartLink';
 import { IdleModulePrefetch } from '@/components/navigation/IdleModulePrefetch';
 
@@ -25,6 +25,7 @@ const NAV_ITEMS = [
     { name: 'Carga de bases', href: '/carga-bases', icon: DatabaseZap, module: 'carga_bases' },
     { name: 'Accesos', href: '/accesos', icon: UserCog, module: 'accesos' },
     { name: 'Cotizaciones', href: '/cotizaciones', icon: FilePenLine, module: 'cotizaciones' },
+    { name: 'Gestión Comercial', href: '/gestion-comercial', icon: ChartNoAxesCombined, module: 'gestion_comercial' },
     { name: 'Logs', href: '/logs', icon: ScrollText, module: 'logs' },
     { name: 'RRHH', href: '/rrhh', icon: ContactRound, module: 'rrhh' },
     { name: 'Campañas', href: '/campanas', icon: Megaphone, module: 'campanas' },

@@ -23,6 +23,7 @@ export interface PendingSourceData {
     rows: PendingRow[];
     access: PendingAccess;
     inconsistencies: PendingAssignmentInconsistency[];
+    load_error?: string;
 }
 
 export interface PendingAccess {
@@ -147,4 +148,29 @@ export interface PendingReportSendResponse {
     recipient: string;
     recipients: string[];
     generated_on: string;
+}
+
+export interface CommercialPendingTask {
+    id: string;
+    title: string;
+    description: string;
+    status: 'pending' | 'in_progress' | 'completed';
+    priority: string;
+    assigned_to: string;
+    responsible_role: string;
+    due_date?: string | null;
+    is_required: boolean;
+    blocks_stage_change: boolean;
+    opportunity_id: string;
+    client_name: string;
+    product_name: string;
+    stage_name: string;
+    owner_agent_name: string;
+    owner_promotoria: string;
+}
+
+export interface CommercialPendingData {
+    source: 'commercial';
+    title: string;
+    rows: CommercialPendingTask[];
 }

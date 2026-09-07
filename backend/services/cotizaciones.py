@@ -933,10 +933,18 @@ def send_quote_email(quote_id: str, payload: QuoteEmailRequest, profile: AccessP
         cc_recipients=[],
         settings=settings,
     )
+    from services.gestion_comercial import advance_opportunity_for_quote
+
+    opportunity_id = advance_opportunity_for_quote(
+        quote_id,
+        "presentation",
+        actor=profile.username,
+    )
     return {
         "sent": True,
         "recipients": recipients,
         "attachment_count": len(attachments),
+        "opportunity_id": opportunity_id,
     }
 
 
@@ -1180,7 +1188,16 @@ def create_quote(payload: QuoteCreate, profile: AccessProfile) -> dict[str, str]
         output = io.BytesIO()
         workbook.save(output)
         _upload_workbook(output.getvalue())
-        return _serialize_row(sheet, headers, row_number)
+        created = _serialize_row(sheet, headers, row_number)
+        from services.gestion_comercial import ensure_opportunity_for_quote
+
+        created["opportunity_id"] = ensure_opportunity_for_quote(
+            created,
+            actor=profile.username,
+            agent_rfc=agent["rfc"],
+            client_id=payload.client_id,
+        )
+        return created
 
 
 def update_quote(quote_id: str, payload: QuoteUpdate, profile: AccessProfile) -> dict[str, str]:
@@ -1213,7 +1230,7 @@ def update_quote(quote_id: str, payload: QuoteUpdate, profile: AccessProfile) ->
         return _serialize_row(sheet, headers, row_number)
 
 
-def start_quote(quote_id: str, payload: QuoteStartRequest) -> dict[str, str]:
+def start_quote(quote_id: str, payload: QuoteStartRequest, *, actor: str = "TAIICO CRM") -> dict[str, str]:
     with _workbook_lock:
         workbook = _load_workbook()
         sheet, headers = _sheet_and_headers(workbook)
@@ -1238,6 +1255,13 @@ def start_quote(quote_id: str, payload: QuoteStartRequest) -> dict[str, str]:
         workbook.save(output)
         _upload_workbook(output.getvalue())
         updated = _serialize_row(sheet, headers, row_number)
+        from services.gestion_comercial import advance_opportunity_for_quote
+
+        updated["opportunity_id"] = advance_opportunity_for_quote(
+            quote_id,
+            "solution_design",
+            actor=actor,
+        ) or ""
         updated["folder_id"] = str(folder.get("id") or "")
         updated["folder_name"] = str(folder.get("name") or "")
         return updated
@@ -1347,10 +1371,17 @@ def get_quotes_config(profile: AccessProfile = Depends(current_access_profile)):
 @router.get("")
 def get_quotes(profile: AccessProfile = Depends(current_access_profile)):
     try:
+        from services.gestion_comercial import opportunity_ids_for_quotes
+
+        visible_quotes = [
+            quote for quote in list_quotes()
+            if profile_allows_promotoria(profile, quote.get("promotoria"))
+        ]
+        opportunity_ids = opportunity_ids_for_quotes([quote["id"] for quote in visible_quotes])
         return {
             "quotes": [
-                quote for quote in list_quotes()
-                if profile_allows_promotoria(profile, quote.get("promotoria"))
+                {**quote, "opportunity_id": opportunity_ids.get(quote["id"], "")}
+                for quote in visible_quotes
             ]
         }
     except Exception as exc:
@@ -1468,7 +1499,7 @@ def begin_quote(
 ):
     try:
         require_quote_access(profile, quote_id)
-        return {"quote": start_quote(quote_id, payload)}
+        return {"quote": start_quote(quote_id, payload, actor=profile.username)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

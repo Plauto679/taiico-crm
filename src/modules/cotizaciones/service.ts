@@ -13,6 +13,7 @@ export type Quote = {
   promotoria: string;
   aseguradora: string;
   clave_agente: string;
+  opportunity_id?: string;
   folder_id?: string;
   folder_name?: string;
 };

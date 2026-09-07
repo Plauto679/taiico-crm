@@ -16,6 +16,7 @@ export function AddClientModal({ isOpen, onClose, onSave }: AddClientModalProps)
     const [correo, setCorreo] = useState('');
     const [telefono, setTelefono] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const [errorMessage, setErrorMessage] = useState('');
 
     if (!isOpen) return null;
 
@@ -24,6 +25,7 @@ export function AddClientModal({ isOpen, onClose, onSave }: AddClientModalProps)
         if (!nombre.trim()) return;
 
         setIsSaving(true);
+        setErrorMessage('');
         try {
             await onSave({
                 nombre: nombre.trim(),
@@ -39,18 +41,26 @@ export function AddClientModal({ isOpen, onClose, onSave }: AddClientModalProps)
             setTelefono('');
         } catch (error) {
             console.error('Error adding client:', error);
-            alert('Error al agregar el cliente');
+            const message = error instanceof Error
+                ? error.message.replace(/^API Error:\s*/, '')
+                : '';
+            const isConnectionError = /failed to fetch|fetch failed|load failed|network ?error/i.test(message);
+            setErrorMessage(
+                message && !isConnectionError
+                    ? message
+                    : 'No fue posible conectar con el servidor. El cliente no se creó; conserva los datos e intenta nuevamente.',
+            );
         } finally {
             setIsSaving(false);
         }
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
             <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-medium text-gray-900">Agregar Nuevo Cliente</h3>
-                    <button onClick={onClose} className="text-gray-400 hover:text-gray-500">
+                    <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-500">
                         <X className="h-6 w-6" />
                     </button>
                 </div>
@@ -108,6 +118,12 @@ export function AddClientModal({ isOpen, onClose, onSave }: AddClientModalProps)
                             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
                         />
                     </div>
+
+                    {errorMessage && (
+                        <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                            {errorMessage}
+                        </div>
+                    )}
 
                     <div className="mt-6 flex justify-end space-x-3">
                         <button

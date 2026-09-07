@@ -21,6 +21,12 @@ export function ClientIdentityModal({ data, clients, isMerging, onClose, onMerge
     const [manualCanonical, setManualCanonical] = useState('');
     const groups = useMemo(() => data.groups, [data.groups]);
     const selectedClients = clients.filter((client) => client.id && manualSelection.includes(client.id));
+    const selectedRfcs = new Set(
+        selectedClients
+            .map((client) => client.rfc?.trim().toUpperCase())
+            .filter((rfc): rfc is string => Boolean(rfc)),
+    );
+    const manualHasConflictingRfcs = selectedRfcs.size > 1;
     const manualResults = useMemo(() => {
         const term = manualSearch.trim().toLocaleLowerCase('es-MX');
         if (term.length < 2) return [];
@@ -107,8 +113,10 @@ export function ClientIdentityModal({ data, clients, isMerging, onClose, onMerge
 
                         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-indigo-50 p-3 text-sm text-indigo-900">
                             <span><strong>{manualSelection.length}</strong> seleccionados. Marca como maestro uno que tenga RFC.</span>
-                            <button onClick={mergeManual} disabled={isMerging || !manualCanonical || manualSelection.length < 2} className="rounded-md bg-indigo-600 px-3 py-2 font-bold text-white disabled:opacity-40">{isMerging ? 'Homologando…' : `Homologar selección (${Math.max(0, manualSelection.length - 1)})`}</button>
+                            <button onClick={mergeManual} disabled={isMerging || !manualCanonical || manualSelection.length < 2 || manualHasConflictingRfcs} className="rounded-md bg-indigo-600 px-3 py-2 font-bold text-white disabled:opacity-40">{isMerging ? 'Homologando…' : `Homologar selección (${Math.max(0, manualSelection.length - 1)})`}</button>
                         </div>
+
+                        {manualHasConflictingRfcs && <p className="mt-3 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm font-semibold text-red-700"><AlertTriangle className="h-4 w-4" /> Los RFC distintos corresponden a clientes independientes y no pueden homologarse.</p>}
 
                         <div className="mt-3 overflow-y-auto rounded-xl border bg-white">
                             {manualSearch.trim().length < 2 ? <p className="p-8 text-center text-sm text-slate-500">Escribe al menos dos caracteres para buscar.</p> : manualResults.length === 0 ? <p className="p-8 text-center text-sm text-slate-500">No encontramos registros con esos filtros.</p> : manualResults.map((client) => {

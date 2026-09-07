@@ -31,7 +31,7 @@ class ClientIdentityMatchingTests(unittest.TestCase):
         prospect = next(member for member in groups[0]["members"] if member["id"] == "prospect")
         self.assertEqual(prospect["relaciones"]["pólizas"], 3)
 
-    def test_flags_conflicting_rfcs(self):
+    def test_excludes_clients_with_different_rfcs_even_when_names_match(self):
         groups = build_identity_candidates(
             [
                 {"id": "one", "name": "MISMO NOMBRE", "rfc": "AAMA950203I52", "status": "active"},
@@ -40,8 +40,20 @@ class ClientIdentityMatchingTests(unittest.TestCase):
             {},
         )
 
-        self.assertTrue(groups[0]["conflicting_rfcs"])
-        self.assertEqual(groups[0]["canonical_options"], [])
+        self.assertEqual(groups, [])
+
+    def test_keeps_clients_with_the_same_rfc_as_candidates(self):
+        groups = build_identity_candidates(
+            [
+                {"id": "one", "name": "MISMO NOMBRE", "rfc": "AAMA950203I52", "status": "active"},
+                {"id": "two", "name": "NOMBRE MISMO", "rfc": "AAMA950203I52", "status": "active"},
+            ],
+            {},
+        )
+
+        self.assertEqual(len(groups), 1)
+        self.assertFalse(groups[0]["conflicting_rfcs"])
+        self.assertEqual(groups[0]["canonical_options"], ["one", "two"])
 
 
 if __name__ == "__main__":

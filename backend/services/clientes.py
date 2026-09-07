@@ -251,7 +251,8 @@ def _relationship_counts(db) -> dict[str, dict[str, int]]:
     return result
 
 
-@router.get("/", response_model=List[ClientModel])
+@router.get("", response_model=List[ClientModel])
+@router.get("/", response_model=List[ClientModel], include_in_schema=False)
 def get_clients(profile: AccessProfile = Depends(current_access_profile)):
     db = SessionLocal()
     try:
@@ -266,7 +267,8 @@ def get_clients(profile: AccessProfile = Depends(current_access_profile)):
         db.close()
 
 
-@router.post("/", response_model=ClientModel)
+@router.post("", response_model=ClientModel)
+@router.post("/", response_model=ClientModel, include_in_schema=False)
 def add_client(
     client: ClientModel,
     background_tasks: BackgroundTasks,
@@ -552,7 +554,8 @@ def merge_clients(
                     status_code=409,
                     detail=(
                         f"{duplicate.full_name} tiene el RFC {duplicate_rfc}, distinto del RFC "
-                        f"{canonical_rfc} del cliente maestro. Requiere revisión manual."
+                        f"{canonical_rfc} del cliente maestro. Son clientes independientes y "
+                        "no pueden homologarse."
                     ),
                 )
             results.append(

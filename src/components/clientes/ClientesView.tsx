@@ -8,7 +8,7 @@ import { AddClientModal } from './AddClientModal';
 import { EditClientModal } from './EditClientModal';
 import { ClientIdentityModal } from './ClientIdentityModal';
 import { addClient, updateClient, deleteClient, getClientIdentityCandidates, getClientRegistryAudit, mergeClients, syncClientFolderLinks } from '@/modules/clientes/service';
-import { AlertTriangle, Download, ExternalLink, GitMerge, RefreshCw, Search, ShieldCheck, UserPlus } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, ExternalLink, GitMerge, RefreshCw, Search, ShieldCheck, UserPlus } from 'lucide-react';
 
 interface ClientesViewProps {
     initialClients: Cliente[];
@@ -28,11 +28,18 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
     const [identityCandidates, setIdentityCandidates] = useState<ClientIdentityCandidatesResponse | null>(null);
     const [isLoadingCandidates, setIsLoadingCandidates] = useState(false);
     const [isMerging, setIsMerging] = useState(false);
+    const [successMessage, setSuccessMessage] = useState('');
 
     useEffect(() => {
         const update = window.setTimeout(() => setClients(initialClients), 0);
         return () => window.clearTimeout(update);
     }, [initialClients]);
+
+    useEffect(() => {
+        if (!successMessage) return;
+        const timeout = window.setTimeout(() => setSuccessMessage(''), 5000);
+        return () => window.clearTimeout(timeout);
+    }, [successMessage]);
 
     const filteredClients = useMemo(() => clients.filter(client =>
         client.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -42,7 +49,9 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
     ), [clients, searchTerm]);
 
     const handleAddClient = async (newClient: Cliente) => {
-        await addClient(newClient);
+        const savedClient = await addClient(newClient);
+        setClients((current) => [savedClient, ...current.filter((client) => client.id !== savedClient.id)]);
+        setSuccessMessage('El cliente ha sido salvado');
         router.refresh();
     };
 
@@ -175,6 +184,17 @@ export function ClientesView({ initialClients }: ClientesViewProps) {
 
     return (
         <div className="flex h-full min-h-0 flex-col gap-6 overflow-hidden">
+            {successMessage && (
+                <div
+                    role="status"
+                    aria-live="polite"
+                    className="fixed right-4 top-4 z-[60] flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 font-semibold text-emerald-800 shadow-lg"
+                >
+                    <CheckCircle2 className="h-5 w-5" />
+                    {successMessage}
+                </div>
+            )}
+
             <div className="flex flex-none flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-lg shadow-sm">
                 <div className="relative flex-1 max-w-md">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">

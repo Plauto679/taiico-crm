@@ -11,6 +11,8 @@ import {
     PendingSourceData,
     PendingUpdateResponse,
     SiniestrosPendingInput,
+    CommercialPendingData,
+    CommercialPendingTask,
 } from '@/lib/types/pendientes';
 
 export function sendPendingReport(emails: string[]): Promise<PendingReportSendResponse> {
@@ -18,6 +20,21 @@ export function sendPendingReport(emails: string[]): Promise<PendingReportSendRe
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ emails }),
+    });
+}
+
+export function getCommercialPending(): Promise<CommercialPendingData> {
+    return fetchFromApi('/pendientes/commercial');
+}
+
+export function updateCommercialPending(
+    taskId: string,
+    status: CommercialPendingTask['status'],
+): Promise<{ updated: boolean; task: CommercialPendingTask }> {
+    return fetchFromApi(`/pendientes/commercial/${encodeURIComponent(taskId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
     });
 }
 
