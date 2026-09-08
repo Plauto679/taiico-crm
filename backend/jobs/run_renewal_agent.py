@@ -769,12 +769,34 @@ def finish_run(
 
 def is_portal_failure(result_data: dict) -> bool:
     failed_steps = [
-        item.get("step_name")
+        item
         for item in result_data.get("steps") or []
         if item.get("status") not in {"completed", "skipped"}
     ]
+    no_match_steps = {
+        "search_rfc",
+        "search_policy",
+        "search_name",
+        "collection_select_policy",
+    }
+    no_match_markers = (
+        "found 0 matches",
+        "produjo 0 coincidencias exactas de póliza",
+        "produjo 0 coincidencias exactas de poliza",
+    )
+    if failed_steps and all(
+        item.get("step_name") in no_match_steps
+        and any(
+            marker in str(item.get("error_message") or "").casefold()
+            for marker in no_match_markers
+        )
+        for item in failed_steps
+    ):
+        # A completed search with zero matches is a task-level outcome, not a
+        # portal outage. Keep processing the remaining queue.
+        return False
     return any(
-        name
+        item.get("step_name")
         in {
             "open_browser",
             "authenticate_portal",
@@ -792,8 +814,56 @@ def is_portal_failure(result_data: dict) -> bool:
             "search_name",
             "download_documents",
         }
-        for name in failed_steps
+        for item in failed_steps
     )
+
+
+def is_browser_interruption(result) -> bool:
+    steps = list(getattr(result, "steps", None) or [])
+    if any(
+        getattr(item, "step_name", "") == "upload_to_drive"
+        and getattr(item, "status", "") == "completed"
+        for item in steps
+    ):
+        # Do not repeat an operation that may already have created Drive files.
+        return False
+    detail = " | ".join(
+        str(value or "")
+        for value in [
+            getattr(result, "error_message", ""),
+            *(getattr(item, "error_message", "") for item in steps),
+        ]
+    ).casefold()
+    return any(
+        marker in detail
+        for marker in (
+            "browser has been closed",
+            "browser closed",
+            "target closed",
+            "target page, context or browser has been closed",
+            "connection closed",
+            "connect_over_cdp",
+            "econnrefused",
+            "debugging endpoint",
+            "chrome quit",
+        )
+    )
+
+
+def run_portal_with_browser_recovery(operation, *, policy: str, portal: str):
+    result = operation()
+    if not is_browser_interruption(result):
+        return result
+    emit("browser_recovery_started", policy=policy, portal=portal)
+    time.sleep(3)
+    recovered = operation()
+    emit(
+        "browser_recovery_finished",
+        policy=policy,
+        portal=portal,
+        status=recovered.status,
+    )
+    return recovered
 
 
 def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
@@ -806,18 +876,22 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
         deadline=str(task.renewal_deadline),
         attempt=task.attempt_count,
     )
-    adapter = MetLifeGmmOldPortalAdapter(headless=False)
-    result = adapter.run(
-        MetLifeGmmPortalTask(
-            id=task.id,
-            policy_number=task.policy_number,
-            rfc=task.rfc or "",
-            client_name=task.client_name,
-            renewal_deadline=task.renewal_deadline,
-            original_policy_number=task.original_policy_number,
+    portal_task = MetLifeGmmPortalTask(
+        id=task.id,
+        policy_number=task.policy_number,
+        rfc=task.rfc or "",
+        client_name=task.client_name,
+        renewal_deadline=task.renewal_deadline,
+        original_policy_number=task.original_policy_number,
+    )
+    result = run_portal_with_browser_recovery(
+        lambda: MetLifeGmmOldPortalAdapter(headless=False).run(
+            portal_task,
+            stop_after=None,
+            upload_to_drive=True,
         ),
-        stop_after=None,
-        upload_to_drive=True,
+        policy=task.policy_number,
+        portal="old",
     )
     data = result_to_dict(result)
     data["retrieval_adapter"] = OLD_PORTAL_ADAPTER_NAME
@@ -834,18 +908,22 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
             from_portal="old",
             to_portal="clientes_beta",
         )
-        new_result = MetLifeGmmPortalAdapter(headless=False).run(
-            MetLifeGmmPortalTask(
-                id=task.id,
-                policy_number=task.policy_number,
-                rfc=task.rfc or "",
-                client_name=task.client_name,
-                renewal_deadline=task.renewal_deadline,
-                original_policy_number=task.original_policy_number,
+        new_result = run_portal_with_browser_recovery(
+            lambda: MetLifeGmmPortalAdapter(headless=False).run(
+                MetLifeGmmPortalTask(
+                    id=task.id,
+                    policy_number=task.policy_number,
+                    rfc=task.rfc or "",
+                    client_name=task.client_name,
+                    renewal_deadline=task.renewal_deadline,
+                    original_policy_number=task.original_policy_number,
+                ),
+                stop_after=None,
+                upload_to_drive=True,
+                target_drive_folder_id=target_drive_folder_id(),
             ),
-            stop_after=None,
-            upload_to_drive=True,
-            target_drive_folder_id=target_drive_folder_id(),
+            policy=task.policy_number,
+            portal="clientes_beta",
         )
         new_data = result_to_dict(new_result)
         new_data["steps"] = [
@@ -878,16 +956,21 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
                     policy=task.policy_number,
                     rfc=normalized_task_rfc,
                 )
-                collection_result = check_metlife_gmm_collection(
-                    MetLifeGmmPortalTask(
-                        id=task.id,
-                        policy_number=task.policy_number,
-                        original_policy_number=task.original_policy_number,
-                        rfc=normalized_task_rfc,
-                        client_name=task.client_name,
-                        renewal_deadline=task.renewal_deadline,
+                collection_task = MetLifeGmmPortalTask(
+                    id=task.id,
+                    policy_number=task.policy_number,
+                    original_policy_number=task.original_policy_number,
+                    rfc=normalized_task_rfc,
+                    client_name=task.client_name,
+                    renewal_deadline=task.renewal_deadline,
+                )
+                collection_result = run_portal_with_browser_recovery(
+                    lambda: check_metlife_gmm_collection(
+                        collection_task,
+                        headless=False,
                     ),
-                    headless=False,
+                    policy=task.policy_number,
+                    portal="collection",
                 )
                 collection_data = collection_result_to_dict(collection_result)
                 data["steps"] = [

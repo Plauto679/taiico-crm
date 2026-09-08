@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 import shutil
@@ -38,9 +39,12 @@ AdapterStopAfter = Literal[
     "download_policy_document",
     "upload_to_drive",
 ]
-SEARCH_RESULT_TIMEOUT_MS = 10_000
+SEARCH_RESULT_TIMEOUT_MS = 30_000
 SEARCH_MENU_SELECTOR = "div.MuiPopover-root[role='presentation']"
 SEARCH_MENU_CLOSE_TIMEOUT_MS = 5_000
+CHROME_START_COOLDOWN_SECONDS = 60
+CHROME_START_WAIT_SECONDS = 30
+CHROME_RECONNECT_WAIT_SECONDS = 10
 
 
 @dataclass
@@ -108,6 +112,15 @@ def chrome_server_ready() -> bool:
         return False
 
 
+def wait_for_chrome_server(timeout_seconds: float) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if chrome_server_ready():
+            return True
+        time.sleep(0.5)
+    return chrome_server_ready()
+
+
 def portal_page(context, target_url: str):
     """Reuse one persistent tab per portal host, creating it when absent."""
     target_host = urlparse(target_url).netloc.casefold()
@@ -125,27 +138,52 @@ def ensure_persistent_chrome(profile_dir: Path) -> None:
     if not DEFAULT_CHROME_PATH.exists():
         raise MetLifePortalAdapterError(f"Google Chrome was not found at {DEFAULT_CHROME_PATH}")
     profile_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.Popen(
-        [
-            str(DEFAULT_CHROME_PATH),
-            f"--remote-debugging-port={chrome_cdp_port()}",
-            "--remote-debugging-address=127.0.0.1",
-            f"--user-data-dir={profile_dir}",
-            "--disable-extensions",
-            "--no-first-run",
-            "--no-default-browser-check",
-            METLIFE_PORTAL_URL,
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    for _ in range(30):
+    lock_path = profile_dir / ".taiico-chrome-start.lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         if chrome_server_ready():
             return
-        time.sleep(0.5)
-    raise MetLifePortalAdapterError("Persistent Chrome did not expose its local debugging endpoint")
+
+        lock.seek(0)
+        try:
+            last_launch = float(lock.read().strip() or "0")
+        except ValueError:
+            last_launch = 0
+        elapsed = time.time() - last_launch
+        if 0 <= elapsed < CHROME_START_COOLDOWN_SECONDS:
+            if wait_for_chrome_server(CHROME_RECONNECT_WAIT_SECONDS):
+                return
+            raise MetLifePortalAdapterError(
+                "Persistent Chrome was launched recently but its debugging "
+                "endpoint is not ready; duplicate launch suppressed"
+            )
+
+        lock.seek(0)
+        lock.truncate()
+        lock.write(str(time.time()))
+        lock.flush()
+        os.fsync(lock.fileno())
+        subprocess.Popen(
+            [
+                str(DEFAULT_CHROME_PATH),
+                f"--remote-debugging-port={chrome_cdp_port()}",
+                "--remote-debugging-address=127.0.0.1",
+                f"--user-data-dir={profile_dir}",
+                "--disable-extensions",
+                "--no-first-run",
+                "--no-default-browser-check",
+                METLIFE_PORTAL_URL,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        if wait_for_chrome_server(CHROME_START_WAIT_SECONDS):
+            return
+        raise MetLifePortalAdapterError(
+            "Persistent Chrome did not expose its local debugging endpoint"
+        )
 
 
 def now_iso() -> str:
@@ -326,6 +364,67 @@ class MetLifeGmmPortalAdapter:
         parsed = urlparse(current_url)
         return parsed.netloc.casefold() == "agentes.metlife.mx" and parsed.path.startswith("/app/")
 
+    @staticmethod
+    def new_portal_tab(page) -> bool:
+        current_url = page.url if isinstance(page.url, str) else ""
+        host = urlparse(current_url).netloc.casefold()
+        return host == "agentes.metlife.mx" or host.endswith(".sso.metlife.com")
+
+    @staticmethod
+    def expired_session_page(page) -> bool:
+        current_url = page.url if isinstance(page.url, str) else ""
+        parsed = urlparse(current_url)
+        if (
+            parsed.netloc.casefold().endswith(".sso.metlife.com")
+            and "/resume/" in parsed.path.casefold()
+        ):
+            return True
+        try:
+            body_text = page.locator("body").inner_text(timeout=2_000).casefold()
+        except Exception:
+            return False
+        return (
+            "página caducada" in body_text
+            or "pagina caducada" in body_text
+            or "la página a la que intenta acceder ya no está disponible" in body_text
+            or "la pagina a la que intenta acceder ya no esta disponible" in body_text
+        )
+
+    def context_has_expired_session(self, context) -> bool:
+        return any(
+            self.new_portal_tab(candidate) and self.expired_session_page(candidate)
+            for candidate in context.pages
+        )
+
+    def restart_new_portal(self, context):
+        """Close every new-portal/SSO tab and restart from the portal root."""
+        for candidate in list(context.pages):
+            if self.new_portal_tab(candidate):
+                candidate.close()
+        page = context.new_page()
+        page.goto(METLIFE_PORTAL_URL, wait_until="domcontentloaded", timeout=90_000)
+        return page
+
+    def prepare_clientes_beta_with_recovery(self, context, page):
+        """Restart the new portal once when its initial session cannot be prepared."""
+        recovered_expired_session = False
+        if self.context_has_expired_session(context):
+            page = self.restart_new_portal(context)
+            recovered_expired_session = True
+        try:
+            reused_session = self.prepare_clientes_beta(page)
+        except Exception:
+            # An expired MetLife session does not consistently render the
+            # explicit "Página caducada" page. It can also leave the SPA on a
+            # shell that never exposes its initial checkbox/menu. Restart once
+            # for either presentation, but never enter an unbounded retry loop.
+            if recovered_expired_session:
+                raise
+            page = self.restart_new_portal(context)
+            recovered_expired_session = True
+            reused_session = self.prepare_clientes_beta(page)
+        return page, reused_session, recovered_expired_session
+
     def prepare_clientes_beta(self, page) -> bool:
         """Open Clientes Beta while preserving an already authenticated SPA session."""
         reused_session = self.authenticated_app_session(page)
@@ -378,8 +477,15 @@ class MetLifeGmmPortalAdapter:
                     self.complete_step(step, current_url=page.url)
                 else:
                     step = self.record_step("open_browser", url=METLIFE_PORTAL_URL)
-                    reused_session = self.prepare_clientes_beta(page)
-                    self.complete_step(step, current_url=page.url, reused_session=reused_session)
+                    page, reused_session, recovered_expired_session = (
+                        self.prepare_clientes_beta_with_recovery(context, page)
+                    )
+                    self.complete_step(
+                        step,
+                        current_url=page.url,
+                        reused_session=reused_session,
+                        recovered_expired_session=recovered_expired_session,
+                    )
                     self.maybe_stop(stop_after, "open_browser")
 
                     step = self.record_step("authenticate_portal")
@@ -726,21 +832,36 @@ class MetLifeGmmPortalAdapter:
             state="visible", timeout=60_000
         )
 
-    def download_documents(self, page, task: MetLifeGmmPortalTask) -> Path:
-        page.wait_for_selector("input[type='checkbox']", state="visible", timeout=60_000)
+    def select_document_checkboxes(self, page) -> int:
+        # Angular Material intentionally hides its native <input>. Waiting for
+        # that input to be *visible* can therefore time out even though the
+        # actionable checkbox is already rendered.
+        page.locator(
+            "input[type='checkbox'], .mat-checkbox, mat-checkbox, [role='checkbox']"
+        ).first.wait_for(state="attached", timeout=60_000)
+
+        boxes = page.locator(".mat-checkbox, mat-checkbox, [role='checkbox']")
+        visible_boxes = [
+            boxes.nth(index)
+            for index in range(boxes.count())
+            if boxes.nth(index).is_visible()
+        ]
+        if visible_boxes:
+            for box in visible_boxes:
+                if (box.get_attribute("aria-checked") or "").casefold() != "true":
+                    box.click()
+            return len(visible_boxes)
+
         checkboxes = page.locator("input[type='checkbox']")
         count = checkboxes.count()
-        if count == 0:
-            # Angular Material checkboxes often hide the input, so click visible checkbox boxes.
-            boxes = page.locator(".mat-checkbox, mat-checkbox, [role='checkbox']")
-            count = boxes.count()
-            for index in range(count):
-                boxes.nth(index).click()
-        else:
-            for index in range(count):
-                checkbox = checkboxes.nth(index)
-                if checkbox.is_visible() and not checkbox.is_checked():
-                    checkbox.evaluate("element => element.click()")
+        for index in range(count):
+            checkbox = checkboxes.nth(index)
+            if not checkbox.is_checked():
+                checkbox.evaluate("element => element.click()")
+        return count
+
+    def download_documents(self, page, task: MetLifeGmmPortalTask) -> Path:
+        count = self.select_document_checkboxes(page)
 
         if count == 0:
             raise MetLifePortalAdapterError("No downloadable policy document checkboxes were found.")

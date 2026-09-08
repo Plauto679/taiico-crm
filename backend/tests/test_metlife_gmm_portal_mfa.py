@@ -2,14 +2,17 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from adapters.metlife_gmm_portal import (
+    SEARCH_RESULT_TIMEOUT_MS,
     MetLifeGmmPortalAdapter,
+    MetLifePortalAdapterError,
     MetLifeGmmPortalTask,
+    ensure_persistent_chrome,
     policy_candidate_match_score,
     portal_page,
 )
@@ -17,6 +20,60 @@ from adapters.metlife_gmm_collection import parse_paid_until
 
 
 class MetLifeGmmMfaContinuationTests(unittest.TestCase):
+    def test_persistent_chrome_launches_once_and_waits_for_cdp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            chrome_path = root / "Google Chrome"
+            chrome_path.touch()
+            profile = root / "profile"
+            with patch(
+                "adapters.metlife_gmm_portal.DEFAULT_CHROME_PATH",
+                chrome_path,
+            ), patch(
+                "adapters.metlife_gmm_portal.chrome_server_ready",
+                return_value=False,
+            ), patch(
+                "adapters.metlife_gmm_portal.wait_for_chrome_server",
+                return_value=True,
+            ) as wait_for_server, patch(
+                "adapters.metlife_gmm_portal.subprocess.Popen",
+            ) as popen:
+                ensure_persistent_chrome(profile)
+
+        popen.assert_called_once()
+        wait_for_server.assert_called_once_with(30)
+
+    def test_persistent_chrome_suppresses_launch_during_cooldown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            chrome_path = root / "Google Chrome"
+            chrome_path.touch()
+            profile = root / "profile"
+            profile.mkdir()
+            lock_path = profile / ".taiico-chrome-start.lock"
+            lock_path.write_text(str(__import__("time").time()))
+            with patch(
+                "adapters.metlife_gmm_portal.DEFAULT_CHROME_PATH",
+                chrome_path,
+            ), patch(
+                "adapters.metlife_gmm_portal.chrome_server_ready",
+                return_value=False,
+            ), patch(
+                "adapters.metlife_gmm_portal.wait_for_chrome_server",
+                return_value=False,
+            ) as wait_for_server, patch(
+                "adapters.metlife_gmm_portal.subprocess.Popen",
+            ) as popen, self.assertRaisesRegex(
+                MetLifePortalAdapterError, "duplicate launch suppressed"
+            ):
+                ensure_persistent_chrome(profile)
+
+        popen.assert_not_called()
+        wait_for_server.assert_called_once_with(10)
+
+    def test_clientes_beta_waits_up_to_thirty_seconds_for_search_results(self):
+        self.assertEqual(SEARCH_RESULT_TIMEOUT_MS, 30_000)
+
     def test_policy_match_ignores_ramo_and_zero_padding(self):
         self.assertEqual(
             policy_candidate_match_score(
@@ -65,6 +122,117 @@ class MetLifeGmmMfaContinuationTests(unittest.TestCase):
 
         self.assertIs(selected, new_page)
         context.new_page.assert_not_called()
+
+    def test_expired_session_restarts_all_new_portal_tabs_and_preserves_old_portal(self):
+        adapter = self.make_adapter()
+        old_page = MagicMock()
+        old_page.url = "https://servicios.metlife.com.mx/wps/portal/agentes/"
+        app_page = MagicMock()
+        app_page.url = "https://agentes.metlife.mx/app/graph-clients"
+        expired_page = MagicMock()
+        expired_page.url = (
+            "https://federate.sso.metlife.com/as/example/resume/as/authorization.ping"
+        )
+        unrelated_page = MagicMock()
+        unrelated_page.url = "https://mail.google.com/"
+        fresh_page = MagicMock()
+        context = MagicMock()
+        context.pages = [old_page, app_page, expired_page, unrelated_page]
+        context.new_page.return_value = fresh_page
+
+        restarted = adapter.restart_new_portal(context)
+
+        self.assertIs(restarted, fresh_page)
+        app_page.close.assert_called_once_with()
+        expired_page.close.assert_called_once_with()
+        old_page.close.assert_not_called()
+        unrelated_page.close.assert_not_called()
+        fresh_page.goto.assert_called_once_with(
+            "https://agentes.metlife.mx/",
+            wait_until="domcontentloaded",
+            timeout=90_000,
+        )
+
+    def test_prepare_clientes_beta_recovers_expired_sso_session(self):
+        adapter = self.make_adapter()
+        stale_page = MagicMock()
+        stale_page.url = (
+            "https://federate.sso.metlife.com/as/example/resume/as/authorization.ping"
+        )
+        fresh_page = MagicMock()
+        context = MagicMock()
+        context.pages = [stale_page]
+        adapter.restart_new_portal = MagicMock(return_value=fresh_page)
+        adapter.prepare_clientes_beta = MagicMock(return_value=False)
+
+        page, reused, recovered = adapter.prepare_clientes_beta_with_recovery(
+            context, stale_page
+        )
+
+        self.assertIs(page, fresh_page)
+        self.assertFalse(reused)
+        self.assertTrue(recovered)
+        adapter.restart_new_portal.assert_called_once_with(context)
+        adapter.prepare_clientes_beta.assert_called_once_with(fresh_page)
+
+    def test_prepare_clientes_beta_restarts_when_stale_spa_never_becomes_ready(self):
+        adapter = self.make_adapter()
+        stale_page = MagicMock()
+        stale_page.url = "https://agentes.metlife.mx/app/graph-clients"
+        fresh_page = MagicMock()
+        context = MagicMock()
+        context.pages = [stale_page]
+        adapter.context_has_expired_session = MagicMock(return_value=False)
+        adapter.restart_new_portal = MagicMock(return_value=fresh_page)
+        adapter.prepare_clientes_beta = MagicMock(
+            side_effect=[TimeoutError("checkbox did not become visible"), False]
+        )
+
+        page, reused, recovered = adapter.prepare_clientes_beta_with_recovery(
+            context, stale_page
+        )
+
+        self.assertIs(page, fresh_page)
+        self.assertFalse(reused)
+        self.assertTrue(recovered)
+        adapter.restart_new_portal.assert_called_once_with(context)
+        self.assertEqual(
+            adapter.prepare_clientes_beta.call_args_list,
+            [unittest.mock.call(stale_page), unittest.mock.call(fresh_page)],
+        )
+
+    def test_document_selection_uses_visible_material_checkbox_not_hidden_input(self):
+        adapter = self.make_adapter()
+        page = MagicMock()
+        combined = MagicMock()
+        boxes = MagicMock()
+        box = MagicMock()
+        hidden_inputs = MagicMock()
+        boxes.count.return_value = 1
+        boxes.nth.return_value = box
+        box.is_visible.return_value = True
+        box.get_attribute.return_value = "false"
+        hidden_inputs.count.return_value = 1
+
+        def locate(selector):
+            if selector.startswith("input[type='checkbox'],"):
+                return combined
+            if selector == ".mat-checkbox, mat-checkbox, [role='checkbox']":
+                return boxes
+            if selector == "input[type='checkbox']":
+                return hidden_inputs
+            raise AssertionError(selector)
+
+        page.locator.side_effect = locate
+
+        count = adapter.select_document_checkboxes(page)
+
+        self.assertEqual(count, 1)
+        combined.first.wait_for.assert_called_once_with(
+            state="attached", timeout=60_000
+        )
+        box.click.assert_called_once_with()
+        hidden_inputs.nth.assert_not_called()
 
     def test_paid_until_parser_accepts_portal_format(self):
         self.assertEqual(
@@ -259,7 +427,20 @@ class MetLifeGmmMfaContinuationTests(unittest.TestCase):
             unchecked.is_checked.return_value = False
             checkboxes.count.return_value = 2
             checkboxes.nth.side_effect = [checked, unchecked]
-            page.locator.return_value = checkboxes
+            combined = MagicMock()
+            boxes = MagicMock()
+            boxes.count.return_value = 0
+
+            def locate(selector):
+                if selector.startswith("input[type='checkbox'],"):
+                    return combined
+                if selector == ".mat-checkbox, mat-checkbox, [role='checkbox']":
+                    return boxes
+                if selector == "input[type='checkbox']":
+                    return checkboxes
+                raise AssertionError(selector)
+
+            page.locator.side_effect = locate
             download = page.expect_download.return_value.__enter__.return_value.value
             download.suggested_filename = "documents.zip"
 
@@ -268,8 +449,8 @@ class MetLifeGmmMfaContinuationTests(unittest.TestCase):
                 MetLifeGmmPortalTask(id="task", policy_number="123", rfc="RFC123"),
             )
 
-            page.wait_for_selector.assert_called_once_with(
-                "input[type='checkbox']", state="visible", timeout=60_000
+            combined.first.wait_for.assert_called_once_with(
+                state="attached", timeout=60_000
             )
             checked.evaluate.assert_not_called()
             unchecked.evaluate.assert_called_once_with("element => element.click()")

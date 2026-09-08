@@ -16,12 +16,15 @@ from jobs.run_renewal_agent import (
     RETRYABLE_RETRIEVAL_TASK_STATUSES,
     WHATSAPP_ENABLED,
     execute_batch,
+    is_browser_interruption,
+    is_portal_failure,
     max_consecutive_portal_failures,
     missing_client_email_body,
     process_one,
     refresh_renewal_queue,
     renewal_cutoff,
     renewal_status_blocks_automation,
+    run_portal_with_browser_recovery,
     run,
     send_internal_renewal_email,
     should_check_collection_after_failure,
@@ -32,6 +35,111 @@ from services.renovaciones import upsert_retrieval_task
 
 
 class RenewalAgentJobTests(unittest.TestCase):
+    def test_browser_interruption_retries_the_portal_operation_once(self):
+        interrupted = SimpleNamespace(
+            status="failed",
+            error_message="Target page, context or browser has been closed",
+            steps=[],
+        )
+        recovered = SimpleNamespace(
+            status="completed",
+            error_message=None,
+            steps=[],
+        )
+        operation = unittest.mock.MagicMock(
+            side_effect=[interrupted, recovered]
+        )
+
+        with patch("jobs.run_renewal_agent.emit") as emit, patch(
+            "jobs.run_renewal_agent.time.sleep"
+        ) as sleep:
+            result = run_portal_with_browser_recovery(
+                operation,
+                policy="123456",
+                portal="clientes_beta",
+            )
+
+        self.assertIs(result, recovered)
+        self.assertEqual(operation.call_count, 2)
+        sleep.assert_called_once_with(3)
+        self.assertEqual(
+            [call.args[0] for call in emit.call_args_list],
+            ["browser_recovery_started", "browser_recovery_finished"],
+        )
+
+    def test_browser_interruption_does_not_retry_after_drive_upload(self):
+        result = SimpleNamespace(
+            status="failed",
+            error_message="Browser has been closed",
+            steps=[
+                SimpleNamespace(
+                    step_name="upload_to_drive",
+                    status="completed",
+                    error_message=None,
+                )
+            ],
+        )
+
+        self.assertFalse(is_browser_interruption(result))
+
+    def test_non_browser_failure_does_not_retry(self):
+        failed = SimpleNamespace(
+            status="failed",
+            error_message="Expected one matching policy; found 0 matches",
+            steps=[],
+        )
+        operation = unittest.mock.MagicMock(return_value=failed)
+
+        result = run_portal_with_browser_recovery(
+            operation,
+            policy="123456",
+            portal="clientes_beta",
+        )
+
+        self.assertIs(result, failed)
+        operation.assert_called_once()
+
+    def test_zero_search_matches_do_not_count_as_portal_outage(self):
+        result = {
+            "steps": [
+                {
+                    "step_name": "open_browser",
+                    "status": "completed",
+                    "error_message": None,
+                },
+                {
+                    "step_name": "search_rfc",
+                    "status": "failed",
+                    "error_message": "Expected one matching GMM policy label; found 0 matches.",
+                },
+                {
+                    "step_name": "search_policy",
+                    "status": "failed",
+                    "error_message": "Expected one matching GMM policy label; found 0 matches.",
+                },
+                {
+                    "step_name": "search_name",
+                    "status": "failed",
+                    "error_message": "Expected one matching GMM policy label; found 0 matches.",
+                },
+            ]
+        }
+
+        self.assertFalse(is_portal_failure(result))
+
+    def test_real_portal_timeout_still_counts_as_portal_outage(self):
+        result = {
+            "steps": [
+                {
+                    "step_name": "open_browser",
+                    "status": "failed",
+                    "error_message": "Timeout 60000ms exceeded",
+                }
+            ]
+        }
+
+        self.assertTrue(is_portal_failure(result))
+
     def test_queue_refresh_preserves_a_recovered_rfc_when_excel_is_blank(self):
         existing = SimpleNamespace(
             rfc="AASG731220967",
