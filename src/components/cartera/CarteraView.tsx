@@ -1,8 +1,8 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { CheckCircle2, Download, Plus, Search, X } from 'lucide-react';
+import { CheckCircle2, Download, Loader2, Plus, Search, X } from 'lucide-react';
 import clsx from 'clsx';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { CarteraRecord, CarteraRecordInput } from '@/lib/types/cartera';
@@ -29,6 +29,8 @@ export function CarteraView({ data, insurer, type }: Props) {
     const [visibleData, setVisibleData] = useState(data);
     const [generalSearch, setGeneralSearch] = useState('');
     const [exportRows, setExportRows] = useState(data);
+    const [isNavigationPending, startNavigation] = useTransition();
+    const [pendingDestination, setPendingDestination] = useState('');
 
     useEffect(() => {
         // A server refresh is authoritative and must replace the optimistic rows.
@@ -43,28 +45,34 @@ export function CarteraView({ data, insurer, type }: Props) {
     }, [successMessage]);
 
     const navigate = (nextInsurer: string, nextType?: string) => {
+        if (isNavigationPending) return;
         const params = new URLSearchParams(searchParams.toString());
         params.set('insurer', nextInsurer);
         if (nextInsurer === 'Metlife') params.set('type', nextType || 'VIDA');
         else if (nextType) params.set('type', nextType);
         else params.delete('type');
-        router.push(`/cartera?${params}`);
+        const nextLabel = nextInsurer === 'Metlife' ? `${nextInsurer} ${nextType || 'VIDA'}` : nextInsurer;
+        setPendingDestination(nextLabel);
+        startNavigation(() => router.push(`/cartera?${params}`));
     };
 
-    const columns: Column<CarteraRecord>[] = [];
-    if (insurer === 'AARCO') {
-        columns.push({ header: 'Aseguradora', accessorKey: (row) => row.carrier || 'Sin especificar', filterValue: (row) => row.carrier || 'Sin especificar' });
-    }
-    columns.push({ header: 'Póliza', accessorKey: 'policy_number' });
-    if (insurer === 'Metlife' && type === 'GMM') {
-        columns.push({ header: 'Póliza actual', accessorKey: 'current_policy_number' });
-    }
-    columns.push(
-        { header: 'Contratante', accessorKey: 'contractor' },
-        { header: 'Prospectador', accessorKey: 'prospector' },
-        { header: 'Inicio de pago', accessorKey: 'payment_start_date' },
-        { header: 'Porcentaje', accessorKey: (row) => `${Number(row.percentage || 0).toFixed(0)}%`, filterValue: (row) => Number(row.percentage || 0).toFixed(0) },
-    );
+    const columns = useMemo<Column<CarteraRecord>[]>(() => {
+        const next: Column<CarteraRecord>[] = [];
+        if (insurer === 'AARCO') {
+            next.push({ header: 'Aseguradora', accessorKey: (row) => row.carrier || 'Sin especificar', filterValue: (row) => row.carrier || 'Sin especificar' });
+        }
+        next.push({ header: 'Póliza', accessorKey: 'policy_number' });
+        if (insurer === 'Metlife' && type === 'GMM') {
+            next.push({ header: 'Póliza actual', accessorKey: 'current_policy_number' });
+        }
+        next.push(
+            { header: 'Contratante', accessorKey: 'contractor' },
+            { header: 'Prospectador', accessorKey: 'prospector' },
+            { header: 'Inicio de pago', accessorKey: 'payment_start_date' },
+            { header: 'Porcentaje', accessorKey: (row) => `${Number(row.percentage || 0).toFixed(0)}%`, filterValue: (row) => Number(row.percentage || 0).toFixed(0) },
+        );
+        return next;
+    }, [insurer, type]);
 
     const searchedData = useMemo(() => {
         const query = generalSearch.trim().toLocaleLowerCase('es');
@@ -147,12 +155,14 @@ export function CarteraView({ data, insurer, type }: Props) {
                     { value: 'Metlife', label: 'Metlife' },
                     { value: 'SURA', label: 'SURA' },
                     { value: 'AARCO', label: 'AARCO' },
-                ].map((item) => <button key={item.value} onClick={() => navigate(item.value)} className={clsx('rounded-md px-4 py-2 text-sm font-semibold transition-colors', insurer === item.value ? 'bg-[#5996D1] text-white ring-2 ring-white/70' : 'text-white hover:bg-white/10')}>{item.label}</button>)}
+                ].map((item) => <button key={item.value} disabled={isNavigationPending} onClick={() => navigate(item.value)} className={clsx('rounded-md px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-wait', insurer === item.value || pendingDestination.startsWith(item.value) ? 'bg-[#5996D1] text-white ring-2 ring-white/70' : 'text-white hover:bg-white/10')}>{item.label}</button>)}
             </div>
             <button type="button" onClick={() => { setCreating(true); setEditing(null); setError(''); }} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 font-semibold text-white shadow hover:bg-blue-700"><Plus className="h-5 w-5" /> Nuevo registro</button>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex gap-2">{insurer === 'Metlife' && ['VIDA', 'GMM'].map((item) => <button key={item} onClick={() => navigate('Metlife', item)} className={clsx('rounded-full border px-4 py-1.5 text-sm font-semibold', type === item ? 'border-blue-600 bg-blue-600 text-white' : 'border-gray-300 bg-white text-gray-700')}>{item}</button>)}</div>
+            <div className="flex items-center gap-2">{insurer === 'Metlife' && ['VIDA', 'GMM'].map((item) => <button key={item} disabled={isNavigationPending} onClick={() => navigate('Metlife', item)} className={clsx('rounded-full border px-4 py-1.5 text-sm font-semibold disabled:cursor-wait', type === item || pendingDestination === `Metlife ${item}` ? 'border-blue-600 bg-blue-600 text-white' : 'border-gray-300 bg-white text-gray-700')}>{item}</button>)}
+                {isNavigationPending && <span role="status" className="ml-2 inline-flex items-center gap-2 text-sm font-semibold text-white"><Loader2 className="h-4 w-4 animate-spin" /> Cargando {pendingDestination}…</span>}
+            </div>
             <button type="button" onClick={exportCurrentView} disabled={!exportRows.length} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">
                 <Download className="h-4 w-4" /> Exportar Excel
             </button>
@@ -169,7 +179,7 @@ export function CarteraView({ data, insurer, type }: Props) {
             />
         </div>
         <div className="min-h-0 flex-1 overflow-auto overscroll-contain rounded-lg bg-white shadow">
-            <DataTable data={searchedData} columns={columns} filterMode="multi-select" onProcessedDataChange={captureProcessedRows} onRowClick={setEditing} className="max-h-full min-w-full overflow-auto border-0 shadow-none" />
+            <DataTable data={searchedData} columns={columns} filterMode="multi-select" pageSize={150} onProcessedDataChange={captureProcessedRows} onRowClick={setEditing} className="max-h-full min-w-full overflow-auto border-0 shadow-none" />
         </div>
         {record && <div className="fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) { setEditing(null); setCreating(false); } }}>
             <form onSubmit={submit} className="my-auto w-full max-w-2xl rounded-2xl bg-white shadow-2xl">

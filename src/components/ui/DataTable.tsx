@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { ArrowUp, ArrowDown, ArrowUpDown, Check, ChevronDown, Search, X } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
 
 export interface Column<T> {
     header: string;
@@ -22,6 +22,7 @@ interface DataTableProps<T> {
     onRowClick?: (row: T) => void;
     onProcessedDataChange?: (rows: T[]) => void;
     filterMode?: 'text' | 'multi-select';
+    pageSize?: number;
 }
 
 type SortDirection = 'asc' | 'desc' | null;
@@ -56,10 +57,11 @@ function multiSelectLabel(value: string): string {
     return value === EMPTY_FILTER_VALUE ? EMPTY_FILTER_LABEL : value;
 }
 
-export function DataTable<T>({ data, columns, className, onRowClick, onProcessedDataChange, filterMode = 'text' }: DataTableProps<T>) {
+export function DataTable<T>({ data, columns, className, onRowClick, onProcessedDataChange, filterMode = 'text', pageSize }: DataTableProps<T>) {
     const [sortConfig, setSortConfig] = useState<SortConfig<T>>({ key: null, direction: null });
     const [filters, setFilters] = useState<Record<string, string>>({});
     const [multiFilters, setMultiFilters] = useState<Record<string, string[]>>({});
+    const [pagination, setPagination] = useState<{ page: number; data: T[] }>({ page: 1, data });
 
     const handleSort = (key: keyof T) => {
         let direction: SortDirection = 'asc';
@@ -69,10 +71,12 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
             direction = null;
         }
         setSortConfig({ key: direction ? key : null, direction });
+        setPagination({ page: 1, data });
     };
 
     const handleFilterChange = (key: string, value: string) => {
         setFilters(prev => ({ ...prev, [key]: value }));
+        setPagination({ page: 1, data });
     };
 
     const filterOptions = useMemo(() => Object.fromEntries(columns.filter((column) => column.enableFiltering !== false).map((column) => {
@@ -86,6 +90,7 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
     })), [columns, data]);
 
     const toggleMultiFilter = (key: string, value: string) => {
+        setPagination({ page: 1, data });
         setMultiFilters((current) => {
             const selected = current[key] || [];
             const next = selected.includes(value)
@@ -147,6 +152,12 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
         onProcessedDataChange?.(processedData);
     }, [onProcessedDataChange, processedData]);
 
+    const totalPages = pageSize ? Math.max(1, Math.ceil(processedData.length / pageSize)) : 1;
+    const page = pagination.data === data ? Math.min(pagination.page, totalPages) : 1;
+    const displayedData = pageSize
+        ? processedData.slice((page - 1) * pageSize, page * pageSize)
+        : processedData;
+
     return (
         <div className={twMerge("overflow-x-auto rounded-lg border border-gray-200 shadow-sm", className)}>
             <table className="min-w-max md:min-w-full divide-y divide-gray-200 bg-white text-sm">
@@ -183,7 +194,7 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
                                                 options={filterOptions[filterKey] || []}
                                                 selected={multiFilters[filterKey] || []}
                                                 onToggle={(value) => toggleMultiFilter(filterKey, value)}
-                                                onClear={() => setMultiFilters((current) => ({ ...current, [filterKey]: [] }))}
+                                                onClear={() => { setPagination({ page: 1, data }); setMultiFilters((current) => ({ ...current, [filterKey]: [] })); }}
                                             />
                                         ) : (
                                             <input
@@ -209,7 +220,7 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
                             </td>
                         </tr>
                     ) : (
-                        processedData.map((row, rowIdx) => (
+                        displayedData.map((row, rowIdx) => (
                             <tr
                                 key={rowIdx}
                                 className={clsx(
@@ -232,6 +243,18 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
                     )}
                 </tbody>
             </table>
+            {pageSize && processedData.length > pageSize && (
+                <div className="sticky bottom-0 flex items-center justify-between gap-4 border-t border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                    <span>
+                        Mostrando {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, processedData.length)} de {processedData.length.toLocaleString('es-MX')}
+                    </span>
+                    <div className="flex items-center gap-2">
+                        <button type="button" aria-label="Página anterior" disabled={page === 1} onClick={() => setPagination({ page: Math.max(1, page - 1), data })} className="rounded-md border border-slate-300 p-1.5 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
+                        <span className="font-medium text-slate-700">Página {page} de {totalPages}</span>
+                        <button type="button" aria-label="Página siguiente" disabled={page === totalPages} onClick={() => setPagination({ page: Math.min(totalPages, page + 1), data })} className="rounded-md border border-slate-300 p-1.5 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

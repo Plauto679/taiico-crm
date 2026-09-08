@@ -11,16 +11,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from openpyxl import load_workbook
 from pydantic import BaseModel, Field
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 from config import AARCO_PATHS, CARTERA_SOURCE_FILE_IDS, METLIFE_PATHS, SURA_PATHS
 from database import Client, Insurer, Policy, Product, SessionLocal, User
 from drive.client import download_drive_file_bytes
 from services.auth import AccessProfile
 from services.authorization import require_module_access
+from services.data_cache import data_cache
 
 
 router = APIRouter(prefix="/cartera", tags=["cartera"])
 _WORKBOOK_LOCK = Lock()
+_DATA_CACHE_TTL_SECONDS = max(30, int(os.getenv("CARTERA_DATA_CACHE_TTL_SECONDS", "60")))
 
 
 class CarteraRecordPayload(BaseModel):
@@ -49,6 +52,15 @@ def _normalized_insurer(value: str) -> str:
 
 def _source_key_for_insurer(insurer: str) -> str:
     return "aarco_axa" if insurer in {"aarco", "axa", "aarco_axa"} else insurer
+
+
+def _data_cache_key(insurer: str, policy_type: str) -> str:
+    return f"cartera:data:{_source_key_for_insurer(insurer)}:{policy_type.strip().upper()}"
+
+
+def _invalidate_data_cache(insurer: str) -> None:
+    for policy_type in ("ALL", "VIDA", "GMM"):
+        data_cache.invalidate(_data_cache_key(insurer, policy_type))
 
 
 def _percentage_for_ui(value) -> float:
@@ -402,6 +414,7 @@ def sync_cartera_source(insurer: str, *, contents: bytes | None = None, db=None)
             ))
             created += 1
         session.commit()
+        _invalidate_data_cache(insurer_id)
         return {
             "insurer": source_key,
             "source_file_id": file_id,
@@ -498,21 +511,39 @@ def get_cartera_data(
     insurer: str = Query(..., description="Insurer name"),
     type: str = Query("ALL", description="Policy type: ALL, VIDA, GMM"),
 ):
-    db = SessionLocal()
-    canonical_snapshot = None
     try:
         insurer_id = _normalized_insurer(insurer)
-        insurer_ids = ("axa", "aarco") if _source_key_for_insurer(insurer_id) == "aarco_axa" else (insurer_id,)
-        query = db.query(Policy).join(Client).filter(Policy.insurer_id.in_(insurer_ids))
-        if type.upper() != "ALL":
-            query = query.join(Product).filter(Product.branch == type.upper())
-        return [_serialize(policy) for policy in query.order_by(Policy.policy_number).all()]
+        policy_type = type.strip().upper()
+        if policy_type not in {"ALL", "VIDA", "GMM"}:
+            raise HTTPException(status_code=422, detail="Tipo de póliza no válido")
+
+        def load() -> list[dict]:
+            db = SessionLocal()
+            try:
+                insurer_ids = ("axa", "aarco") if _source_key_for_insurer(insurer_id) == "aarco_axa" else (insurer_id,)
+                # Both relationships are used by _serialize. Eager loading keeps
+                # this as one SQL query instead of two extra queries per policy.
+                query = (
+                    db.query(Policy)
+                    .options(joinedload(Policy.client), joinedload(Policy.product))
+                    .join(Client)
+                    .filter(Policy.insurer_id.in_(insurer_ids))
+                )
+                if policy_type != "ALL":
+                    query = query.join(Product).filter(Product.branch == policy_type)
+                return [_serialize(policy) for policy in query.order_by(Policy.policy_number).all()]
+            finally:
+                db.close()
+
+        return data_cache.get_or_load(
+            _data_cache_key(insurer_id, policy_type),
+            load,
+            ttl_seconds=_DATA_CACHE_TTL_SECONDS,
+        ).value
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"No fue posible cargar la cartera: {exc}") from exc
-    finally:
-        db.close()
 
 
 @router.post("/records", status_code=201)
@@ -601,6 +632,7 @@ def create_cartera_record(
         )
         db.commit()
         db.refresh(policy)
+        _invalidate_data_cache(insurer_id)
         return _serialize(policy)
     except HTTPException:
         db.rollback()
@@ -634,6 +666,7 @@ def update_cartera_record(
         if _source_key_for_insurer(insurer_id) == "aarco_axa":
             insurer_id = "aarco"
         original_policy_number = policy.policy_number
+        original_insurer_id = policy.insurer_id
         policy.policy_number = policy_number
         policy.insurer_id = insurer_id
         policy.product_id = _product_for(db, insurer_id, payload.policy_type).id
@@ -649,6 +682,9 @@ def update_cartera_record(
         canonical_snapshot = _write_canonical(payload, original_policy_number)
         db.commit()
         db.refresh(policy)
+        _invalidate_data_cache(original_insurer_id)
+        if insurer_id != original_insurer_id:
+            _invalidate_data_cache(insurer_id)
         return _serialize(policy)
     except HTTPException:
         db.rollback()
