@@ -59,15 +59,15 @@ export function CumpleanosView({ directory }: { directory: BirthdayDirectory }) 
                 : `en ${client.days_until_birthday} días ${client.days_until_birthday}`;
             const matchesGlobalQuery = !normalizedQuery || [
                 client.client_name,
-                client.rfc,
+                (client.rfcs || [client.rfc]).join(' '),
                 client.agent_label,
-                client.promotoria,
+                (client.promotorias || [client.promotoria]).join(' '),
                 policyText,
             ].some((value) => value.toLocaleLowerCase('es-MX').includes(normalizedQuery));
 
             return matchesGlobalQuery
                 && includesFilter(client.client_name, filters.client)
-                && includesFilter(client.rfc, filters.rfc)
+                && includesFilter((client.rfcs || [client.rfc]).join(' '), filters.rfc)
                 && includesFilter(policyText, filters.policies)
                 && (
                     includesFilter(client.birth_date, filters.birthDate)
@@ -75,7 +75,7 @@ export function CumpleanosView({ directory }: { directory: BirthdayDirectory }) 
                 )
                 && includesFilter(nextBirthdayText, filters.nextBirthday)
                 && includesFilter(client.agent_label || 'Agente no identificado', filters.agent)
-                && includesFilter(client.promotoria || 'Sin asignar', filters.promotoria);
+                && includesFilter((client.promotorias || [client.promotoria]).join(' ') || 'Sin asignar', filters.promotoria);
         });
     }, [directory.clients, filters, normalizedQuery]);
 
@@ -87,8 +87,9 @@ export function CumpleanosView({ directory }: { directory: BirthdayDirectory }) 
         const XLSX = await import('xlsx');
         const rows = clients.map((client) => ({
             Cliente: client.client_name,
-            RFC: client.rfc,
-            Pólizas: client.policies
+            RFC: (client.rfcs || [client.rfc]).join(', '),
+            'Pólizas activas': client.active_policy_count,
+            'Detalle de pólizas activas': client.active_policies
                 .map((policy) => `${policy.branch} · ${policy.policy_number}`)
                 .join(', '),
             'Fecha de cumpleaños': displayDate(client.birth_date),
@@ -97,12 +98,13 @@ export function CumpleanosView({ directory }: { directory: BirthdayDirectory }) 
                 : `En ${client.days_until_birthday} días`,
             'RFC Agente': client.agent_rfc,
             Agente: client.agent_name,
-            Promotoría: client.promotoria || 'Sin asignar',
+            Promotoría: (client.promotorias || [client.promotoria]).join(', ') || 'Sin asignar',
         }));
         const worksheet = XLSX.utils.json_to_sheet(rows);
         worksheet['!cols'] = [
             { wch: 34 },
             { wch: 16 },
+            { wch: 18 },
             { wch: 46 },
             { wch: 24 },
             { wch: 22 },
@@ -192,7 +194,7 @@ export function CumpleanosView({ directory }: { directory: BirthdayDirectory }) 
                                 {filterInput('rfc', 'RFC')}
                             </th>
                             <th className="sticky top-0 z-30 min-w-60 bg-slate-100 px-4 py-3 shadow-[0_1px_0_0_#cbd5e1]">
-                                Pólizas
+                                Pólizas activas
                                 {filterInput('policies', 'Pólizas')}
                             </th>
                             <th className="sticky top-0 z-30 min-w-56 bg-slate-100 px-4 py-3 shadow-[0_1px_0_0_#cbd5e1]">
@@ -215,12 +217,24 @@ export function CumpleanosView({ directory }: { directory: BirthdayDirectory }) 
                     </thead>
                     <tbody className="divide-y divide-slate-200">
                         {clients.map((client) => (
-                            <tr key={client.rfc} className="align-top hover:bg-slate-50">
+                            <tr key={client.identity_key || client.rfc} className="align-top hover:bg-slate-50">
                                 <td className="px-4 py-4 font-semibold text-slate-900">{client.client_name}</td>
-                                <td className="whitespace-nowrap px-4 py-4 font-mono text-slate-700">{client.rfc}</td>
+                                <td className="px-4 py-4 font-mono text-slate-700">
+                                    <div className="flex flex-col gap-1">
+                                        {(client.rfcs || [client.rfc]).map((rfc) => (
+                                            <span key={rfc} className="whitespace-nowrap">{rfc}</span>
+                                        ))}
+                                    </div>
+                                </td>
                                 <td className="px-4 py-4">
+                                    <span className={`mb-2 inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${client.active_policy_count > 0
+                                        ? 'bg-emerald-50 text-emerald-700'
+                                        : 'bg-slate-100 text-slate-500'
+                                    }`}>
+                                        {client.active_policy_count}
+                                    </span>
                                     <div className="flex max-w-xs flex-wrap gap-1.5">
-                                        {client.policies.map((policy) => (
+                                        {client.active_policies.map((policy) => (
                                             <span
                                                 key={`${policy.branch}-${policy.policy_number}`}
                                                 className="whitespace-nowrap rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700"
@@ -243,7 +257,7 @@ export function CumpleanosView({ directory }: { directory: BirthdayDirectory }) 
                                     {client.agent_label || 'Agente no identificado'}
                                 </td>
                                 <td className="whitespace-nowrap px-4 py-4 font-medium text-slate-700">
-                                    {client.promotoria || 'Sin asignar'}
+                                    {(client.promotorias || [client.promotoria]).join(', ') || 'Sin asignar'}
                                 </td>
                             </tr>
                         ))}

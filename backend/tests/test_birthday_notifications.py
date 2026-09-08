@@ -29,6 +29,7 @@ def directory_fixture() -> dict:
                 "agent_email": "pamela.alfaro@taiico.com",
                 "days_until_birthday": 0,
                 "next_birthday": "2026-08-11",
+                "active_policy_count": 1,
                 "policies": [{"branch": "VIDA", "policy_number": "8257708"}],
             },
             {
@@ -39,6 +40,7 @@ def directory_fixture() -> dict:
                 "agent_email": "pamela.alfaro@taiico.com",
                 "days_until_birthday": 7,
                 "next_birthday": "2026-08-18",
+                "active_policy_count": 0,
                 "policies": [],
             },
             {
@@ -49,6 +51,7 @@ def directory_fixture() -> dict:
                 "agent_email": "pamela.alfaro@taiico.com",
                 "days_until_birthday": 8,
                 "next_birthday": "2026-08-19",
+                "active_policy_count": 1,
                 "policies": [],
             },
         ],
@@ -60,10 +63,10 @@ class BirthdayNotificationTests(unittest.TestCase):
         result = build_agent_birthday_notifications(directory_fixture())
 
         self.assertEqual(len(result["notifications"]), 1)
-        self.assertEqual(len(result["notifications"][0]["clients"]), 2)
+        self.assertEqual(len(result["notifications"][0]["clients"]), 1)
         html = birthday_email_html(result["notifications"][0])
         self.assertIn("ACUÑA ISLAS RODRIGO", html)
-        self.assertIn("En 7 días", html)
+        self.assertNotIn("Cliente Día Siete", html)
         self.assertNotIn("Fuera de ventana", html)
         self.assertNotIn("8257708", html)
 

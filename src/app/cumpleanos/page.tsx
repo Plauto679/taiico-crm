@@ -12,7 +12,7 @@ export default async function CumpleanosPage() {
             <div className="flex-none px-8 pb-4 pt-8">
                 <h1 className="text-2xl font-bold text-white">Cumpleaños de clientes</h1>
                 <p className="mt-1 text-sm text-blue-100">
-                    Cumpleaños derivados del RFC de clientes MetLife y relacionados con su agente.
+                    Cumpleaños derivados del RFC del registro maestro de Clientes y relacionados con su agente.
                 </p>
             </div>
             <div className="min-h-0 flex-1 px-8 pb-8">

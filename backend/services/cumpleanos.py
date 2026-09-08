@@ -4,22 +4,25 @@ import datetime
 import hashlib
 import io
 import re
-import threading
-import time
 from dataclasses import dataclass
+from collections import Counter, defaultdict
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
+from sqlalchemy.orm import selectinload
 
 from config import METLIFE_PATHS
+from database import Client, Policy, SessionLocal
 from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
 from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workbook
 from services.pendientes import DEFAULT_AGENTS_METLIFE_FILE_ID, _download_workbook
 from services.data_cache import data_cache
 from services.auth import AccessProfile
 from services.authorization import profile_allows_promotoria, require_module_access
+from services.client_promotorias import normalize_identity
 
 
 router = APIRouter(prefix="/cumpleanos", tags=["cumpleanos"])
@@ -43,12 +46,6 @@ class AgentRecord:
         if self.rfc and self.name:
             return f"{self.rfc} - {self.name}"
         return self.rfc or self.name
-
-
-_cache_lock = threading.Lock()
-_cached_result: dict | None = None
-_cache_expires_at = 0.0
-_cache_signature: tuple | None = None
 
 
 def clean_text(value: object) -> str:
@@ -296,6 +293,242 @@ def build_birthday_directory(
     }
 
 
+def _normalized_phone(value: object) -> str:
+    return "".join(character for character in clean_text(value) if character.isdigit())
+
+
+def _policy_key(policy: dict) -> tuple[str, str]:
+    return (
+        normalize_code(policy.get("branch")),
+        clean_text(policy.get("policy_number")),
+    )
+
+
+def _policy_is_active(policy: dict, *, today: datetime.date) -> bool:
+    if normalize_code(policy.get("status")) != "IN_FORCE":
+        return False
+    start_date = _renewal_deadline_date(policy.get("effective_start_date"))
+    end_date = _renewal_deadline_date(policy.get("effective_end_date"))
+    return bool(start_date and end_date and start_date <= today <= end_date)
+
+
+def _choose_agent(records: Iterable[dict], agents: dict[str, AgentRecord]) -> AgentRecord | None:
+    matches = [
+        agents[code]
+        for code in (normalize_code(record.get("agent_code")) for record in records)
+        if code in agents
+    ]
+    if not matches:
+        return None
+    counts = Counter((item.rfc, item.name, item.promotoria, item.email) for item in matches)
+    selected = counts.most_common(1)[0][0]
+    return AgentRecord(*selected)
+
+
+def build_client_master_birthday_directory(
+    client_records: Iterable[dict],
+    enrichment_records: Iterable[dict],
+    agents: dict[str, AgentRecord],
+    *,
+    today: datetime.date | None = None,
+) -> dict:
+    """Build birthdays from the Client registry without changing Client identity.
+
+    Two Client rows are presented as one birthday person only when their RFC birth
+    date matches and they share the RFC identity segment (initials + birth date),
+    normalized email, phone, or full name. This collapses legitimate alternate RFC
+    homoclaves for birthday delivery while the underlying Client records and
+    expedientes remain independent.
+    """
+    today = today or datetime.date.today()
+    enrichment_by_rfc: dict[str, list[dict]] = defaultdict(list)
+    enrichment_by_policy: dict[str, list[dict]] = defaultdict(list)
+    for record in enrichment_records:
+        rfc = normalize_code(record.get("rfc"))
+        policy_number = clean_text(record.get("policy_number"))
+        if rfc:
+            enrichment_by_rfc[rfc].append(record)
+        if policy_number:
+            enrichment_by_policy[policy_number].append(record)
+
+    candidates: list[dict] = []
+    invalid_rfc_rows = 0
+    non_person_rfc_rows = 0
+    unmatched_agent_rows = 0
+    total_client_records = 0
+    for source in client_records:
+        total_client_records += 1
+        rfc = normalize_code(source.get("rfc"))
+        if len(rfc) != 13:
+            non_person_rfc_rows += 1
+            continue
+        birth_date = parse_birth_date_from_rfc(rfc, today=today)
+        if birth_date is None:
+            invalid_rfc_rows += 1
+            continue
+
+        policies = []
+        matched_records = list(enrichment_by_rfc.get(rfc, ()))
+        for source_policy in source.get("policies") or ():
+            policy = {
+                "branch": normalize_code(source_policy.get("branch")),
+                "policy_number": clean_text(source_policy.get("policy_number")),
+                "status": clean_text(source_policy.get("status")),
+                "effective_start_date": clean_text(source_policy.get("effective_start_date")),
+                "effective_end_date": clean_text(source_policy.get("effective_end_date")),
+            }
+            policy["is_active"] = _policy_is_active(policy, today=today)
+            if policy["policy_number"] and _policy_key(policy) not in {
+                _policy_key(item) for item in policies
+            }:
+                policies.append(policy)
+            matched_records.extend(
+                enrichment_by_policy.get(policy["policy_number"], ())
+            )
+
+        agent = _choose_agent(matched_records, agents)
+        if policies and agent is None:
+            unmatched_agent_rows += len(policies)
+        source_promotorias = {
+            normalize_code(value)
+            for value in source.get("promotorias") or ()
+            if normalize_code(value)
+        }
+        if agent and agent.promotoria:
+            source_promotorias.add(agent.promotoria)
+        candidates.append(
+            {
+                "client_id": clean_text(source.get("id")),
+                "client_name": clean_text(source.get("client_name")),
+                "rfc": rfc,
+                "birth_date": birth_date.isoformat(),
+                "email": clean_text(source.get("email")).casefold(),
+                "phone": _normalized_phone(source.get("phone")),
+                "agent": agent,
+                "promotorias": source_promotorias,
+                "policies": policies,
+            }
+        )
+
+    parent = list(range(len(candidates)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    identity_index: dict[tuple[str, str, str], int] = {}
+    for index, candidate in enumerate(candidates):
+        identities = [
+            ("rfc_identity", candidate["rfc"][:10]),
+            ("email", candidate["email"]),
+            ("phone", candidate["phone"]),
+            ("name", normalize_identity(candidate["client_name"])),
+        ]
+        for kind, value in identities:
+            if not value:
+                continue
+            key = (candidate["birth_date"], kind, value)
+            previous = identity_index.setdefault(key, index)
+            union(index, previous)
+
+    groups: dict[int, list[dict]] = defaultdict(list)
+    for index, candidate in enumerate(candidates):
+        groups[find(index)].append(candidate)
+
+    clients = []
+    for group in groups.values():
+        rfcs = sorted({item["rfc"] for item in group})
+        client_ids = sorted({item["client_id"] for item in group if item["client_id"]})
+        names = Counter(item["client_name"] for item in group if item["client_name"])
+        client_name = names.most_common(1)[0][0] if names else "Cliente sin nombre"
+        policies_by_key = {
+            _policy_key(policy): policy
+            for item in group
+            for policy in item["policies"]
+            if policy["policy_number"]
+        }
+        agent = _choose_agent(
+            [
+                {"agent_code": code}
+                for code, known in agents.items()
+                if any(item["agent"] == known for item in group)
+            ],
+            agents,
+        )
+        promotorias = sorted({
+            value
+            for item in group
+            for value in item["promotorias"]
+            if value
+        })
+        birth_date = datetime.date.fromisoformat(group[0]["birth_date"])
+        next_birthday = next_birthday_for(birth_date, today=today)
+        policies = sorted(policies_by_key.values(), key=_policy_key)
+        active_policies = [policy for policy in policies if policy["is_active"]]
+        clients.append(
+            {
+                "identity_key": hashlib.sha256(
+                    f"{birth_date.isoformat()}|{'|'.join(client_ids or rfcs)}".encode("utf-8")
+                ).hexdigest()[:16],
+                "client_ids": client_ids,
+                "client_name": client_name,
+                "rfc": ", ".join(rfcs),
+                "rfcs": rfcs,
+                "birth_date": birth_date.isoformat(),
+                "next_birthday": next_birthday.isoformat(),
+                "days_until_birthday": (next_birthday - today).days,
+                "agent_rfc": agent.rfc if agent else "",
+                "agent_name": agent.name if agent else "",
+                "agent_label": agent.label if agent else "",
+                "agent_email": agent.email if agent else "",
+                "promotoria": promotorias[0] if promotorias else "",
+                "promotorias": promotorias,
+                "policies": policies,
+                "active_policies": active_policies,
+                "active_policy_count": len(active_policies),
+            }
+        )
+
+    clients.sort(
+        key=lambda client: (
+            client["days_until_birthday"],
+            client["client_name"].casefold(),
+            client["rfc"],
+        )
+    )
+    return {
+        "generated_on": today.isoformat(),
+        "clients": clients,
+        "summary": {
+            "total_clients": len(clients),
+            "birthdays_this_month": sum(
+                1
+                for client in clients
+                if datetime.date.fromisoformat(client["birth_date"]).month == today.month
+            ),
+            "birthdays_next_30_days": sum(
+                1 for client in clients if client["days_until_birthday"] <= 30
+            ),
+            "clients_with_active_policies": sum(
+                1 for client in clients if client["active_policy_count"] > 0
+            ),
+            "total_client_records": total_client_records,
+            "eligible_client_records": len(candidates),
+            "duplicate_client_records_collapsed": len(candidates) - len(clients),
+            "invalid_rfc_rows": invalid_rfc_rows,
+            "non_person_rfc_rows": non_person_rfc_rows,
+            "unmatched_agent_rows": unmatched_agent_rows,
+        },
+    }
+
+
 def _source_signature() -> tuple:
     signature = []
     for path in (
@@ -304,7 +537,54 @@ def _source_signature() -> tuple:
     ):
         stat = path.stat()
         signature.append((str(path), stat.st_mtime_ns, stat.st_size))
+    db = SessionLocal()
+    try:
+        signature.extend(
+            (
+                ("clients", db.query(func.count(Client.id), func.max(Client.updated_at)).one()),
+                ("policies", db.query(func.count(Policy.id), func.max(Policy.updated_at)).one()),
+            )
+        )
+    finally:
+        db.close()
     return tuple(signature)
+
+
+def _load_master_clients() -> list[dict]:
+    db = SessionLocal()
+    try:
+        clients = (
+            db.query(Client)
+            .options(
+                selectinload(Client.promotorias),
+                selectinload(Client.policies).selectinload(Policy.product),
+            )
+            .filter(Client.status != "inactive")
+            .all()
+        )
+        return [
+            {
+                "id": client.id,
+                "client_name": client.full_name,
+                "rfc": client.rfc,
+                "email": client.email,
+                "phone": client.phone,
+                "promotorias": [row.promotoria for row in client.promotorias],
+                "policies": [
+                    {
+                        "policy_number": policy.policy_number,
+                        "branch": policy.product.branch if policy.product else "",
+                        "status": policy.status,
+                        "effective_start_date": policy.effective_start_date,
+                        "effective_end_date": policy.effective_end_date,
+                    }
+                    for policy in client.policies
+                ],
+            }
+            for client in clients
+        ]
+    finally:
+        db.close()
 
 
 def _load_directory_uncached() -> dict:
@@ -333,13 +613,14 @@ def _load_directory_uncached() -> dict:
         candidate.normalized_payload
         for candidate in (*gmm_rows, *vida_rows)
     ]
-    records, policy_summary = filter_future_policy_records(
+    result = build_client_master_birthday_directory(
+        _load_master_clients(),
         all_records,
+        agents,
         today=today,
     )
-    result = build_birthday_directory(records, agents, today=today)
-    result["summary"].update(policy_summary)
     result["sources"] = {
+        "client_registry": "Registro maestro de Clientes",
         "renewal_files": ["Metlife GMM.xlsx", "Metlife Vida.xlsx"],
         "agent_directory": "Agentes MetLife",
     }
@@ -350,7 +631,7 @@ def load_birthday_directory() -> dict:
     signature = _source_signature()
     signature_key = hashlib.sha256(repr(signature).encode("utf-8")).hexdigest()[:16]
     return data_cache.get_or_load(
-        f"cumpleanos:clientes:{signature_key}",
+        f"cumpleanos:clientes:master-v2:{signature_key}",
         _load_directory_uncached,
         ttl_seconds=CACHE_SECONDS,
     ).value
@@ -364,7 +645,12 @@ def birthday_clients(
         result = load_birthday_directory()
         clients = [
             client for client in result["clients"]
-            if profile_allows_promotoria(profile, client.get("promotoria"))
+            if any(
+                profile_allows_promotoria(profile, promotoria)
+                for promotoria in (
+                    client.get("promotorias") or [client.get("promotoria")]
+                )
+            )
         ]
         scoped = {**result, "clients": clients, "summary": {**result["summary"]}}
         scoped["summary"]["total_clients"] = len(clients)
@@ -375,6 +661,9 @@ def birthday_clients(
         )
         scoped["summary"]["birthdays_next_30_days"] = sum(
             1 for client in clients if client["days_until_birthday"] <= 30
+        )
+        scoped["summary"]["clients_with_active_policies"] = sum(
+            1 for client in clients if client["active_policy_count"] > 0
         )
         return scoped
     except FileNotFoundError as exc:

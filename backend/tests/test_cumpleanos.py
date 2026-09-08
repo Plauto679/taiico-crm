@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from services.cumpleanos import (
     AgentRecord,
     build_birthday_directory,
+    build_client_master_birthday_directory,
     filter_future_policy_records,
     parse_agent_lookup,
     parse_birth_date_from_rfc,
@@ -19,6 +20,95 @@ from services.cumpleanos import (
 
 
 class BirthdayDirectoryTests(unittest.TestCase):
+    def test_client_registry_is_master_even_without_future_policy(self):
+        result = build_client_master_birthday_directory(
+            [
+                {
+                    "id": "laura",
+                    "client_name": "LAURA ANZURES MOSQUEDA",
+                    "rfc": "AUML680903BR5",
+                    "email": "anzumolau@hotmail.com",
+                    "phone": "+525520786392",
+                    "promotorias": ["TAIICO"],
+                    "policies": [
+                        {"branch": "GMM", "policy_number": "123"},
+                    ],
+                }
+            ],
+            [],
+            {},
+            today=datetime.date(2026, 9, 8),
+        )
+
+        self.assertEqual(result["summary"]["total_clients"], 1)
+        self.assertEqual(result["clients"][0]["client_name"], "LAURA ANZURES MOSQUEDA")
+        self.assertEqual(result["clients"][0]["birth_date"], "1968-09-03")
+        self.assertEqual(result["clients"][0]["active_policy_count"], 0)
+
+    def test_collapses_alternate_rfc_homoclaves_for_same_birthday_person(self):
+        clients = [
+            {
+                "id": "one",
+                "client_name": "Persona Duplicada",
+                "rfc": "AAMA950203I52",
+                "email": "persona@example.com",
+                "phone": "",
+                "promotorias": ["TAIICO"],
+                "policies": [{
+                    "branch": "GMM",
+                    "policy_number": "123",
+                    "status": "in_force",
+                    "effective_start_date": "2025-02-01",
+                    "effective_end_date": "2026-02-01",
+                }],
+            },
+            {
+                "id": "two",
+                "client_name": "Persona Duplicada con variación",
+                "rfc": "AAMA950203ZZ9",
+                "email": "",
+                "phone": "",
+                "promotorias": ["TAIICO"],
+                "policies": [{"branch": "VIDA", "policy_number": "456"}],
+            },
+        ]
+
+        result = build_client_master_birthday_directory(
+            clients,
+            [],
+            {},
+            today=datetime.date(2026, 1, 30),
+        )
+
+        self.assertEqual(result["summary"]["total_clients"], 1)
+        self.assertEqual(result["summary"]["duplicate_client_records_collapsed"], 1)
+        self.assertEqual(result["clients"][0]["rfcs"], ["AAMA950203I52", "AAMA950203ZZ9"])
+        self.assertEqual(len(result["clients"][0]["policies"]), 2)
+        self.assertEqual(result["clients"][0]["active_policy_count"], 1)
+
+    def test_same_name_with_different_birth_date_stays_separate(self):
+        clients = [
+            {
+                "id": "one",
+                "client_name": "Nombre Compartido",
+                "rfc": "AAMA950203I52",
+            },
+            {
+                "id": "two",
+                "client_name": "Nombre Compartido",
+                "rfc": "AAMA960203ZZ9",
+            },
+        ]
+
+        result = build_client_master_birthday_directory(
+            clients,
+            [],
+            {},
+            today=datetime.date(2026, 1, 30),
+        )
+
+        self.assertEqual(result["summary"]["total_clients"], 2)
+
     def test_filters_policies_to_strictly_future_end_dates(self):
         today = datetime.date(2026, 8, 11)
         records = [

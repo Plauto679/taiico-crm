@@ -48,6 +48,8 @@ def build_agent_birthday_notifications(
     grouped: dict[str, list[dict]] = defaultdict(list)
     agent_details: dict[str, dict] = {}
     for client in directory.get("clients", []):
+        if int(client.get("active_policy_count") or 0) < 1:
+            continue
         days = client.get("days_until_birthday")
         if not isinstance(days, int) or not 0 <= days <= window_days:
             continue
@@ -105,7 +107,7 @@ def birthday_email_text(notification: dict) -> str:
     lines = [
         f"Hola, {agent_name}:",
         "",
-        "Estos son los cumpleaños de tus clientes con póliza vigente entre hoy y los próximos 7 días:",
+        "Estos son los cumpleaños de tus clientes con al menos una póliza vigente entre hoy y los próximos 7 días:",
         "",
     ]
     for client in notification["clients"]:
@@ -147,7 +149,7 @@ def birthday_email_html(notification: dict) -> str:
         "</div>"
         "<div style=\"padding:28px 32px\">"
         f"<p style=\"font-size:17px;margin-top:0\">Hola, <strong>{agent_name}</strong>:</p>"
-        "<p>Estos son los cumpleaños de tus clientes con póliza vigente entre hoy y los próximos 7 días.</p>"
+        "<p>Estos son los cumpleaños de tus clientes con al menos una póliza vigente entre hoy y los próximos 7 días.</p>"
         "<table style=\"border-collapse:collapse;width:100%;margin:22px 0\">"
         "<thead><tr style=\"background:#e8f3f8;text-align:left\"><th style=\"padding:12px\">Cuándo</th><th style=\"padding:12px\">Fecha</th><th style=\"padding:12px\">Cliente</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
