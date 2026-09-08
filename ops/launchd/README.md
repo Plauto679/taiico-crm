@@ -26,11 +26,13 @@ cp ops/launchd/com.taiico.crm.frontend.plist ~/Library/LaunchAgents/
 cp ops/launchd/com.taiico.crm.pending-report.plist ~/Library/LaunchAgents/
 cp ops/launchd/com.taiico.crm.agent-license-report.plist ~/Library/LaunchAgents/
 cp ops/launchd/com.taiico.crm.renewal-agent.plist ~/Library/LaunchAgents/
+cp ops/launchd/com.taiico.crm.database-backups.plist ~/Library/LaunchAgents/
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.backend.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.frontend.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.pending-report.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.agent-license-report.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.renewal-agent.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.database-backups.plist
 ```
 
 ## Estado
@@ -41,6 +43,7 @@ launchctl print gui/$(id -u)/com.taiico.crm.frontend
 launchctl print gui/$(id -u)/com.taiico.crm.pending-report
 launchctl print gui/$(id -u)/com.taiico.crm.agent-license-report
 launchctl print gui/$(id -u)/com.taiico.crm.renewal-agent
+launchctl print gui/$(id -u)/com.taiico.crm.database-backups
 ```
 
 ## Reinicio después de desplegar cambios
@@ -53,9 +56,17 @@ launchctl kickstart -k gui/$(id -u)/com.taiico.crm.frontend
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.pending-report
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.agent-license-report
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.renewal-agent
+launchctl kickstart -k gui/$(id -u)/com.taiico.crm.database-backups
 ```
 
 Los logs se escriben en `.runtime/logs/` y no se versionan.
+
+El agente `com.taiico.crm.database-backups` revisa cada cinco minutos si ya existe
+el respaldo del día en horario de Ciudad de México. Crea una subcarpeta por cada
+base canónica de Drive y otra para la base SQL local, genera como máximo una copia
+diaria con prefijo `YYYY-MM-DD` y envía a la papelera únicamente sus propias copias
+cuando salen de la ventana de retención de 30 días. Al iniciar después de una
+interrupción crea el respaldo faltante del día automáticamente.
 
 ## API supervisada de renovaciones
 

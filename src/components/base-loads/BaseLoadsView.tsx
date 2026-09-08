@@ -3,7 +3,12 @@
 import { ChangeEvent, useState } from 'react';
 import { AlertTriangle, CheckCircle2, FileSpreadsheet, Loader2, ShieldCheck, Upload } from 'lucide-react';
 import type { BaseLoadApplyResult, BaseLoadPreview } from '@/lib/types/baseLoads';
-import { applyMetlifeGmmBase, previewMetlifeGmmBase } from '@/modules/base-loads/service';
+import {
+    applyMetlifeGmmBase,
+    applyMetlifeVidaBase,
+    previewMetlifeGmmBase,
+    previewMetlifeVidaBase,
+} from '@/modules/base-loads/service';
 
 const number = new Intl.NumberFormat('es-MX');
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
@@ -23,12 +28,21 @@ function Metric({ label, value, tone = 'default' }: { label: string; value: numb
 }
 
 export function BaseLoadsView() {
+    const [product, setProduct] = useState<'gmm' | 'vida'>('gmm');
     const [file, setFile] = useState<File | null>(null);
     const [preview, setPreview] = useState<BaseLoadPreview | null>(null);
     const [result, setResult] = useState<BaseLoadApplyResult | null>(null);
     const [loading, setLoading] = useState(false);
     const [applying, setApplying] = useState(false);
     const [error, setError] = useState('');
+
+    function selectProduct(nextProduct: 'gmm' | 'vida') {
+        setProduct(nextProduct);
+        setFile(null);
+        setPreview(null);
+        setResult(null);
+        setError('');
+    }
 
     function selectFile(event: ChangeEvent<HTMLInputElement>) {
         const selected = event.target.files?.[0] || null;
@@ -51,7 +65,9 @@ export function BaseLoadsView() {
         setLoading(true);
         setError('');
         try {
-            setPreview(await previewMetlifeGmmBase(file));
+            setPreview(await (product === 'gmm'
+                ? previewMetlifeGmmBase(file)
+                : previewMetlifeVidaBase(file)));
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : 'No se pudo analizar el archivo');
         } finally {
@@ -64,7 +80,9 @@ export function BaseLoadsView() {
         setApplying(true);
         setError('');
         try {
-            const applied = await applyMetlifeGmmBase(preview.token);
+            const applied = await (product === 'gmm'
+                ? applyMetlifeGmmBase(preview.token)
+                : applyMetlifeVidaBase(preview.token));
             setResult(applied);
             setPreview(null);
         } catch (caught) {
@@ -84,12 +102,31 @@ export function BaseLoadsView() {
                 <p className="mt-2 text-blue-100">Actualiza fuentes canónicas con conciliación, deduplicación y respaldo.</p>
             </div>
 
+            <div className="inline-flex rounded-xl bg-white/15 p-1" role="tablist" aria-label="Producto MetLife">
+                {(['gmm', 'vida'] as const).map((option) => (
+                    <button
+                        key={option}
+                        type="button"
+                        role="tab"
+                        aria-selected={product === option}
+                        onClick={() => selectProduct(option)}
+                        className={`rounded-lg px-5 py-2 font-semibold transition ${product === option ? 'bg-white text-blue-800 shadow' : 'text-white hover:bg-white/10'}`}
+                    >
+                        {option === 'gmm' ? 'MetLife GMM' : 'MetLife Vida'}
+                    </button>
+                ))}
+            </div>
+
             <section className="rounded-2xl bg-white p-6 shadow-xl">
                 <div className="flex items-start gap-4">
                     <div className="rounded-xl bg-blue-100 p-3 text-blue-700"><FileSpreadsheet className="h-7 w-7" /></div>
                     <div className="flex-1">
-                        <h2 className="text-xl font-semibold text-slate-900">MetLife GMM</h2>
-                        <p className="mt-1 text-sm text-slate-600">Reporte de cartera KC. Se filtra por Clave Definitiva y se conserva toda la información de Y en adelante.</p>
+                        <h2 className="text-xl font-semibold text-slate-900">MetLife {product === 'gmm' ? 'GMM' : 'Vida'}</h2>
+                        <p className="mt-1 text-sm text-slate-600">
+                            {product === 'gmm'
+                                ? 'Reporte de cartera KC. Se filtra por Clave Definitiva y se conserva toda la información de Y en adelante.'
+                                : 'Reporte de cartera Vida. Se concilia por POLIZA_ORIGEN, se actualiza ESTATUS_POL y se conservan los datos internos de Taiico.'}
+                        </p>
                     </div>
                 </div>
 
@@ -131,14 +168,24 @@ export function BaseLoadsView() {
                         <Metric label="Claves definitivas" value={stats.allowed_agent_keys} />
                         <Metric label="Filas después del filtro" value={stats.rows_after_agent_filter} />
                         <Metric label="Pólizas únicas" value={stats.unique_incoming_policies} />
-                        <Metric label="Vigencias únicas" value={stats.unique_policy_periods} />
+                        {product === 'gmm' && <Metric label="Vigencias únicas" value={stats.unique_policy_periods || 0} />}
                         <Metric label="Pólizas actualizadas" value={stats.existing_policies_updated} tone="success" />
                         <Metric label="Pólizas nuevas" value={stats.new_policies_added} tone="success" />
-                        <Metric label="Duplicados A–X omitidos" value={stats.duplicate_a_x_rows} />
-                        <Metric label="Filas históricas conservadas" value={stats.current_rows_preserved_as_exceptions} tone="warning" />
+                        {product === 'gmm'
+                            ? <Metric label="Duplicados A–X omitidos" value={stats.duplicate_a_x_rows || 0} />
+                            : <Metric label="Estatus modificados" value={stats.statuses_changed || 0} tone="warning" />}
+                        <Metric
+                            label={product === 'gmm' ? 'Filas históricas conservadas' : 'Pólizas ausentes conservadas'}
+                            value={product === 'gmm' ? stats.current_rows_preserved_as_exceptions || 0 : stats.current_policies_preserved_as_exceptions}
+                            tone="warning"
+                        />
                     </div>
                     <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-                        Se preservarán datos de Y en adelante en <strong>{number.format(stats.rows_with_preserved_y_plus_data)}</strong> filas. El resultado tendrá <strong>{number.format(stats.final_policy_count)}</strong> pólizas y <strong>{number.format(stats.final_row_count)}</strong> vigencias/variantes A–X. Se creará un respaldo antes de reemplazar la base.
+                        {product === 'gmm' ? (
+                            <>Se preservarán datos de Y en adelante en <strong>{number.format(stats.rows_with_preserved_y_plus_data || 0)}</strong> filas. El resultado tendrá <strong>{number.format(stats.final_policy_count)}</strong> pólizas y <strong>{number.format(stats.final_row_count)}</strong> vigencias/variantes A–X.</>
+                        ) : (
+                            <>Se preservarán ESTATUS_DE_RENOVACION, EXPEDIENTE y Email en <strong>{number.format(stats.rows_with_preserved_internal_data || 0)}</strong> pólizas. El resultado tendrá <strong>{number.format(stats.final_policy_count)}</strong> pólizas.</>
+                        )}{' '}Se creará un respaldo antes de reemplazar la base.
                     </div>
                     <div className="sticky bottom-0 z-10 -mx-2 border-t border-slate-200 bg-slate-50/95 px-2 py-4 backdrop-blur">
                         <button
@@ -160,7 +207,7 @@ export function BaseLoadsView() {
                         <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0" />
                         <div>
                             <h2 className="text-xl font-semibold">Base actualizada</h2>
-                            <p className="mt-1 text-sm">Se consolidaron {number.format(result.final_policy_count)} pólizas en {number.format(result.final_row_count)} filas de vigencia. La copia local y Drive quedaron sincronizados.</p>
+                            <p className="mt-1 text-sm">Se consolidaron {number.format(result.final_policy_count)} pólizas en {number.format(result.final_row_count)} filas. La copia local y Drive quedaron sincronizados.</p>
                             <div className="mt-3 flex flex-wrap gap-4 text-sm font-semibold">
                                 <a href={result.drive_url} target="_blank" rel="noopener noreferrer" className="underline hover:text-emerald-700">
                                     Abrir base en Drive

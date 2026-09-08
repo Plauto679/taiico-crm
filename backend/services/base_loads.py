@@ -62,6 +62,32 @@ HISTORY_FOLDER_ID_ENV = "BASE_LOAD_HISTORY_FOLDER_ID"
 DEFAULT_AGENTS_METLIFE_FILE_ID = "1IoeLDCQe4T3DofStiBSaI09xjX2-RSby"
 AGENTS_METLIFE_FILE_ID_ENV = "GOOGLE_DRIVE_AGENTS_METLIFE_FILE_ID"
 DEFAULT_METLIFE_GMM_FILE_ID = "1e1fL1qH4jBJLSNdSO-izTg2eDjYV6VNn"
+DEFAULT_METLIFE_VIDA_FILE_ID = "1FZKZDgYD84MDbNqJ6NjB-JzW0wAJlVob"
+VIDA_BUSINESS_COLUMN_COUNT = 19  # A:S
+VIDA_POLICY_COLUMN_INDEX = 2  # C / POLIZA_ORIGEN
+VIDA_STATUS_COLUMN_INDEX = 5  # F / ESTATUS_POL
+VIDA_AGENT_COLUMN_INDEX = 13  # N / AGENTE
+VIDA_EXPECTED_HEADERS = (
+    "CONTRATANTE",
+    "RAMO",
+    "POLIZA_ORIGEN",
+    "FPLAN",
+    "PDESC",
+    "ESTATUS_POL",
+    "POLIZA_ACTUAL",
+    "RFC_CONTRATANTE",
+    "INI_VIG",
+    "FIN_VIG",
+    "FORMA_PAGO",
+    "CONDUCTO_COBRO",
+    "PROMOTORIA",
+    "AGENTE",
+    "NOM_AGENTE",
+    "PRIMA_ANUAL",
+    "PRIMA_MODAL",
+    "MONEDA",
+    "PAGADO_HASTA",
+)
 
 
 def staging_root() -> Path:
@@ -92,14 +118,22 @@ def history_folder_id() -> str:
     return os.getenv(HISTORY_FOLDER_ID_ENV, DEFAULT_HISTORY_FOLDER_ID).strip()
 
 
-def canonical_drive_file_id() -> str:
+def canonical_drive_file_id(
+    source_key: str = "renovaciones.metlife_gmm",
+) -> str:
+    defaults = {
+        "renovaciones.metlife_gmm": DEFAULT_METLIFE_GMM_FILE_ID,
+        "renovaciones.metlife_vida": DEFAULT_METLIFE_VIDA_FILE_ID,
+    }
+    if source_key not in defaults:
+        raise ValueError(f"Fuente de carga no soportada: {source_key}")
     configured = (
-        GOOGLE_DRIVE_SOURCE_FOLDERS.get("renovaciones.metlife_gmm", {}).get("file_id")
-        or DEFAULT_METLIFE_GMM_FILE_ID
+        GOOGLE_DRIVE_SOURCE_FOLDERS.get(source_key, {}).get("file_id")
+        or defaults[source_key]
     )
     file_id = str(configured).strip()
     if not file_id:
-        raise ValueError("No está configurado el archivo canónico MetLife GMM en Drive")
+        raise ValueError("No está configurado el archivo canónico de MetLife en Drive")
     return file_id
 
 
@@ -237,6 +271,13 @@ def normalize_cell(value: object) -> str:
     return str(value).strip()
 
 
+def normalize_numeric_identifier(value: object) -> str:
+    normalized = normalize_cell(value)
+    if re.fullmatch(r"\d+", normalized):
+        return normalized.lstrip("0") or "0"
+    return normalized.casefold()
+
+
 def row_values(row: Iterable[object], width: int) -> tuple[object, ...]:
     values = tuple(row)
     return values[:width] + (None,) * max(0, width - len(values))
@@ -261,9 +302,9 @@ def load_allowed_agent_keys(path: Path) -> set[str]:
                 "El catálogo de agentes no contiene CLAVE_DEFINITIVA"
             ) from exc
         return {
-            normalize_cell(row[key_index])
+            normalize_numeric_identifier(row[key_index])
             for row in rows
-            if key_index < len(row) and normalize_cell(row[key_index])
+            if key_index < len(row) and normalize_numeric_identifier(row[key_index])
         }
     finally:
         workbook.close()
@@ -316,7 +357,7 @@ def select_incoming_rows(path: Path, allowed_keys: set[str]) -> dict:
         for raw_row in rows:
             total_rows += 1
             business = row_values(raw_row, BUSINESS_COLUMN_COUNT)
-            agent_key = normalize_cell(business[AGENT_COLUMN_INDEX])
+            agent_key = normalize_numeric_identifier(business[AGENT_COLUMN_INDEX])
             if agent_key not in allowed_keys:
                 continue
             filtered_rows += 1
@@ -506,6 +547,188 @@ def prepare_candidate_workbook(
         workbook.close()
 
 
+def vida_policy_key(row: Iterable[object]) -> str:
+    values = row_values(row, VIDA_BUSINESS_COLUMN_COUNT)
+    return normalize_numeric_identifier(values[VIDA_POLICY_COLUMN_INDEX])
+
+
+def select_incoming_vida_rows(path: Path, allowed_keys: set[str]) -> dict:
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        sheet = workbook.active
+        # MetLife Vida exports also declare A1:A1 despite containing all rows.
+        sheet.reset_dimensions()
+        rows = sheet.iter_rows(values_only=True)
+        try:
+            header = row_values(next(rows), VIDA_BUSINESS_COLUMN_COUNT)
+        except StopIteration as exc:
+            raise ValueError("El archivo cargado está vacío") from exc
+        if tuple(normalize_cell(value) for value in header) != VIDA_EXPECTED_HEADERS:
+            raise ValueError(
+                "El archivo no tiene las columnas esperadas de MetLife Vida en A:S"
+            )
+
+        total_rows = 0
+        filtered_rows = 0
+        duplicate_policy_rows = 0
+        rows_by_policy: dict[str, tuple[object, ...]] = {}
+        for raw_row in rows:
+            if not any(normalize_cell(value) for value in raw_row):
+                continue
+            total_rows += 1
+            business = row_values(raw_row, VIDA_BUSINESS_COLUMN_COUNT)
+            agent_key = normalize_numeric_identifier(business[VIDA_AGENT_COLUMN_INDEX])
+            if agent_key not in allowed_keys:
+                continue
+            filtered_rows += 1
+            policy_key = vida_policy_key(business)
+            if not policy_key:
+                raise ValueError(
+                    f"La fila {total_rows + 1} no contiene POLIZA_ORIGEN"
+                )
+            previous = rows_by_policy.get(policy_key)
+            if previous is not None:
+                if normalized_row(previous, VIDA_BUSINESS_COLUMN_COUNT) != normalized_row(
+                    business, VIDA_BUSINESS_COLUMN_COUNT
+                ):
+                    raise ValueError(
+                        "El reporte contiene más de una fila distinta para "
+                        f"POLIZA_ORIGEN {normalize_cell(business[VIDA_POLICY_COLUMN_INDEX])}"
+                    )
+                duplicate_policy_rows += 1
+                continue
+            rows_by_policy[policy_key] = business
+        return {
+            "header": header,
+            "rows_by_policy": rows_by_policy,
+            "total_rows": total_rows,
+            "filtered_rows": filtered_rows,
+            "duplicate_policy_rows": duplicate_policy_rows,
+            "unique_policies": len(rows_by_policy),
+        }
+    finally:
+        workbook.close()
+
+
+def current_vida_policies_from_sheet(sheet) -> dict:
+    rows = sheet.iter_rows(values_only=True)
+    try:
+        header = tuple(next(rows))
+    except StopIteration as exc:
+        raise ValueError("La hoja Vida está vacía") from exc
+    if len(header) < VIDA_BUSINESS_COLUMN_COUNT:
+        raise ValueError("La hoja Vida no contiene las columnas A:S")
+    if tuple(normalize_cell(value) for value in header[:VIDA_BUSINESS_COLUMN_COUNT]) != VIDA_EXPECTED_HEADERS:
+        raise ValueError("La hoja Vida no contiene las columnas canónicas esperadas")
+
+    width = len(header)
+    rows_by_policy: dict[str, tuple[object, ...]] = {}
+    for raw_row in rows:
+        values = row_values(raw_row, width)
+        policy_key = vida_policy_key(values)
+        if not policy_key:
+            continue
+        if policy_key in rows_by_policy:
+            raise ValueError(
+                "La base canónica contiene más de una fila para POLIZA_ORIGEN "
+                f"{normalize_cell(values[VIDA_POLICY_COLUMN_INDEX])}"
+            )
+        rows_by_policy[policy_key] = values
+    return {"header": header, "width": width, "rows_by_policy": rows_by_policy}
+
+
+def vida_preview_from_loaded_data(
+    allowed_keys: set[str], incoming: dict, current: dict
+) -> dict:
+    incoming_by_policy = incoming["rows_by_policy"]
+    current_by_policy = current["rows_by_policy"]
+    incoming_keys = set(incoming_by_policy)
+    current_keys = set(current_by_policy)
+    common_keys = incoming_keys & current_keys
+    statuses_changed = sum(
+        normalize_cell(incoming_by_policy[key][VIDA_STATUS_COLUMN_INDEX])
+        != normalize_cell(current_by_policy[key][VIDA_STATUS_COLUMN_INDEX])
+        for key in common_keys
+    )
+    preserved_internal_rows = sum(
+        any(
+            normalize_cell(value)
+            for value in current_by_policy[key][VIDA_BUSINESS_COLUMN_COUNT:]
+        )
+        for key in common_keys
+    )
+    return {
+        "allowed_agent_keys": len(allowed_keys),
+        "source_rows": incoming["total_rows"],
+        "rows_after_agent_filter": incoming["filtered_rows"],
+        "duplicate_policy_rows": incoming["duplicate_policy_rows"],
+        "unique_incoming_policies": incoming["unique_policies"],
+        "existing_policies_updated": len(common_keys),
+        "new_policies_added": len(incoming_keys - current_keys),
+        "current_policies_preserved_as_exceptions": len(current_keys - incoming_keys),
+        "statuses_changed": statuses_changed,
+        "statuses_unchanged": len(common_keys) - statuses_changed,
+        "rows_with_preserved_internal_data": preserved_internal_rows,
+        "final_policy_count": len(incoming_keys | current_keys),
+        "final_row_count": len(incoming_keys | current_keys),
+    }
+
+
+def prepare_vida_candidate_workbook(
+    upload_path: Path,
+    canonical_path: Path,
+    agent_path: Path,
+    destination: Path,
+) -> dict:
+    """Refresh MetLife Vida A:S by POLIZA_ORIGEN and preserve Taiico columns."""
+    allowed_keys = load_allowed_agent_keys(agent_path)
+    incoming = select_incoming_vida_rows(upload_path, allowed_keys)
+    workbook = load_workbook(canonical_path)
+    try:
+        if "Vida" not in workbook.sheetnames:
+            raise ValueError("La base canónica no contiene la hoja Vida")
+        sheet = workbook["Vida"]
+        current = current_vida_policies_from_sheet(sheet)
+        preview = vida_preview_from_loaded_data(allowed_keys, incoming, current)
+        width = current["width"]
+        current_by_policy = current["rows_by_policy"]
+        incoming_by_policy = incoming["rows_by_policy"]
+
+        merged_rows = []
+        for policy_key, business in incoming_by_policy.items():
+            old_row = current_by_policy.get(policy_key)
+            internal = (
+                row_values(
+                    old_row[VIDA_BUSINESS_COLUMN_COUNT:],
+                    width - VIDA_BUSINESS_COLUMN_COUNT,
+                )
+                if old_row is not None
+                else (None,) * (width - VIDA_BUSINESS_COLUMN_COUNT)
+            )
+            merged_rows.append(
+                row_values(business, VIDA_BUSINESS_COLUMN_COUNT) + internal
+            )
+        merged_rows.extend(
+            row
+            for policy_key, row in current_by_policy.items()
+            if policy_key not in incoming_by_policy
+        )
+
+        if sheet.max_row > 1:
+            sheet.delete_rows(2, sheet.max_row - 1)
+        for merged_row in merged_rows:
+            sheet.append(list(row_values(merged_row, width)))
+        final_row = max(1, sheet.max_row)
+        for table in sheet.tables.values():
+            table.ref = f"A1:{sheet.cell(1, width).column_letter}{final_row}"
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        workbook.save(destination)
+        return preview
+    finally:
+        workbook.close()
+
+
 def file_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -527,6 +750,7 @@ def apply_prepared_workbook(
     canonical_path: Path,
     expected_candidate_sha256: str,
     expected_canonical_sha256: str,
+    source_key: str = "renovaciones.metlife_gmm",
 ) -> dict:
     """Back up and atomically install a previously prepared workbook."""
     if file_sha256(candidate_path) != expected_candidate_sha256:
@@ -536,7 +760,7 @@ def apply_prepared_workbook(
             "La base canónica cambió después de la vista previa. Genera una nueva vista previa."
         )
 
-    drive_file_id = canonical_drive_file_id()
+    drive_file_id = canonical_drive_file_id(source_key)
     local_md5 = file_md5(canonical_path)
     drive_before = drive_file_metadata(drive_file_id)
     drive_before_md5 = str(drive_before.get("md5Checksum") or "")
@@ -657,6 +881,7 @@ async def preview_metlife_gmm_base(file: UploadFile = File(...)):
         )
         manifest = {
             "token": token,
+            "source_key": "renovaciones.metlife_gmm",
             "filename": filename,
             "size": size,
             "sha256": sha256,
@@ -690,6 +915,8 @@ async def apply_metlife_gmm_base(token: str):
     if not upload_path.exists() or not candidate_path.exists() or not manifest_path.exists():
         raise HTTPException(status_code=404, detail="La vista previa expiró o no existe")
     manifest = json.loads(manifest_path.read_text())
+    if manifest.get("source_key") != "renovaciones.metlife_gmm":
+        raise HTTPException(status_code=409, detail="La vista previa no corresponde a MetLife GMM")
     digest = await run_in_threadpool(file_sha256, upload_path)
     if digest != manifest.get("sha256"):
         raise HTTPException(status_code=409, detail="El archivo cambió después de la vista previa")
@@ -700,6 +927,7 @@ async def apply_metlife_gmm_base(token: str):
             Path(METLIFE_PATHS["RENOVACIONES_GMM"]),
             manifest["candidate_sha256"],
             manifest["canonical_sha256"],
+            "renovaciones.metlife_gmm",
         )
         try:
             from services.renewal_ingestion import sync_local_canonical_renewals
@@ -722,6 +950,107 @@ async def apply_metlife_gmm_base(token: str):
     except Exception as exc:
         logger.exception(
             "MetLife GMM base apply failed; token=%s staging=%s",
+            token,
+            token_dir,
+        )
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/metlife-vida/preview")
+async def preview_metlife_vida_base(file: UploadFile = File(...)):
+    cleanup_expired_previews()
+    filename = safe_filename(file.filename)
+    if not filename.casefold().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Sólo se aceptan archivos .xlsx")
+    token = uuid.uuid4().hex
+    token_dir = staging_root() / token
+    token_dir.mkdir(parents=True)
+    upload_path = token_dir / "source.xlsx"
+    agents_path = token_dir / "agents.xlsx"
+    candidate_path = token_dir / "prepared.xlsx"
+    try:
+        size, sha256 = await save_upload(file, upload_path)
+        canonical_path = Path(METLIFE_PATHS["RENOVACIONES_VIDA"])
+        canonical_sha256 = await run_in_threadpool(file_sha256, canonical_path)
+        await run_in_threadpool(stage_agents_workbook, agents_path)
+        preview = await run_in_threadpool(
+            prepare_vida_candidate_workbook,
+            upload_path,
+            canonical_path,
+            agents_path,
+            candidate_path,
+        )
+        manifest = {
+            "token": token,
+            "source_key": "renovaciones.metlife_vida",
+            "filename": filename,
+            "size": size,
+            "sha256": sha256,
+            "canonical_sha256": canonical_sha256,
+            "candidate_sha256": await run_in_threadpool(file_sha256, candidate_path),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "preview": preview,
+        }
+        (token_dir / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
+        )
+        return manifest
+    except HTTPException:
+        shutil.rmtree(token_dir, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(token_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        await file.close()
+
+
+@router.post("/metlife-vida/apply/{token}")
+async def apply_metlife_vida_base(token: str):
+    if not re.fullmatch(r"[a-f0-9]{32}", token):
+        raise HTTPException(status_code=400, detail="Token de carga inválido")
+    token_dir = staging_root() / token
+    upload_path = token_dir / "source.xlsx"
+    candidate_path = token_dir / "prepared.xlsx"
+    manifest_path = token_dir / "manifest.json"
+    if not upload_path.exists() or not candidate_path.exists() or not manifest_path.exists():
+        raise HTTPException(status_code=404, detail="La vista previa expiró o no existe")
+    manifest = json.loads(manifest_path.read_text())
+    if manifest.get("source_key") != "renovaciones.metlife_vida":
+        raise HTTPException(status_code=409, detail="La vista previa no corresponde a MetLife Vida")
+    digest = await run_in_threadpool(file_sha256, upload_path)
+    if digest != manifest.get("sha256"):
+        raise HTTPException(status_code=409, detail="El archivo cambió después de la vista previa")
+    try:
+        result = await run_in_threadpool(
+            apply_prepared_workbook,
+            candidate_path,
+            Path(METLIFE_PATHS["RENOVACIONES_VIDA"]),
+            manifest["candidate_sha256"],
+            manifest["canonical_sha256"],
+            "renovaciones.metlife_vida",
+        )
+        try:
+            from services.renewal_ingestion import sync_local_canonical_renewals
+
+            renewal_sync = await run_in_threadpool(
+                sync_local_canonical_renewals,
+                "renovaciones.metlife_vida",
+            )
+        except Exception as sync_exc:
+            logger.exception("Canonical Vida workbook applied but renewal synchronization failed")
+            renewal_sync = {"status": "failed", "error": str(sync_exc)}
+        shutil.rmtree(token_dir, ignore_errors=True)
+        return {
+            "applied": True,
+            "filename": manifest["filename"],
+            **manifest["preview"],
+            **result,
+            "renewal_sync": renewal_sync,
+        }
+    except Exception as exc:
+        logger.exception(
+            "MetLife Vida base apply failed; token=%s staging=%s",
             token,
             token_dir,
         )

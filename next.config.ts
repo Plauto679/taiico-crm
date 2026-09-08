@@ -5,10 +5,11 @@ const nextConfig: NextConfig = {
     // MetLife workbooks can be up to 100 MB. Leave room for multipart framing
     // before the same-origin route streams the request to FastAPI.
     proxyClientMaxBodySize: "110mb",
-    // Pending-record writes must finish syncing the canonical Excel file with
-    // Drive before the UI can safely confirm success. Some writes take longer
-    // than the default 30-second proxy timeout.
-    proxyTimeout: 90_000,
+    // Canonical workbook loads include a Drive backup, in-place replacement,
+    // and SQL re-indexing before success can be confirmed. Vida loads can take
+    // more than 90 seconds, so keep the proxy aligned with the 10-minute limit
+    // used by the dedicated apply endpoints.
+    proxyTimeout: 600_000,
   },
   async headers() {
     return [

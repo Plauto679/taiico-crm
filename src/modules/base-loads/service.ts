@@ -39,3 +39,22 @@ export async function applyMetlifeGmmBase(token: string): Promise<BaseLoadApplyR
         cache: 'no-store',
     }));
 }
+
+export async function previewMetlifeVidaBase(file: File): Promise<BaseLoadPreview> {
+    const body = new FormData();
+    body.append('file', file);
+    return responseJson<BaseLoadPreview>(await fetch('/api/base-loads/metlife-vida/preview', {
+        method: 'POST',
+        body,
+        credentials: 'same-origin',
+        cache: 'no-store',
+    }));
+}
+
+export async function applyMetlifeVidaBase(token: string): Promise<BaseLoadApplyResult> {
+    return responseJson<BaseLoadApplyResult>(await fetch(`/api/base-loads/metlife-vida/apply/${token}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+    }));
+}

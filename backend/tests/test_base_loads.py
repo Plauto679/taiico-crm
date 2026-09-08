@@ -12,7 +12,9 @@ from services.base_loads import (
     build_preview,
     file_md5,
     file_sha256,
+    prepare_vida_candidate_workbook,
     replace_canonical_workbook,
+    select_incoming_vida_rows,
     stage_agents_workbook,
 )
 
@@ -24,12 +26,28 @@ HEADERS = [
     "GTOSEXP", "IVA", "MONEDA", "PAGADOHASTA", "DEDUCIBLE", "COASEGURO",
 ]
 
+VIDA_HEADERS = [
+    "CONTRATANTE", "RAMO", "POLIZA_ORIGEN", "FPLAN", "PDESC",
+    "ESTATUS_POL", "POLIZA_ACTUAL", "RFC_CONTRATANTE", "INI_VIG",
+    "FIN_VIG", "FORMA_PAGO", "CONDUCTO_COBRO", "PROMOTORIA",
+    "AGENTE", "NOM_AGENTE", "PRIMA_ANUAL", "PRIMA_MODAL", "MONEDA",
+    "PAGADO_HASTA",
+]
+
 
 def business_row(policy, agent, end_date, client="CLIENTE", status=4):
     return [
         client, "RFC", 6001, "GMM", policy, policy, 20260101, end_date, 1,
         "ANUAL", status, "AGENTE", 119, agent, "AGENTE NOMBRE", 100, 100, 0,
         0, 16, "PESOS", 0, 10000, 10,
+    ]
+
+
+def vida_row(policy, agent, status="I: INFORCE", client="CLIENTE"):
+    return [
+        client, "0000", policy, "PLAN", "VIDA", status, policy, "RFC",
+        "01/01/2026", "01/01/2027", "A: ANUAL", "IN: AGENTE DIRECTO",
+        "00119", agent, "AGENTE NOMBRE", 100, 100, "P", "01/01/2027",
     ]
 
 
@@ -218,3 +236,81 @@ class BaseLoadsTest(unittest.TestCase):
         load_agents.assert_not_called()
         load_incoming.assert_not_called()
         load_current.assert_not_called()
+
+
+class VidaBaseLoadsTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        self.agents = root / "agents.xlsx"
+        self.incoming = root / "vida-incoming.xlsx"
+        self.canonical = root / "vida-canonical.xlsx"
+        self.candidate = root / "vida-prepared.xlsx"
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Datos"
+        sheet.append(["CLAVE_DEFINITIVA", "Nombre"])
+        sheet.append([73640, "Agente válido"])
+        workbook.save(self.agents)
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Reporte"
+        sheet.append(VIDA_HEADERS)
+        sheet.append(vida_row("0000000100", "000073640", "L: LAPSE", "ACTUALIZADO"))
+        sheet.append(vida_row("0000000300", "000073640", "I: INFORCE", "NUEVO"))
+        sheet.append(vida_row("0000000200", "000099999", "I: INFORCE", "NO AUTORIZADO"))
+        workbook.save(self.incoming)
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Vida"
+        sheet.append(VIDA_HEADERS + ["ESTATUS_DE_RENOVACION", "EXPEDIENTE", "Email"])
+        sheet.append(vida_row(100, 73640, "I: INFORCE", "ANTERIOR") + ["En proceso", "drive://100", "cliente@example.com"])
+        sheet.append(vida_row(400, 73640, "I: INFORCE", "EXCEPCION") + [None, None, None])
+        sheet.add_table(Table(displayName="VidaTable", ref="A1:V3"))
+        workbook.save(self.canonical)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_prepare_matches_policy_and_agent_keys_ignoring_leading_zeroes(self):
+        preview = prepare_vida_candidate_workbook(
+            self.incoming, self.canonical, self.agents, self.candidate
+        )
+
+        self.assertEqual(preview["source_rows"], 3)
+        self.assertEqual(preview["rows_after_agent_filter"], 2)
+        self.assertEqual(preview["existing_policies_updated"], 1)
+        self.assertEqual(preview["new_policies_added"], 1)
+        self.assertEqual(preview["current_policies_preserved_as_exceptions"], 1)
+        self.assertEqual(preview["statuses_changed"], 1)
+        self.assertEqual(preview["final_policy_count"], 3)
+
+        workbook = load_workbook(self.candidate, data_only=True)
+        try:
+            sheet = workbook["Vida"]
+            rows = list(sheet.iter_rows(min_row=2, values_only=True))
+            updated = next(row for row in rows if str(row[2]) == "0000000100")
+            self.assertEqual(updated[0], "ACTUALIZADO")
+            self.assertEqual(updated[5], "L: LAPSE")
+            self.assertEqual(
+                updated[19:],
+                ("En proceso", "drive://100", "cliente@example.com"),
+            )
+            self.assertTrue(any(str(row[2]) == "0000000300" for row in rows))
+            self.assertTrue(any(str(row[2]) == "400" for row in rows))
+            self.assertEqual(sheet.tables["VidaTable"].ref, "A1:V4")
+        finally:
+            workbook.close()
+
+    def test_rejects_conflicting_rows_for_same_policy(self):
+        workbook = load_workbook(self.incoming)
+        sheet = workbook.active
+        sheet.append(vida_row("0000000100", "000073640", "S: CASH SURRENDER"))
+        workbook.save(self.incoming)
+        workbook.close()
+
+        with self.assertRaisesRegex(ValueError, "más de una fila distinta"):
+            select_incoming_vida_rows(self.incoming, {"73640"})
