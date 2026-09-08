@@ -3,7 +3,7 @@ import time
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from services import cobranza, renovaciones, cumpleanos, cumpleanos_agentes, agentes, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, renewal_agent_api, client_email_directory, whatsapp, pendientes, mail_configuration, automatic_mails, recluta, password_management, base_loads, accesos, cotizaciones, audit_logs, rrhh, campanas, finanzas, gestion_comercial
+from services import cobranza, renovaciones, cumpleanos, cumpleanos_agentes, agentes, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, renewal_agent_api, client_email_directory, whatsapp, pendientes, mail_configuration, automatic_mails, recluta, password_management, base_loads, accesos, cotizaciones, audit_logs, rrhh, campanas, finanzas, gestion_comercial, time_machine
 from services.login_security import login_rate_limiter, secure_cookie_for
 from services.authorization import current_access_profile, require_module_access
 from services.session_auth import (
@@ -259,6 +259,7 @@ app.include_router(rrhh.router, dependencies=[Depends(require_module_access("rrh
 app.include_router(campanas.router, dependencies=[Depends(require_module_access("campanas"))])
 app.include_router(finanzas.router, dependencies=[Depends(require_module_access("finanzas"))])
 app.include_router(gestion_comercial.router, dependencies=[Depends(require_module_access("gestion_comercial"))])
+app.include_router(time_machine.router)
 
 if __name__ == "__main__":
     import uvicorn

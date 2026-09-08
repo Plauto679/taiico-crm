@@ -1,5 +1,5 @@
 import { SmartLink } from '@/components/navigation/SmartLink';
-import { DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, MailCheck, UserRoundSearch, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, UserRoundCog } from 'lucide-react';
+import { DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, MailCheck, UserRoundSearch, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, UserRoundCog, ArchiveRestore } from 'lucide-react';
 import { fetchFromApi } from '@/lib/api';
 
 export default async function Home() {
@@ -164,6 +164,14 @@ export default async function Home() {
                 <h2 className="text-2xl font-bold text-gray-900">Mails automáticos</h2>
                 <p className="mt-2 text-gray-500">Programación y destinatarios de envíos</p>
               </div>
+            </div>
+          </SmartLink>
+        )}
+        {['lectura', 'operacion'].includes(session.module_permissions.time_machine || '') && (
+          <SmartLink href="/time-machine" className="group block rounded-xl border border-transparent bg-white p-8 shadow-lg hover:border-violet-400 hover:shadow-2xl hover:scale-105 transition-all duration-300">
+            <div className="flex flex-col items-center space-y-4 text-center">
+              <div className="rounded-full bg-violet-100 p-4 text-violet-700 transition-colors duration-300 group-hover:bg-violet-700 group-hover:text-white"><ArchiveRestore className="h-8 w-8" /></div>
+              <div><h2 className="text-2xl font-bold text-gray-900">Time Machine</h2><p className="mt-2 text-gray-500">Consulta y restaura respaldos históricos</p></div>
             </div>
           </SmartLink>
         )}

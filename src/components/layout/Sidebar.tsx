@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, MailCheck, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, Menu, X, Landmark, UserRoundCog, ChartNoAxesCombined } from 'lucide-react';
+import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, MailCheck, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, Menu, X, Landmark, UserRoundCog, ChartNoAxesCombined, ArchiveRestore } from 'lucide-react';
 import { SmartLink } from '@/components/navigation/SmartLink';
 import { IdleModulePrefetch } from '@/components/navigation/IdleModulePrefetch';
 
@@ -23,6 +23,7 @@ const NAV_ITEMS = [
     { name: 'Configuración de Mail', href: '/configuracion-mail', icon: Mail, module: 'configuracion_mail' },
     { name: 'Mails automáticos', href: '/mails-automaticos', icon: MailCheck, module: 'mails_automaticos' },
     { name: 'Carga de bases', href: '/carga-bases', icon: DatabaseZap, module: 'carga_bases' },
+    { name: 'Time Machine', href: '/time-machine', icon: ArchiveRestore, module: 'time_machine' },
     { name: 'Accesos', href: '/accesos', icon: UserCog, module: 'accesos' },
     { name: 'Cotizaciones', href: '/cotizaciones', icon: FilePenLine, module: 'cotizaciones' },
     { name: 'Gestión Comercial', href: '/gestion-comercial', icon: ChartNoAxesCombined, module: 'gestion_comercial' },
