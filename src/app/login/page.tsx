@@ -3,7 +3,9 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import { fetchFromApi } from '@/lib/api';
+import loginBackground from '../../../public/taiico-wall-login.jpg';
 
 export default function LoginPage() {
     const [username, setUsername] = useState('');
@@ -36,15 +38,18 @@ export default function LoginPage() {
     };
 
     return (
-        <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-6 py-10">
-            <div
-                className="absolute inset-0 bg-cover bg-center"
-                style={{ backgroundImage: "url('/taiico-wall-login.jpg')" }}
-                aria-hidden="true"
+        <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#34587C] px-6 py-10">
+            <Image
+                src={loginBackground}
+                alt=""
+                fill
+                priority
+                sizes="100vw"
+                className="hidden object-cover object-center lg:block"
             />
-            <div className="absolute inset-0 bg-gradient-to-br from-slate-950/80 via-[#0b3554]/55 to-slate-950/75" aria-hidden="true" />
-            <div className="absolute left-10 top-10 h-40 w-40 rounded-full bg-cyan-400/20 blur-3xl" aria-hidden="true" />
-            <div className="absolute bottom-10 right-10 h-56 w-56 rounded-full bg-blue-500/20 blur-3xl" aria-hidden="true" />
+            <div className="absolute inset-0 hidden bg-gradient-to-br from-slate-950/55 via-[#0b3554]/25 to-slate-950/55 lg:block" aria-hidden="true" />
+            <div className="absolute left-10 top-10 hidden h-40 w-40 rounded-full bg-cyan-400/20 blur-3xl lg:block" aria-hidden="true" />
+            <div className="absolute bottom-10 right-10 hidden h-56 w-56 rounded-full bg-blue-500/20 blur-3xl lg:block" aria-hidden="true" />
 
             <div className="relative w-full max-w-md space-y-8 rounded-3xl border border-white/25 bg-white/90 p-8 shadow-2xl shadow-slate-950/30 backdrop-blur-md">
                 <div className="flex flex-col items-center">
