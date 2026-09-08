@@ -323,7 +323,11 @@ def _upload_workbook(file_id: str, workbook_bytes: bytes) -> None:
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         resumable=False,
     )
-    drive.files().update(fileId=file_id, media_body=media).execute()
+    drive.files().update(
+        fileId=file_id,
+        media_body=media,
+        supportsAllDrives=True,
+    ).execute()
 
 
 def _save_mutation(

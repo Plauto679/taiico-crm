@@ -36,6 +36,14 @@ def normalize_agent_key(value: object) -> str:
     return "".join(text.upper().split())
 
 
+def normalize_agent_match_key(value: object) -> str:
+    """Canonicalize carrier-padded numeric keys without altering alphanumeric keys."""
+    normalized = normalize_agent_key(value)
+    if normalized.isdigit():
+        return normalized.lstrip("0") or "0"
+    return normalized
+
+
 def parse_agent_directory(workbook_bytes: bytes) -> list[dict[str, str]]:
     excel = pd.ExcelFile(io.BytesIO(workbook_bytes))
     sheet_name = "Datos" if "Datos" in excel.sheet_names else excel.sheet_names[0]
@@ -106,7 +114,7 @@ def promotoria_by_agent_key() -> dict[str, str]:
     indexed: dict[str, str] = {}
     ambiguous: set[str] = set()
     for agent in load_agent_directory():
-        key = normalize_agent_key(agent.get("key"))
+        key = normalize_agent_match_key(agent.get("key"))
         promotoria = str(agent.get("promotoria") or "").strip()
         previous = indexed.get(key)
         if previous and previous.casefold() != promotoria.casefold():
@@ -119,7 +127,7 @@ def promotoria_by_agent_key() -> dict[str, str]:
 
 
 def resolve_agent_contact(agent_key: object) -> dict[str, str]:
-    normalized_key = normalize_agent_key(agent_key)
+    normalized_key = normalize_agent_match_key(agent_key)
     if not normalized_key:
         raise AgentContactResolutionError("La póliza no contiene una clave de agente")
 
@@ -128,8 +136,8 @@ def resolve_agent_contact(agent_key: object) -> dict[str, str]:
         for agent in load_agent_directory()
         if normalized_key
         in {
-            normalize_agent_key(agent.get("definitive_key")),
-            normalize_agent_key(agent.get("start_key")),
+            normalize_agent_match_key(agent.get("definitive_key")),
+            normalize_agent_match_key(agent.get("start_key")),
         }
     ]
     if not matches:

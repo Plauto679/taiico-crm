@@ -36,7 +36,7 @@ from services.automatic_mails import automation_config
 from services.mail_configuration import smtp_settings_for_email_address, smtp_ssl_context
 from services.metlife_agent_directory import (
     AgentContactResolutionError,
-    normalize_agent_key,
+    normalize_agent_match_key,
     promotoria_by_agent_key,
     resolve_agent_contact,
 )
@@ -144,7 +144,7 @@ def metlife_policy_promotoria(policy: Policy, renewal_type: str) -> str:
     agents = metlife_vida_agents() if renewal_type.upper() == "VIDA" else metlife_gmm_agents()
     agent = agents.get((policy_number, deadline), agents.get((policy_number, ""), {}))
     agent_code = str(agent.get("AGENTE") or "")
-    return promotoria_by_agent_key().get(normalize_agent_key(agent_code), "")
+    return promotoria_by_agent_key().get(normalize_agent_match_key(agent_code), "")
 
 
 @lru_cache(maxsize=4)
@@ -1629,7 +1629,7 @@ async def get_upcoming_renewals(
                         "CONDUCTO_COBRO": "Conducto de Cobro",
                         "AGENTE": agent_code,
                         "NOMBRE": agent.get("NOMBRE", ""),
-                        "PROMOTORIA": promoterias.get(normalize_agent_key(agent_code), ""),
+                        "PROMOTORIA": promoterias.get(normalize_agent_match_key(agent_code), ""),
                         "PRIMA_ANUAL": float(pol.premium_amount) if pol.premium_amount else 0.0,
                         "PRIMA_MODAL": float(pol.premium_amount / 12) if pol.premium_amount else 0.0,
                         "PAGADO_HASTA": format_date(pol.effective_end_date),
@@ -1661,7 +1661,7 @@ async def get_upcoming_renewals(
                         "COASEGURO": 0.0,
                         "AGENTE": agent_code,
                         "NOMBRE": agent.get("NOMBRE", ""),
-                        "PROMOTORIA": promoterias.get(normalize_agent_key(agent_code), ""),
+                        "PROMOTORIA": promoterias.get(normalize_agent_match_key(agent_code), ""),
                         "ESTATUS_DE_RENOVACION": ren.insurer_response,
                         "EXPEDIENTE": pol.document_link,
                         "Email": pol.client.email if pol.client else None

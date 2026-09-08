@@ -631,7 +631,7 @@ def load_birthday_directory() -> dict:
     signature = _source_signature()
     signature_key = hashlib.sha256(repr(signature).encode("utf-8")).hexdigest()[:16]
     return data_cache.get_or_load(
-        f"cumpleanos:clientes:master-v2:{signature_key}",
+        f"cumpleanos:clientes:master-v3:{signature_key}",
         _load_directory_uncached,
         ttl_seconds=CACHE_SECONDS,
     ).value
@@ -663,7 +663,7 @@ def birthday_clients(
             1 for client in clients if client["days_until_birthday"] <= 30
         )
         scoped["summary"]["clients_with_active_policies"] = sum(
-            1 for client in clients if client["active_policy_count"] > 0
+            1 for client in clients if int(client.get("active_policy_count") or 0) > 0
         )
         return scoped
     except FileNotFoundError as exc:

@@ -5,13 +5,19 @@ import io
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from openpyxl import Workbook, load_workbook
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.agentes import AgentFields, build_agent_directory, mutate_agent_workbook
+from services.agentes import (
+    AgentFields,
+    _upload_workbook,
+    build_agent_directory,
+    mutate_agent_workbook,
+)
 
 
 HEADERS = [
@@ -63,6 +69,19 @@ def workbook_bytes() -> bytes:
 
 
 class AgentsDirectoryTests(unittest.TestCase):
+    def test_upload_supports_shared_drives(self):
+        drive = MagicMock()
+        with (
+            patch("google.auth.default", return_value=(MagicMock(), None)),
+            patch("googleapiclient.discovery.build", return_value=drive),
+        ):
+            _upload_workbook("shared-drive-file", b"workbook")
+
+        update = drive.files.return_value.update
+        self.assertEqual(update.call_args.kwargs["fileId"], "shared-drive-file")
+        self.assertTrue(update.call_args.kwargs["supportsAllDrives"])
+        update.return_value.execute.assert_called_once_with()
+
     def test_directory_preserves_keys_and_serializes_dates(self):
         result = build_agent_directory(workbook_bytes(), can_operate=True)
         self.assertTrue(result["can_operate"])

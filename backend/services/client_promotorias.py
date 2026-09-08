@@ -14,7 +14,7 @@ from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
 from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workbook
 from services.auth import AccessProfile, PROMOTORIAS
 from services.authorization import normalize_promotoria
-from services.metlife_agent_directory import normalize_agent_key
+from services.metlife_agent_directory import normalize_agent_match_key
 
 
 def normalize_identity(value: object) -> str:
@@ -86,7 +86,7 @@ def _agent_key_promotorias(agents: list[dict]) -> dict[str, str]:
     for agent in agents:
         promotoria = normalize_promotoria(agent.get("promotoria"))
         for field in ("clave_definitiva", "clave_arranque"):
-            key = normalize_agent_key(agent.get(field))
+            key = normalize_agent_match_key(agent.get(field))
             if key and promotoria:
                 candidates[key].add(promotoria)
     return {key: next(iter(values)) for key, values in candidates.items() if len(values) == 1}
@@ -149,7 +149,7 @@ def collect_client_promotoria_evidence(db, *, agents: list[dict] | None = None) 
             continue
         for row in rows:
             payload = row.normalized_payload
-            key = normalize_agent_key(payload.get("agent_code"))
+            key = normalize_agent_match_key(payload.get("agent_code"))
             source_promotoria = normalize_promotoria(payload.get("promotoria"))
             promotoria = (
                 source_promotoria if source_promotoria in known_promotorias else by_key.get(key, "")

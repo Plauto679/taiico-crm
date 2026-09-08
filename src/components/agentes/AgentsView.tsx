@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { BadgeCheck, ExternalLink, KeyRound, Plus, Search, UserRoundCog, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { BadgeCheck, CheckCircle2, ExternalLink, KeyRound, Plus, Search, UserRoundCog, X } from 'lucide-react';
 import { DataTable } from '@/components/ui/DataTable';
 import {
   Agent,
@@ -35,6 +35,13 @@ export function AgentsView({ initialDirectory }: { initialDirectory: AgentDirect
   const [modalOpen, setModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+
+  useEffect(() => {
+    if (!successMessage) return;
+    const timeout = window.setTimeout(() => setSuccessMessage(''), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [successMessage]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLocaleLowerCase('es');
@@ -156,11 +163,13 @@ export function AgentsView({ initialDirectory }: { initialDirectory: AgentDirect
     setSaving(true);
     setError('');
     try {
+      const wasEditing = Boolean(editing);
       const updated = editing
         ? await updateAgent(editing, form, directory.version)
         : await createAgent(form, directory.version);
       setDirectory(updated);
       setModalOpen(false);
+      if (wasEditing) setSuccessMessage('El agente ha sido actualizado con éxito');
     } catch (reason) {
       setError(reason instanceof Error
         ? reason.message.replace('API Error: ', '')
@@ -171,6 +180,11 @@ export function AgentsView({ initialDirectory }: { initialDirectory: AgentDirect
   }
 
   return <div className="flex h-full min-h-0 flex-col gap-5 overflow-y-auto p-4 sm:p-8">
+    {successMessage && <div role="status" aria-live="polite" className="fixed right-4 top-4 z-[100] flex max-w-[calc(100vw-2rem)] items-center gap-3 rounded-xl border border-emerald-200 bg-white px-5 py-4 font-semibold text-emerald-800 shadow-2xl sm:right-6 sm:top-6">
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-100"><CheckCircle2 className="h-5 w-5" /></span>
+      <span>{successMessage}</span>
+      <button type="button" aria-label="Cerrar confirmación" onClick={() => setSuccessMessage('')} className="ml-2 rounded-full p-1 text-emerald-700 hover:bg-emerald-50"><X className="h-4 w-4" /></button>
+    </div>}
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div>
         <h1 className="text-3xl font-bold text-white">Agentes</h1>

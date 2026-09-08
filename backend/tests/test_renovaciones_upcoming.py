@@ -72,7 +72,11 @@ class UpcomingRenewalsTests(unittest.TestCase):
             patch.object(
                 renovaciones,
                 "run_in_threadpool",
-                new=AsyncMock(side_effect=[{}, {}, {}]),
+                new=AsyncMock(side_effect=[
+                    {("GMM-1", "2026-10-02"): {"AGENTE": "00008589", "NOMBRE": "Agente"}},
+                    {("VIDA-1", "2026-10-01"): {"AGENTE": "00008589", "NOMBRE": "Agente"}},
+                    {"8589": "TAIICO"},
+                ]),
             ),
         ):
             result = asyncio.run(
@@ -85,6 +89,7 @@ class UpcomingRenewalsTests(unittest.TestCase):
             )
 
         self.assertEqual([row["RFC"] for row in result], ["RFC010101AAA", "RFC010101AAA"])
+        self.assertEqual([row["PROMOTORIA"] for row in result], ["TAIICO", "TAIICO"])
         self.assertEqual(query.filters[0].right.value, date(2026, 9, 1))
         self.assertEqual(query.filters[1].right.value, date(2026, 11, 1))
         db.close.assert_called_once()

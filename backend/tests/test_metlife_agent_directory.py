@@ -31,7 +31,31 @@ class MetlifeAgentDirectoryTests(unittest.TestCase):
             indexed = metlife_agent_directory.promotoria_by_agent_key()
 
         self.assertEqual(indexed["73640"], "TAIICO")
-        self.assertEqual(indexed["0016200"], "SOCIOS")
+        self.assertEqual(indexed["16200"], "SOCIOS")
+
+    def test_numeric_keys_match_with_or_without_carrier_padding(self):
+        payload = workbook_bytes(
+            [
+                {
+                    "Promotoria": "TAIICO",
+                    "CLAVE_DEFINITIVA": "8589",
+                    "CLAVE_ARRANQUE": "",
+                    "Correo_Personal": "agente@example.com",
+                }
+            ]
+        )
+        with patch.object(metlife_agent_directory, "download_drive_file_bytes", return_value=payload):
+            indexed = metlife_agent_directory.promotoria_by_agent_key()
+            contact = metlife_agent_directory.resolve_agent_contact("000008589")
+
+        self.assertEqual(indexed["8589"], "TAIICO")
+        self.assertEqual(contact["email"], "agente@example.com")
+
+    def test_alphanumeric_keys_are_not_stripped(self):
+        self.assertEqual(
+            metlife_agent_directory.normalize_agent_match_key(" 00AB-19 "),
+            "00AB-19",
+        )
 
     def test_does_not_guess_when_key_belongs_to_multiple_promoterias(self):
         payload = workbook_bytes(
