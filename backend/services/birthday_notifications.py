@@ -142,7 +142,7 @@ def birthday_email_html(notification: dict) -> str:
         "<!doctype html><html><body style=\"margin:0;background:#f1f5f9;font-family:Arial,sans-serif;color:#1e293b\">"
         "<div style=\"max-width:720px;margin:24px auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 6px 24px rgba(15,23,42,.08)\">"
         "<div style=\"background:#0f4c75;padding:28px 32px;color:#ffffff\">"
-        "<div style=\"font-size:13px;letter-spacing:1.5px;text-transform:uppercase;opacity:.85\">TAIICO · Cumpleaños</div>"
+        "<div style=\"font-size:13px;letter-spacing:1.5px;text-transform:uppercase;opacity:.85\">TAIICO · Cumpleaños de clientes</div>"
         f"<h1 style=\"margin:8px 0 0;font-size:26px\">{count} oportunidad{'es' if count != 1 else ''} para estar cerca</h1>"
         "</div>"
         "<div style=\"padding:28px 32px\">"

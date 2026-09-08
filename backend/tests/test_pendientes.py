@@ -1070,6 +1070,20 @@ class PendingWorkbookTests(unittest.TestCase):
                     },
                     "latest_update": {},
                 },
+                {
+                    "source_row": 43,
+                    "summary": {
+                        "ASEGURADO": "Siniestro suspendido",
+                        "Estatus": "Suspendido",
+                        "Trámite": "Complemento",
+                        "Dias desde registro del siniestro": "4",
+                        "DIAS CUMPLIDOS EN LA ASEGURADORA": "",
+                    },
+                    "latest_update": {
+                        "date": "22-jul-26",
+                        "update": "En espera de documentos",
+                    },
+                },
             ],
         }
 
@@ -1081,12 +1095,24 @@ class PendingWorkbookTests(unittest.TestCase):
         self.assertEqual(emision_inside["counts"], {"verde": 0, "amarillo": 0, "rojo": 1})
         self.assertEqual(siniestro_before["counts"], {"verde": 0, "amarillo": 1, "rojo": 0})
         self.assertEqual(siniestro_inside["counts"], {"verde": 1, "amarillo": 0, "rojo": 0})
+        self.assertEqual(len(report["suspended_claims"]), 1)
+        self.assertEqual(report["suspended_claims"][0]["source_row"], 43)
+        self.assertEqual(report["suspended_claims"][0]["days"], 4)
         report_text = pending_report_text(report)
         self.assertNotIn("Emisión concluida", report_text)
         self.assertNotIn("Siniestro concluido", report_text)
         self.assertNotIn("Siniestro pagado", report_text)
         self.assertNotIn("Siniestro rechazado", report_text)
+        self.assertIn("Siniestros Suspendidos", report_text)
+        self.assertIn("Siniestro suspendido | Suspendido | Complemento | 4 días", report_text)
         self.assertFalse(any(item["source_row"] in {40, 41, 42, 60} for item in report["inconsistencies"]))
+
+        report_html = pending_report_html(report)
+        suspended_section = report_html.split("<h2>Siniestros Suspendidos</h2>", 1)[1]
+        traffic_light_sections = report_html.split("<h2>Siniestros Suspendidos</h2>", 1)[0]
+        self.assertNotIn("Siniestro suspendido", traffic_light_sections)
+        self.assertIn("Siniestro suspendido", suspended_section)
+        self.assertIn("En espera de documentos", suspended_section)
 
     def test_report_html_contains_summary_and_escapes_record_values(self):
         report = build_pending_report(
@@ -1096,6 +1122,7 @@ class PendingWorkbookTests(unittest.TestCase):
                     "summary": {
                         "Asegurado": "Cliente <Uno>",
                         "RFC": "RFC1",
+                        "Estatus actual": "Pendiente Taiico",
                         "Solicitud de": "Rehabilitación GMM",
                         "Días Transcurridos": "3",
                         "Dias en la aseguradora": "",
@@ -1110,7 +1137,40 @@ class PendingWorkbookTests(unittest.TestCase):
         self.assertIn("Emisión y Servicios", html)
         self.assertIn("Verde (0-5)", html)
         self.assertIn("Cliente &lt;Uno&gt;", html)
+        self.assertIn("Estatus Actual", html)
+        self.assertIn("<th>Contratante</th>", html)
+        self.assertNotIn("<th>Asegurado</th>", html)
+        self.assertIn("Pendiente Taiico", html)
+        self.assertNotIn("RFC1", html)
         self.assertNotIn("Cliente <Uno>", html)
+
+    def test_report_uses_siniestros_status_instead_of_rfc(self):
+        report = build_pending_report(
+            {"rows": []},
+            {
+                "rows": [{
+                    "source_row": 2,
+                    "summary": {
+                        "ASEGURADO": "Cliente Siniestro",
+                        "RFC": "RFC-SINIESTRO",
+                        "Estatus": "En Proceso",
+                        "Trámite": "Inicial",
+                        "Dias desde registro del siniestro": "3",
+                        "DIAS CUMPLIDOS EN LA ASEGURADORA": "",
+                    },
+                    "latest_update": {},
+                }],
+            },
+            date(2026, 7, 23),
+        )
+
+        html = pending_report_html(report)
+        text = pending_report_text(report)
+        self.assertIn("<th>Estatus</th>", html)
+        self.assertIn("En Proceso", html)
+        self.assertIn("En Proceso", text)
+        self.assertNotIn("RFC-SINIESTRO", html)
+        self.assertNotIn("RFC-SINIESTRO", text)
 
     def test_future_reminder_includes_next_15_days_regardless_of_status(self):
         emision = {

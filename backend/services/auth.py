@@ -95,7 +95,7 @@ MODULE_LABELS = {
     "inicio": "Inicio",
     "cobranza": "Cobranza",
     "renovaciones": "Renovaciones",
-    "cumpleanos": "Cumpleaños",
+    "cumpleanos": "Cumpleaños de clientes",
     "cumpleanos_agentes": "Cumpleaños de agentes",
     "agentes": "Agentes",
     "pendientes": "Pendientes",

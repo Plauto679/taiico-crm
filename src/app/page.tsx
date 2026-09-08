@@ -53,7 +53,7 @@ export default async function Home() {
                 <CakeSlice className="h-8 w-8" />
               </div>
               <div>
-                <h2 className="text-2xl font-bold text-gray-900">Cumpleaños</h2>
+                <h2 className="text-2xl font-bold text-gray-900">Cumpleaños de clientes</h2>
                 <p className="text-gray-500 mt-2">Clientes, pólizas y agentes</p>
               </div>
             </div>

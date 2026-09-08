@@ -111,7 +111,7 @@ export function CumpleanosView({ directory }: { directory: BirthdayDirectory }) 
             { wch: 22 },
         ];
         const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, 'Cumpleaños');
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Cumpleaños de clientes');
         XLSX.writeFile(workbook, `cumpleanos-clientes-${directory.generated_on}.xlsx`);
     };
 

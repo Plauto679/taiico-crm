@@ -459,12 +459,31 @@ def _reportable_rows(rows: list[dict], *, excluded_statuses: tuple[str, ...]) ->
     return reportable
 
 
+def _suspended_claim_details(rows: list[dict]) -> list[dict]:
+    details = []
+    suspended_status = _normalized_header("Suspendido")
+    for row in rows:
+        summary = row.get("summary", {})
+        if _normalized_header(_summary_value(summary, "Estatus")) != suspended_status:
+            continue
+        days = _day_number(
+            _summary_value(summary, "DIAS CUMPLIDOS EN LA ASEGURADORA")
+        )
+        if days is None:
+            days = _day_number(
+                _summary_value(summary, "Dias desde registro del siniestro")
+            )
+        details.append({**row, "days": days})
+    return details
+
+
 def build_pending_report(
     emision_servicios: dict,
     siniestros: dict,
     generated_on: date | None = None,
 ) -> dict:
     report_date = generated_on or datetime.now(ZoneInfo("America/Mexico_City")).date()
+    suspended_claims = _suspended_claim_details(siniestros["rows"])
     report_emision = {
         **emision_servicios,
         "rows": _reportable_rows(emision_servicios["rows"], excluded_statuses=("Concluido",)),
@@ -473,7 +492,7 @@ def build_pending_report(
         **siniestros,
         "rows": _reportable_rows(
             siniestros["rows"],
-            excluded_statuses=("Concluido", "Pagado", "Rechazado"),
+            excluded_statuses=("Concluido", "Pagado", "Rechazado", "Suspendido"),
         ),
     }
     return {
@@ -518,6 +537,7 @@ def build_pending_report(
                 ],
             },
         ],
+        "suspended_claims": suspended_claims,
         "inconsistencies": [
             *_inconsistency_rows(report_emision, "Emisión y Servicios"),
             *_inconsistency_rows(report_siniestros, "Siniestros"),
@@ -532,13 +552,17 @@ def _report_identity(detail: dict, section_key: str) -> tuple[str, str, str]:
         or _summary_value(summary, "Asegurado")
         or _summary_value(summary, "ASEGURADO")
     )
-    rfc = _summary_value(summary, "RFC")
+    status = (
+        _summary_value(summary, "Estatus actual")
+        if section_key == "emision-servicios"
+        else _summary_value(summary, "Estatus")
+    )
     request = (
         _summary_value(summary, "Solicitud de")
         if section_key == "emision-servicios"
         else _summary_value(summary, "Trámite")
     )
-    return insured or "—", rfc or "—", request or "—"
+    return insured or "—", status or "—", request or "—"
 
 
 def pending_report_text(report: dict) -> str:
@@ -558,11 +582,28 @@ def pending_report_text(report: dict) -> str:
             )
             for color in REPORT_COLORS:
                 for detail in metric["details"][color]:
-                    insured, rfc, request = _report_identity(detail, section["key"])
+                    insured, status, request = _report_identity(detail, section["key"])
                     lines.append(
                         f"- {REPORT_COLOR_LABELS[color]} | {detail['days']} días | "
-                        f"{insured} | {rfc} | {request}"
+                        f"{insured} | {status} | {request}"
                     )
+    lines.extend(["", "Siniestros Suspendidos", "======================="])
+    suspended_claims = report.get("suspended_claims", [])
+    if not suspended_claims:
+        lines.append("Sin siniestros suspendidos.")
+    for detail in suspended_claims:
+        insured, status, request = _report_identity(detail, "siniestros")
+        days = detail.get("days")
+        latest = detail.get("latest_update", {})
+        latest_text = (
+            f"({clean_cell(latest.get('date'))}) {clean_cell(latest.get('update'))}"
+            if clean_cell(latest.get("update"))
+            else "—"
+        )
+        lines.append(
+            f"- {insured} | {status} | {request} | "
+            f"{days if days is not None else '—'} días | {latest_text}"
+        )
     return "\n".join(lines)
 
 
@@ -589,7 +630,7 @@ def pending_report_html(report: dict) -> str:
             for color in REPORT_COLORS:
                 rows = []
                 for detail in metric["details"][color]:
-                    insured, rfc, request = _report_identity(detail, section["key"])
+                    insured, status, request = _report_identity(detail, section["key"])
                     latest = detail.get("latest_update", {})
                     latest_text = (
                         f"({clean_cell(latest.get('date'))}) {clean_cell(latest.get('update'))}"
@@ -598,18 +639,23 @@ def pending_report_html(report: dict) -> str:
                     )
                     rows.append(
                         "<tr>"
-                        f"<td>{escape(insured)}</td><td>{escape(rfc)}</td>"
+                        f"<td>{escape(insured)}</td><td>{escape(status)}</td>"
                         f"<td>{escape(request)}</td><td>{detail['days']}</td>"
                         f"<td>{escape(latest_text)}</td>"
                         "</tr>"
                     )
                 if rows:
                     foreground, background = color_styles[color]
+                    status_label = (
+                        "Estatus Actual"
+                        if section["key"] == "emision-servicios"
+                        else "Estatus"
+                    )
                     detail_groups.append(
                         f'<h4 style="margin:18px 0 8px;color:{foreground}">'
                         f'{REPORT_COLOR_LABELS[color]} ({len(rows)})</h4>'
                         '<table style="width:100%;border-collapse:collapse;font-size:13px">'
-                        "<thead><tr><th>Asegurado</th><th>RFC</th><th>Solicitud/Trámite</th>"
+                        f"<thead><tr><th>Contratante</th><th>{status_label}</th><th>Solicitud/Trámite</th>"
                         "<th>Días</th><th>Última actualización</th></tr></thead>"
                         f"<tbody>{''.join(rows)}</tbody></table>"
                     )
@@ -621,6 +667,32 @@ def pending_report_html(report: dict) -> str:
                 + "".join(detail_groups)
             )
         sections.append(f"<h2>{escape(section['title'])}</h2>{''.join(metrics)}")
+    suspended_rows = []
+    for detail in report.get("suspended_claims", []):
+        insured, status, request = _report_identity(detail, "siniestros")
+        latest = detail.get("latest_update", {})
+        latest_text = (
+            f"({clean_cell(latest.get('date'))}) {clean_cell(latest.get('update'))}"
+            if clean_cell(latest.get("update"))
+            else "—"
+        )
+        days = detail.get("days")
+        suspended_rows.append(
+            "<tr>"
+            f"<td>{escape(insured)}</td><td>{escape(status)}</td>"
+            f"<td>{escape(request)}</td><td>{days if days is not None else '—'}</td>"
+            f"<td>{escape(latest_text)}</td>"
+            "</tr>"
+        )
+    suspended_section = (
+        "<h2>Siniestros Suspendidos</h2>"
+        '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+        "<thead><tr><th>Contratante</th><th>Estatus</th><th>Solicitud/Trámite</th>"
+        "<th>Días</th><th>Última actualización</th></tr></thead>"
+        f"<tbody>{''.join(suspended_rows)}</tbody></table>"
+        if suspended_rows
+        else "<h2>Siniestros Suspendidos</h2><p>Sin siniestros suspendidos.</p>"
+    )
     return (
         "<!doctype html><html><body style=\"font-family:Arial,sans-serif;color:#0f172a\">"
         "<style>th,td{padding:8px;border:1px solid #cbd5e1;text-align:left;vertical-align:top}"
@@ -628,7 +700,7 @@ def pending_report_html(report: dict) -> str:
         "<h1>Informe de pendientes TAIICO</h1>"
         f"<p>Fecha: {escape(report['generated_on'])}</p>"
         "<p>El detalle incluye únicamente registros clasificables en cada indicador.</p>"
-        f"{''.join(sections)}</body></html>"
+        f"{''.join(sections)}{suspended_section}</body></html>"
     )
 
 

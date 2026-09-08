@@ -12,7 +12,7 @@ const NAV_ITEMS = [
     { name: 'Inicio', href: '/', icon: Home, module: 'inicio' },
     { name: 'Cobranza', href: '/cobranza', icon: DollarSign, module: 'cobranza' },
     { name: 'Renovaciones', href: '/renovaciones', icon: Calendar, module: 'renovaciones' },
-    { name: 'Cumpleaños', href: '/cumpleanos', icon: CakeSlice, module: 'cumpleanos' },
+    { name: 'Cumpleaños de clientes', href: '/cumpleanos', icon: CakeSlice, module: 'cumpleanos' },
     { name: 'Cumpleaños de agentes', href: '/cumpleanos-agentes', icon: PartyPopper, module: 'cumpleanos_agentes' },
     { name: 'Agentes', href: '/agentes', icon: UserRoundCog, module: 'agentes' },
     { name: 'Pendientes', href: '/pendientes', icon: ClipboardList, module: 'pendientes' },
