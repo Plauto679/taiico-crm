@@ -18,6 +18,7 @@ from services.pendientes import DEFAULT_AGENTS_METLIFE_FILE_ID, _download_workbo
 from services.data_cache import data_cache
 from services.auth import AccessProfile
 from services.authorization import normalize_promotoria, require_module_access
+from services.agent_scope import normalize_rfc, profile_allows_insurer, resolve_agent_scope
 
 
 router = APIRouter(prefix="/cumpleanos-agentes", tags=["cumpleanos-agentes"])
@@ -157,11 +158,24 @@ def birthday_agents(
 ):
     try:
         result = load_agent_birthday_directory()
-        allowed = set(profile.promotorias)
-        agents = result["agents"] if profile.is_central_admin else [
-            agent for agent in result["agents"]
-            if any(normalize_promotoria(value) in allowed for value in agent.get("promotorias", []))
-        ]
+        if profile.is_agent:
+            scope = resolve_agent_scope(profile)
+            profile_rfc = scope.rfc if scope and scope.keys else ""
+            if not profile_allows_insurer(profile, "METLIFE"):
+                profile_rfc = ""
+            agents = [
+                agent for agent in result["agents"]
+                if profile_rfc and normalize_rfc(agent.get("rfc")) == profile_rfc
+            ]
+        else:
+            allowed = set(profile.promotorias)
+            agents = result["agents"] if profile.is_central_admin else [
+                agent for agent in result["agents"]
+                if any(
+                    normalize_promotoria(value) in allowed
+                    for value in agent.get("promotorias", [])
+                )
+            ]
         scoped = {**result, "agents": agents, "summary": {**result["summary"]}}
         scoped["summary"]["total_agents"] = len(agents)
         scoped["summary"]["birthdays_this_month"] = sum(

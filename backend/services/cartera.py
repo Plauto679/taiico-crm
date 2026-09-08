@@ -17,7 +17,8 @@ from config import AARCO_PATHS, CARTERA_SOURCE_FILE_IDS, METLIFE_PATHS, SURA_PAT
 from database import Client, Insurer, Policy, Product, SessionLocal, User
 from drive.client import download_drive_file_bytes
 from services.auth import AccessProfile
-from services.authorization import require_module_access
+from services.authorization import current_access_profile, require_module_access
+from services.agent_scope import profile_allows_insurer, profile_allows_policy
 from services.data_cache import data_cache
 
 
@@ -510,9 +511,12 @@ def sync_cartera_sql_to_canonical(insurer: str, *, db=None) -> dict:
 def get_cartera_data(
     insurer: str = Query(..., description="Insurer name"),
     type: str = Query("ALL", description="Policy type: ALL, VIDA, GMM"),
+    profile: AccessProfile = Depends(current_access_profile),
 ):
     try:
         insurer_id = _normalized_insurer(insurer)
+        if not profile_allows_insurer(profile, insurer_id):
+            return []
         policy_type = type.strip().upper()
         if policy_type not in {"ALL", "VIDA", "GMM"}:
             raise HTTPException(status_code=422, detail="Tipo de póliza no válido")
@@ -535,11 +539,12 @@ def get_cartera_data(
             finally:
                 db.close()
 
-        return data_cache.get_or_load(
+        rows = data_cache.get_or_load(
             _data_cache_key(insurer_id, policy_type),
             load,
             ttl_seconds=_DATA_CACHE_TTL_SECONDS,
         ).value
+        return [row for row in rows if profile_allows_policy(profile, row.get("policy_number"))]
     except HTTPException:
         raise
     except Exception as exc:
@@ -556,6 +561,11 @@ def create_cartera_record(
     try:
         policy_number = payload.policy_number.strip()
         insurer_id = _normalized_insurer(payload.insurer)
+        if profile.is_agent and (
+            not profile_allows_insurer(profile, insurer_id)
+            or not profile_allows_policy(profile, policy_number)
+        ):
+            raise HTTPException(status_code=403, detail="Solo puedes operar pólizas vinculadas a tus claves de agente")
         source_is_combined = _source_key_for_insurer(insurer_id) == "aarco_axa"
         if source_is_combined:
             insurer_id = "aarco"
@@ -650,7 +660,7 @@ def create_cartera_record(
 def update_cartera_record(
     record_id: str,
     payload: CarteraRecordPayload,
-    _profile: AccessProfile = Depends(require_module_access("cartera", operation=True)),
+    profile: AccessProfile = Depends(require_module_access("cartera", operation=True)),
 ):
     db = SessionLocal()
     canonical_snapshot = None
@@ -658,11 +668,22 @@ def update_cartera_record(
         policy = db.query(Policy).filter(Policy.id == record_id).first()
         if not policy:
             raise HTTPException(status_code=404, detail="El registro ya no existe")
+        if profile.is_agent and not profile_allows_policy(profile, policy.policy_number):
+            raise HTTPException(status_code=403, detail="El registro no pertenece al agente vinculado a tu usuario")
         policy_number = payload.policy_number.strip()
+        requested_insurer_id = _normalized_insurer(payload.insurer)
+        if profile.is_agent and (
+            policy_number != policy.policy_number
+            or not profile_allows_insurer(profile, requested_insurer_id)
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No puedes reasignar la póliza ni su aseguradora",
+            )
         duplicate = db.query(Policy).filter(Policy.policy_number == policy_number, Policy.id != record_id).first()
         if duplicate:
             raise HTTPException(status_code=409, detail="Ya existe una póliza con ese número")
-        insurer_id = _normalized_insurer(payload.insurer)
+        insurer_id = requested_insurer_id
         if _source_key_for_insurer(insurer_id) == "aarco_axa":
             insurer_id = "aarco"
         original_policy_number = policy.policy_number
@@ -699,13 +720,21 @@ def update_cartera_record(
 
 
 @router.get("/search")
-def search_cartera(query: str = Query(..., min_length=1)):
+def search_cartera(
+    query: str = Query(..., min_length=1),
+    profile: AccessProfile = Depends(current_access_profile),
+):
     db = SessionLocal()
     try:
         term = f"%{query}%"
         policies = db.query(Policy).join(Client).filter(
             (Policy.policy_number.like(term)) | (Client.full_name.like(term))
-        ).limit(50).all()
+        ).limit(200).all()
+        policies = [
+            policy for policy in policies
+            if profile_allows_insurer(profile, policy.insurer_id)
+            and profile_allows_policy(profile, policy.policy_number)
+        ][:50]
         return [{
             "poliza": policy.policy_number,
             "contratante": policy.client.full_name if policy.client else "",

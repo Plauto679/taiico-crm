@@ -28,6 +28,7 @@ from services.metlife_agent_directory import (
     normalize_agent_key,
 )
 from services.pendientes import _download_workbook
+from services.agent_scope import normalize_rfc, profile_allows_insurer, resolve_agent_scope
 
 
 router = APIRouter(prefix="/agentes", tags=["agentes"])
@@ -213,11 +214,22 @@ def build_agent_directory(workbook_bytes: bytes, *, can_operate: bool = False) -
 
 def scope_agent_directory(result: dict, profile: AccessProfile) -> dict:
     scoped = copy.deepcopy(result)
-    scoped["agents"] = [
-        row
-        for row in scoped["agents"]
-        if profile_allows_promotoria(profile, row.get("promotoria"))
-    ]
+    if profile.is_agent:
+        scope = resolve_agent_scope(profile)
+        scoped["agents"] = [
+            row for row in scoped["agents"]
+            if scope
+            and scope.rfc
+            and scope.keys
+            and profile_allows_insurer(profile, "METLIFE")
+            and normalize_rfc(row.get("rfc")) == scope.rfc
+        ]
+    else:
+        scoped["agents"] = [
+            row
+            for row in scoped["agents"]
+            if profile_allows_promotoria(profile, row.get("promotoria"))
+        ]
     scoped["catalogs"] = {
         "promotorias": sorted({row["promotoria"] for row in scoped["agents"] if row["promotoria"]}),
         "clasificaciones": sorted({row["clasificacion_comercial"] for row in scoped["agents"] if row["clasificacion_comercial"]}),
@@ -338,6 +350,8 @@ def _save_mutation(
     row_number: int | None = None,
     fingerprint: str | None = None,
 ) -> dict:
+    if profile.is_agent and row_number is None:
+        raise HTTPException(status_code=403, detail="Un agente no puede crear otros agentes")
     require_promotoria_access(profile, payload.promotoria)
     with _write_lock:
         current = _download_workbook(_file_id())
@@ -355,6 +369,26 @@ def _save_mutation(
                     profile,
                     _agent_from_row(context, row_number).get("promotoria"),
                 )
+                if profile.is_agent:
+                    current_agent = _agent_from_row(context, row_number)
+                    scope = resolve_agent_scope(profile)
+                    if not scope or normalize_rfc(current_agent.get("rfc")) != scope.rfc:
+                        raise HTTPException(status_code=403, detail="Solo puedes actualizar tu propio registro de agente")
+                    if normalize_rfc(payload.rfc) != scope.rfc:
+                        raise HTTPException(status_code=403, detail="No puedes cambiar el RFC vinculado a tu usuario")
+                    identity_changed = (
+                        normalize_agent_key(payload.clave_arranque)
+                        != normalize_agent_key(current_agent.get("clave_arranque"))
+                        or normalize_agent_key(payload.clave_definitiva)
+                        != normalize_agent_key(current_agent.get("clave_definitiva"))
+                        or payload.promotoria.strip().upper()
+                        != str(current_agent.get("promotoria") or "").strip().upper()
+                    )
+                    if identity_changed:
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Las claves y la promotoría del agente sólo pueden modificarlas los administradores",
+                        )
             updated = mutate_agent_workbook(
                 current,
                 payload,

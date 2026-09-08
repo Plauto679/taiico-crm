@@ -23,7 +23,7 @@ from database import (
     User,
 )
 from services.auth import AccessProfile
-from services.authorization import current_access_profile
+from services.authorization import current_access_profile, require_module_access
 from services.client_promotorias import (
     assign_profile_promotorias,
     scope_client_query,
@@ -272,7 +272,7 @@ def get_clients(profile: AccessProfile = Depends(current_access_profile)):
 def add_client(
     client: ClientModel,
     background_tasks: BackgroundTasks,
-    profile: AccessProfile = Depends(current_access_profile),
+    profile: AccessProfile = Depends(require_module_access("clientes", operation=True)),
 ):
     db = SessionLocal()
     try:
@@ -310,7 +310,7 @@ def add_client(
 def update_client(
     req: UpdateClientRequest,
     background_tasks: BackgroundTasks,
-    profile: AccessProfile = Depends(current_access_profile),
+    profile: AccessProfile = Depends(require_module_access("clientes", operation=True)),
 ):
     db = SessionLocal()
     try:
@@ -364,7 +364,7 @@ def update_client(
 def delete_client(
     req: DeleteClientRequest,
     background_tasks: BackgroundTasks,
-    profile: AccessProfile = Depends(current_access_profile),
+    profile: AccessProfile = Depends(require_module_access("clientes", operation=True)),
 ):
     db = SessionLocal()
     try:
@@ -515,7 +515,7 @@ def client_identity_candidates(
 def merge_clients(
     req: MergeClientsRequest,
     background_tasks: BackgroundTasks,
-    profile: AccessProfile = Depends(current_access_profile),
+    profile: AccessProfile = Depends(require_module_access("clientes", operation=True)),
 ):
     duplicate_ids = list(dict.fromkeys(req.duplicate_ids))
     if not duplicate_ids:
@@ -596,7 +596,7 @@ def merge_clients(
 @router.post("/sync-expedientes")
 def sync_client_folder_links(
     background_tasks: BackgroundTasks,
-    profile: AccessProfile = Depends(current_access_profile),
+    profile: AccessProfile = Depends(require_module_access("clientes", operation=True)),
 ):
     db = SessionLocal()
     try:

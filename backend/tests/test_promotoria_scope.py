@@ -31,6 +31,17 @@ def profile(*promotorias: str) -> AccessProfile:
     )
 
 
+def agent_profile() -> AccessProfile:
+    return AccessProfile(
+        username="agent@example.com",
+        role="agente",
+        promotorias=("TAIICO",),
+        rfc="BEOA8712265F1",
+        aseguradoras=("METLIFE",),
+        module_permissions={"cumpleanos_agentes": "lectura"},
+    )
+
+
 class PromotoriaScopeTests(unittest.TestCase):
     def test_scoped_admin_only_sees_assigned_renewals(self):
         rows = [
@@ -85,6 +96,28 @@ class PromotoriaScopeTests(unittest.TestCase):
             scoped = birthday_agents(profile("ABBONDANZA"))
         self.assertEqual(len(scoped["agents"]), 1)
         self.assertEqual(scoped["summary"]["total_agents"], 1)
+
+    def test_agent_only_sees_own_birthday_record(self):
+        result = {
+            "generated_on": "2026-09-01",
+            "agents": [
+                {"rfc": "BEOA8712265F1", "promotorias": ["TAIICO"], "birth_date": "1987-12-26", "days_until_birthday": 116},
+                {"rfc": "OTHER900101AAA", "promotorias": ["TAIICO"], "birth_date": "1990-01-01", "days_until_birthday": 122},
+            ],
+            "summary": {"total_agents": 2, "birthdays_this_month": 0, "birthdays_next_30_days": 0},
+        }
+        agent_directory = [{
+            "rfc": "BEOA8712265F1",
+            "name": "ANA VICTORIA BECERRA OCAMPO",
+            "promotoria": "TAIICO",
+            "start_key": "",
+            "definitive_key": "14883",
+        }]
+        with patch("services.cumpleanos_agentes.load_agent_birthday_directory", return_value=result), patch(
+            "services.agent_scope.load_agent_directory", return_value=agent_directory
+        ):
+            scoped = birthday_agents(agent_profile())
+        self.assertEqual([row["rfc"] for row in scoped["agents"]], ["BEOA8712265F1"])
 
 
 if __name__ == "__main__":

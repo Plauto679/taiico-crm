@@ -13,6 +13,14 @@ def get_access_config():
     return auth.access_modules_configuration()
 
 
+@router.get("/agents")
+def get_access_agents():
+    try:
+        return {"agents": auth.access_agent_options()}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"No se pudo leer la base de agentes: {exc}") from exc
+
+
 @router.get("/users")
 def get_access_users():
     try:

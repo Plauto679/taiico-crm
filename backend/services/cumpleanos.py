@@ -23,6 +23,12 @@ from services.data_cache import data_cache
 from services.auth import AccessProfile
 from services.authorization import profile_allows_promotoria, require_module_access
 from services.client_promotorias import normalize_identity
+from services.agent_scope import (
+    normalize_rfc as normalize_agent_rfc,
+    profile_allows_insurer,
+    resolve_agent_scope,
+)
+from services.metlife_agent_directory import normalize_agent_match_key
 
 
 router = APIRouter(prefix="/cumpleanos", tags=["cumpleanos"])
@@ -162,8 +168,13 @@ def parse_agent_lookup(workbook: bytes) -> dict[str, AgentRecord]:
 
     agents: dict[str, AgentRecord] = {}
     for _, row in table.iterrows():
-        key = normalize_code(row.get("CLAVE_DEFINITIVA"))
-        if not key:
+        keys = {
+            normalize_code(row.get("CLAVE_DEFINITIVA")),
+            normalize_code(row.get("CLAVE_ARRANQUE")),
+            normalize_agent_match_key(row.get("CLAVE_DEFINITIVA")),
+            normalize_agent_match_key(row.get("CLAVE_ARRANQUE")),
+        } - {""}
+        if not keys:
             continue
         name_parts = [
             clean_text(row.get("Nombres")),
@@ -173,12 +184,14 @@ def parse_agent_lookup(workbook: bytes) -> dict[str, AgentRecord]:
         name = " ".join(part for part in name_parts if part)
         if not name:
             name = clean_text(row.get("Nombre"))
-        agents[key] = AgentRecord(
+        record = AgentRecord(
             rfc=normalize_code(row.get("RFC")),
             name=name.title(),
             promotoria=normalize_code(row.get("Promotoria")),
             email=clean_text(row.get("Correo_Personal")).casefold(),
         )
+        for key in keys:
+            agents[key] = record
     return agents
 
 
@@ -315,7 +328,7 @@ def _policy_is_active(policy: dict, *, today: datetime.date) -> bool:
 def _choose_agent(records: Iterable[dict], agents: dict[str, AgentRecord]) -> AgentRecord | None:
     matches = [
         agents[code]
-        for code in (normalize_code(record.get("agent_code")) for record in records)
+        for code in (normalize_agent_match_key(record.get("agent_code")) for record in records)
         if code in agents
     ]
     if not matches:
@@ -370,12 +383,17 @@ def build_client_master_birthday_directory(
         policies = []
         matched_records = list(enrichment_by_rfc.get(rfc, ()))
         for source_policy in source.get("policies") or ():
+            policy_matches = list(enrichment_by_policy.get(clean_text(source_policy.get("policy_number")), ()))
+            if not policy_matches:
+                policy_matches = list(enrichment_by_rfc.get(rfc, ()))
+            policy_agent = _choose_agent(policy_matches, agents)
             policy = {
                 "branch": normalize_code(source_policy.get("branch")),
                 "policy_number": clean_text(source_policy.get("policy_number")),
                 "status": clean_text(source_policy.get("status")),
                 "effective_start_date": clean_text(source_policy.get("effective_start_date")),
                 "effective_end_date": clean_text(source_policy.get("effective_end_date")),
+                "agent_rfc": policy_agent.rfc if policy_agent else "",
             }
             policy["is_active"] = _policy_is_active(policy, today=today)
             if policy["policy_number"] and _policy_key(policy) not in {
@@ -652,6 +670,28 @@ def birthday_clients(
                 )
             )
         ]
+        if profile.is_agent:
+            scope = resolve_agent_scope(profile)
+            linked_rfc = scope.rfc if scope and scope.keys else ""
+            if not profile_allows_insurer(profile, "METLIFE"):
+                linked_rfc = ""
+            agent_clients = []
+            for client in clients:
+                policies = [
+                    policy for policy in client.get("policies", [])
+                    if normalize_agent_rfc(policy.get("agent_rfc")) == linked_rfc
+                ]
+                if not policies:
+                    continue
+                active_policies = [policy for policy in policies if policy.get("is_active")]
+                agent_clients.append({
+                    **client,
+                    "agent_rfc": linked_rfc,
+                    "policies": policies,
+                    "active_policies": active_policies,
+                    "active_policy_count": len(active_policies),
+                })
+            clients = agent_clients
         scoped = {**result, "clients": clients, "summary": {**result["summary"]}}
         scoped["summary"]["total_clients"] = len(clients)
         scoped["summary"]["birthdays_this_month"] = sum(

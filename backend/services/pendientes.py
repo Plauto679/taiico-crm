@@ -39,6 +39,8 @@ from services.client_folders import (
     normalize_rfc,
     valid_client_rfc,
 )
+from services.client_promotorias import scope_client_query
+from services.agent_scope import profile_allows_insurer, resolve_agent_scope
 from services.pending_document_requirements import (
     SINIESTROS_DOCUMENT_REQUIREMENTS,
     requirements_for,
@@ -876,7 +878,12 @@ def _filter_source_for_profile(result: dict, profile: AccessProfile) -> dict:
     if profile.is_central_admin:
         rows = result["rows"]
     elif profile.is_agent:
-        agent_rfc = profile.rfc
+        scope = resolve_agent_scope(profile)
+        agent_rfc = (
+            scope.rfc
+            if scope and scope.keys and profile_allows_insurer(profile, "METLIFE")
+            else ""
+        )
         rows = [
             row for row in result["rows"]
             if agent_rfc
@@ -918,6 +925,13 @@ def _filter_source_by_promotoria(result: dict, promotoria: str) -> dict:
 def _assigned_promotoria(requested: str, profile: AccessProfile) -> str:
     if not profile.can_operate("pendientes"):
         raise HTTPException(status_code=403, detail="Tu usuario sólo tiene acceso de consulta")
+    if profile.is_agent:
+        scope = resolve_agent_scope(profile)
+        if not scope or not scope.keys or not profile_allows_insurer(profile, "METLIFE"):
+            raise HTTPException(
+                status_code=403,
+                detail="Tu usuario no tiene un agente MetLife activo y vinculado",
+            )
     allowed = tuple(profile.promotorias)
     if not allowed:
         raise HTTPException(status_code=403, detail="Tu usuario no tiene promotorías asignadas")
@@ -2365,7 +2379,7 @@ def pending_client_directory(
     try:
         return [
             _master_client_payload(client)
-            for client in db.query(Client).order_by(Client.full_name).all()
+            for client in scope_client_query(db.query(Client), profile).order_by(Client.full_name).all()
         ]
     finally:
         db.close()

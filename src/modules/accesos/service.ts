@@ -9,6 +9,15 @@ export interface AccessModuleConfig {
     column: string;
 }
 
+export interface AccessAgentOption {
+    rfc: string;
+    name: string;
+    start_key: string;
+    definitive_key: string;
+    promotoria: string;
+    email: string;
+}
+
 export interface AccessUser {
     username: string;
     role: AccessRole;
@@ -36,6 +45,10 @@ export function getAccessConfig(): Promise<{
     permissions: { key: AccessPermission; label: string }[];
 }> {
     return fetchFromApi('/accesos/config');
+}
+
+export function getAccessAgentOptions(): Promise<{ agents: AccessAgentOption[] }> {
+    return fetchFromApi('/accesos/agents');
 }
 
 export function getAccessUsers(): Promise<{ users: AccessUser[] }> {

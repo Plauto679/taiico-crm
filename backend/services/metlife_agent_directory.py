@@ -90,6 +90,8 @@ def parse_agent_directory(workbook_bytes: bytes) -> list[dict[str, str]]:
                 "promotoria": promotoria,
                 "name": name,
                 "email": str(row.get("Correo_Personal") or "").strip(),
+                "rfc": re.sub(r"[\s-]+", "", str(row.get("RFC") or "")).upper(),
+                "status": str(row.get("Estatus_Met") or "").strip(),
                 "row_number": str(row_number),
                 "key_source": "CLAVE_DEFINITIVA" if definitive_key else "CLAVE_ARRANQUE",
             }

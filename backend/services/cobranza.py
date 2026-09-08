@@ -1,8 +1,11 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from database import SessionLocal, Payment, Policy, Client, PaymentEvidenceRecord
 from typing import Optional
 from datetime import datetime
 from services.cartera import prospector_commission_is_expired
+from services.auth import AccessProfile
+from services.authorization import current_access_profile
+from services.agent_scope import profile_allows_insurer, profile_policy_numbers
 
 router = APIRouter(prefix="/cobranza", tags=["cobranza"])
 
@@ -72,10 +75,16 @@ def get_payment_evidence_for_insurer(
     policy_number: Optional[str],
     reconciliation_status: Optional[str],
     limit: int,
+    profile: AccessProfile | None = None,
 ):
     db = SessionLocal()
     try:
         query = db.query(PaymentEvidenceRecord).filter(PaymentEvidenceRecord.insurer_id == insurer_id)
+        if profile and profile.is_agent:
+            allowed = profile_policy_numbers(profile) or frozenset()
+            if not profile_allows_insurer(profile, insurer_id) or not allowed:
+                return []
+            query = query.filter(PaymentEvidenceRecord.policy_number.in_(tuple(allowed)))
         query = apply_payment_evidence_filters(
             query,
             start_date=start_date,
@@ -96,10 +105,16 @@ def get_payment_evidence_summary_for_insurer(
     start_date: Optional[str],
     end_date: Optional[str],
     product_branch: Optional[str],
+    profile: AccessProfile | None = None,
 ):
     db = SessionLocal()
     try:
         query = db.query(PaymentEvidenceRecord).filter(PaymentEvidenceRecord.insurer_id == insurer_id)
+        if profile and profile.is_agent:
+            allowed = profile_policy_numbers(profile) or frozenset()
+            if not profile_allows_insurer(profile, insurer_id) or not allowed:
+                return []
+            query = query.filter(PaymentEvidenceRecord.policy_number.in_(tuple(allowed)))
         query = apply_payment_evidence_filters(
             query,
             start_date=start_date,
@@ -158,7 +173,8 @@ async def get_metlife_payment_evidence(
     product_branch: Optional[str] = Query(None, description="VIDA or GMM"),
     policy_number: Optional[str] = Query(None, description="Policy number"),
     reconciliation_status: Optional[str] = Query(None, description="matched, unmatched, ambiguous, failed"),
-    limit: int = Query(200, ge=1, le=1000)
+    limit: int = Query(200, ge=1, le=1000),
+    profile: AccessProfile = Depends(current_access_profile),
 ):
     return get_payment_evidence_for_insurer(
         "metlife",
@@ -168,6 +184,7 @@ async def get_metlife_payment_evidence(
         policy_number=policy_number,
         reconciliation_status=reconciliation_status,
         limit=limit,
+        profile=profile,
     )
 
 
@@ -176,12 +193,14 @@ async def get_metlife_payment_evidence_summary(
     start_date: Optional[str] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="End date YYYY-MM-DD"),
     product_branch: Optional[str] = Query(None, description="VIDA or GMM"),
+    profile: AccessProfile = Depends(current_access_profile),
 ):
     return get_payment_evidence_summary_for_insurer(
         "metlife",
         start_date=start_date,
         end_date=end_date,
         product_branch=product_branch,
+        profile=profile,
     )
 
 
@@ -192,7 +211,8 @@ async def get_sura_payment_evidence(
     product_branch: Optional[str] = Query(None, description="VIDA or DANOS"),
     policy_number: Optional[str] = Query(None, description="Policy number"),
     reconciliation_status: Optional[str] = Query(None, description="matched, unmatched, ambiguous, failed"),
-    limit: int = Query(200, ge=1, le=1000)
+    limit: int = Query(200, ge=1, le=1000),
+    profile: AccessProfile = Depends(current_access_profile),
 ):
     return get_payment_evidence_for_insurer(
         "sura",
@@ -202,6 +222,7 @@ async def get_sura_payment_evidence(
         policy_number=policy_number,
         reconciliation_status=reconciliation_status,
         limit=limit,
+        profile=profile,
     )
 
 
@@ -210,12 +231,14 @@ async def get_sura_payment_evidence_summary(
     start_date: Optional[str] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="End date YYYY-MM-DD"),
     product_branch: Optional[str] = Query(None, description="VIDA or DANOS"),
+    profile: AccessProfile = Depends(current_access_profile),
 ):
     return get_payment_evidence_summary_for_insurer(
         "sura",
         start_date=start_date,
         end_date=end_date,
         product_branch=product_branch,
+        profile=profile,
     )
 
 
@@ -223,7 +246,8 @@ async def get_sura_payment_evidence_summary(
 async def get_cobranza_vida(
     start_date: Optional[str] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="End date YYYY-MM-DD"),
-    insurer: str = Query("Metlife", description="Insurer name")
+    insurer: str = Query("Metlife", description="Insurer name"),
+    profile: AccessProfile = Depends(current_access_profile),
 ):
     db = SessionLocal()
     try:
@@ -231,6 +255,11 @@ async def get_cobranza_vida(
         
         # Build query joining Policy and Client
         query = db.query(Payment).join(Policy).join(Client)
+        if profile.is_agent:
+            allowed = profile_policy_numbers(profile) or frozenset()
+            if not profile_allows_insurer(profile, insurer) or not allowed:
+                return []
+            query = query.filter(Policy.policy_number.in_(tuple(allowed)))
         
         # Apply date filters
         if start_date:
@@ -331,13 +360,19 @@ async def get_cobranza_vida(
 async def get_cobranza_gmm(
     start_date: Optional[str] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="End date YYYY-MM-DD"),
-    insurer: str = Query("Metlife", description="Insurer name")
+    insurer: str = Query("Metlife", description="Insurer name"),
+    profile: AccessProfile = Depends(current_access_profile),
 ):
     db = SessionLocal()
     try:
         results = []
         
         query = db.query(Payment).join(Policy).join(Client)
+        if profile.is_agent:
+            allowed = profile_policy_numbers(profile) or frozenset()
+            if not profile_allows_insurer(profile, insurer) or not allowed:
+                return []
+            query = query.filter(Policy.policy_number.in_(tuple(allowed)))
         
         if start_date:
             try:

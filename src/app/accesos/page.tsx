@@ -1,12 +1,13 @@
 import { AccesosView } from '@/components/accesos/AccesosView';
-import { getAccessConfig, getAccessUsers } from '@/modules/accesos/service';
+import { getAccessAgentOptions, getAccessConfig, getAccessUsers } from '@/modules/accesos/service';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AccesosPage() {
-    const [config, usersResponse] = await Promise.all([
+    const [config, usersResponse, agentsResponse] = await Promise.all([
         getAccessConfig(),
         getAccessUsers(),
+        getAccessAgentOptions(),
     ]);
 
     return (
@@ -15,6 +16,7 @@ export default async function AccesosPage() {
                 initialUsers={usersResponse.users}
                 modules={config.modules}
                 promotorias={config.promotorias}
+                agents={agentsResponse.agents}
             />
         </div>
     );

@@ -15,6 +15,7 @@ from parsers.metlife_vida_renovaciones import parse_metlife_vida_renewal_workboo
 from services.auth import AccessProfile, PROMOTORIAS
 from services.authorization import normalize_promotoria
 from services.metlife_agent_directory import normalize_agent_match_key
+from services.agent_scope import profile_policy_numbers
 
 
 def normalize_identity(value: object) -> str:
@@ -38,6 +39,15 @@ def scope_client_query(query, profile: AccessProfile):
     query = query.options(selectinload(Client.promotorias))
     if profile.is_central_admin:
         return query
+    if profile.is_agent:
+        policy_numbers = profile_policy_numbers(profile)
+        if not policy_numbers:
+            return query.filter(false())
+        return (
+            query.join(Policy, Policy.client_id == Client.id)
+            .filter(Policy.policy_number.in_(tuple(policy_numbers)))
+            .distinct()
+        )
     allowed = tuple(normalize_promotoria(value) for value in profile.promotorias if normalize_promotoria(value))
     if not allowed:
         return query.filter(false())
@@ -51,6 +61,9 @@ def scope_client_query(query, profile: AccessProfile):
 def client_is_visible(client: Client, profile: AccessProfile) -> bool:
     if profile.is_central_admin:
         return True
+    if profile.is_agent:
+        policy_numbers = profile_policy_numbers(profile) or frozenset()
+        return any(policy.policy_number in policy_numbers for policy in client.policies)
     allowed = {normalize_promotoria(value) for value in profile.promotorias}
     return bool(allowed.intersection({normalize_promotoria(row.promotoria) for row in client.promotorias}))
 

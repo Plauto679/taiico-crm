@@ -75,6 +75,7 @@ MODULES = (
     "time_machine",
 )
 UNIVERSAL_READ_MODULES = {"inicio"}
+AGENT_OPERATION_MODULES = {"agentes", "cartera", "pendientes", "renovaciones"}
 MODULE_COLUMNS = {
     module: f"Permiso_{module.title()}"
     for module in MODULES
@@ -165,7 +166,9 @@ class AccessProfile:
         return self.permission_for(module) in {"lectura", "operacion"}
 
     def can_operate(self, module: str) -> bool:
-        return self.is_admin and self.permission_for(module) == "operacion"
+        return self.permission_for(module) == "operacion" and (
+            self.is_admin or module in AGENT_OPERATION_MODULES
+        )
 
 
 def _download_users_workbook(file_id: str) -> bytes:
@@ -269,6 +272,10 @@ def _default_module_permissions(role: str, promotorias: tuple[str, ...]) -> dict
     permissions["time_machine"] = "ninguno"
     for module in UNIVERSAL_READ_MODULES:
         permissions[module] = "lectura"
+    if role == "agente":
+        for module, permission in permissions.items():
+            if permission == "operacion" and module not in AGENT_OPERATION_MODULES:
+                permissions[module] = "lectura"
     return permissions
 
 
@@ -430,12 +437,26 @@ def _serialize_user_payload(payload: AccessUserPayload, *, existing_password: st
         promotorias=tuple(promotorias),
     )
     password = payload.password if payload.password is not None else existing_password
+    rfc = str(payload.rfc or "").strip().upper().replace(" ", "").replace("-", "")
+    if role == "agente":
+        from services.metlife_agent_directory import load_agent_directory
+
+        matches = [
+            agent for agent in load_agent_directory()
+            if str(agent.get("rfc") or "").strip().upper() == rfc
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                "Selecciona un agente único de la base de Agentes; el RFC no existe o está duplicado"
+            )
+        if not any(matches[0].get(field) for field in ("start_key", "definitive_key")):
+            raise ValueError("El agente seleccionado no tiene clave de arranque ni definitiva")
     return {
         "Usuario": username,
         "Password": str(password or ""),
         "Rol": "Admin" if role == "admin" else "Agente",
         "Promotoria": ", ".join(promotorias),
-        "RFC": str(payload.rfc or "").strip().upper(),
+        "RFC": rfc,
         "Aseguradoras": ", ".join(
             str(value).strip().upper()
             for value in payload.aseguradoras
@@ -465,6 +486,28 @@ def access_modules_configuration() -> dict[str, object]:
             for key, label in PERMISSION_LABELS.items()
         ],
     }
+
+
+def access_agent_options() -> list[dict[str, str]]:
+    from services.metlife_agent_directory import load_agent_directory
+
+    agents = [
+        {
+            "rfc": agent.get("rfc", ""),
+            "name": agent.get("name", ""),
+            "start_key": agent.get("start_key", ""),
+            "definitive_key": agent.get("definitive_key", ""),
+            "promotoria": agent.get("promotoria", ""),
+            "email": agent.get("email", ""),
+        }
+        for agent in load_agent_directory()
+        if agent.get("rfc")
+        and (agent.get("start_key") or agent.get("definitive_key"))
+        and str(agent.get("status") or "").strip().upper()
+        not in {"INACTIVA", "INACTIVO", "BAJA", "CANCELADA", "CANCELADO"}
+    ]
+    agents.sort(key=lambda item: (str(item["name"]).casefold(), str(item["rfc"])))
+    return agents
 
 
 def list_access_users() -> list[dict[str, object]]:

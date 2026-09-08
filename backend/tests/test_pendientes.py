@@ -169,7 +169,7 @@ class PendingWorkbookTests(unittest.TestCase):
             "agente",
             ("TAIICO",),
             "RFC1",
-            (),
+            ("METLIFE",),
             {"pendientes": "lectura"},
         )
 
@@ -177,10 +177,18 @@ class PendingWorkbookTests(unittest.TestCase):
             [row["source_row"] for row in _filter_source_for_profile(source, admin)["rows"]],
             [3],
         )
-        self.assertEqual(
-            [row["source_row"] for row in _filter_source_for_profile(source, agent)["rows"]],
-            [2],
-        )
+        directory = [{
+            "rfc": "RFC1",
+            "name": "Agent One",
+            "promotoria": "TAIICO",
+            "start_key": "",
+            "definitive_key": "123",
+        }]
+        with patch("services.agent_scope.load_agent_directory", return_value=directory):
+            self.assertEqual(
+                [row["source_row"] for row in _filter_source_for_profile(source, agent)["rows"]],
+                [2],
+            )
 
     def test_single_promotoria_is_forced_when_admin_creates_pending(self):
         profile = AccessProfile(

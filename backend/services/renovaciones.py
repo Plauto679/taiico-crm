@@ -46,7 +46,13 @@ from services.auth import AccessProfile
 from services.authorization import (
     current_access_profile,
     profile_allows_promotoria,
+    require_module_access,
     require_promotoria_access,
+)
+from services.agent_scope import (
+    profile_allows_agent_key,
+    profile_allows_insurer,
+    require_agent_key_access,
 )
 from drive.client import build_drive_service
 
@@ -129,6 +135,18 @@ def normalize_name(value: str) -> str:
 
 
 def scope_renewal_rows(rows: list[dict], profile: AccessProfile) -> list[dict]:
+    if profile.is_agent:
+        return [
+            row for row in rows
+            if profile_allows_insurer(
+                profile,
+                row.get("ASEGURADORA") or row.get("insurer") or "METLIFE",
+            )
+            and profile_allows_agent_key(
+                profile,
+                row.get("AGENTE") or row.get("Clave Agente") or row.get("CLAVE_AGENTE"),
+            )
+        ]
     return [
         row for row in rows
         if profile_allows_promotoria(
@@ -145,6 +163,25 @@ def metlife_policy_promotoria(policy: Policy, renewal_type: str) -> str:
     agent = agents.get((policy_number, deadline), agents.get((policy_number, ""), {}))
     agent_code = str(agent.get("AGENTE") or "")
     return promotoria_by_agent_key().get(normalize_agent_match_key(agent_code), "")
+
+
+def metlife_policy_agent_key(policy: Policy, renewal_type: str) -> str:
+    policy_number = str(policy.policy_number or "").strip()
+    deadline = format_date(policy.effective_end_date) or ""
+    agents = metlife_vida_agents() if renewal_type.upper() == "VIDA" else metlife_gmm_agents()
+    row = agents.get((policy_number, deadline), agents.get((policy_number, ""), {}))
+    return str(row.get("AGENTE") or "")
+
+
+def require_renewal_policy_access(profile: AccessProfile, policy: Policy, renewal_type: str) -> None:
+    require_promotoria_access(profile, metlife_policy_promotoria(policy, renewal_type))
+    if profile.is_agent:
+        if not profile_allows_insurer(profile, "METLIFE"):
+            raise HTTPException(
+                status_code=403,
+                detail="La aseguradora de la póliza no está asignada a tu usuario",
+            )
+        require_agent_key_access(profile, metlife_policy_agent_key(policy, renewal_type))
 
 
 @lru_cache(maxsize=4)
@@ -1749,7 +1786,7 @@ async def update_renewal_status(
     new_status: Optional[str] = Body(None, embed=True),
     expediente: Optional[str] = Body(None, embed=True),
     email: Optional[str] = Body(None, embed=True),
-    profile: AccessProfile = Depends(current_access_profile),
+    profile: AccessProfile = Depends(require_module_access("renovaciones", operation=True)),
 ):
     """
     Update the ESTATUS_DE_RENOVACION, EXPEDIENTE, and EMAIL in the SQL database.
@@ -1761,7 +1798,7 @@ async def update_renewal_status(
         
         if not policy:
             raise HTTPException(status_code=404, detail=f"Policy {policy_number} not found")
-        require_promotoria_access(profile, metlife_policy_promotoria(policy, type))
+        require_renewal_policy_access(profile, policy, type)
             
         # Retrieve related renewal
         renewal = db.query(Renewal).filter(Renewal.original_policy_id == policy.id).first()
@@ -1824,7 +1861,7 @@ async def send_renewal_email_endpoint(
     end_date: str = Body(..., embed=True),
     expediente: Optional[str] = Body(None, embed=True),
     username: str = Depends(current_username),
-    profile: AccessProfile = Depends(current_access_profile),
+    profile: AccessProfile = Depends(require_module_access("renovaciones", operation=True)),
 ):
     """
     Send renewal email using database details. Updates status in database upon success.
@@ -1836,7 +1873,7 @@ async def send_renewal_email_endpoint(
         
         if not policy or not policy.client:
             raise HTTPException(status_code=404, detail="Policy or client profile not found")
-        require_promotoria_access(profile, metlife_policy_promotoria(policy, type))
+        require_renewal_policy_access(profile, policy, type)
             
         recipient_email = policy.client.email
         if not recipient_email:
@@ -1952,7 +1989,7 @@ async def send_renewal_agent_email_endpoint(
     end_date: str = Body(..., embed=True),
     expediente: Optional[str] = Body(None, embed=True),
     username: str = Depends(current_username),
-    profile: AccessProfile = Depends(current_access_profile),
+    profile: AccessProfile = Depends(require_module_access("renovaciones", operation=True)),
 ):
     del username
     if insurer.casefold() != "metlife" or type.upper() != "GMM":
@@ -1965,7 +2002,7 @@ async def send_renewal_agent_email_endpoint(
         policy = db.query(Policy).filter(Policy.policy_number == policy_str).first()
         if not policy or not policy.client:
             raise HTTPException(status_code=404, detail="Policy or client profile not found")
-        require_promotoria_access(profile, metlife_policy_promotoria(policy, "GMM"))
+        require_renewal_policy_access(profile, policy, "GMM")
 
         deadline = format_date(policy.effective_end_date) or end_date
         agent_row = metlife_gmm_agents().get(

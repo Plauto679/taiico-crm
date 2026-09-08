@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import {
     AccessModuleConfig,
+    AccessAgentOption,
     AccessPermission,
     AccessUser,
     AccessUserInput,
@@ -20,6 +21,7 @@ const EMPTY_USER: AccessUserInput = {
     aseguradoras: [],
     module_permissions: {},
 };
+const AGENT_OPERATION_MODULES = new Set(['agentes', 'cartera', 'pendientes', 'renovaciones']);
 
 function permissionLabel(permission: string) {
     if (permission === 'operacion') return 'Operación';
@@ -28,6 +30,16 @@ function permissionLabel(permission: string) {
 }
 
 function toInput(user: AccessUser): AccessUserInput {
+    const modulePermissions = user.role === 'agente'
+        ? Object.fromEntries(
+            Object.entries(user.module_permissions).map(([module, permission]) => [
+                module,
+                permission === 'operacion' && !AGENT_OPERATION_MODULES.has(module)
+                    ? 'lectura'
+                    : permission,
+            ]),
+        ) as Record<string, AccessPermission>
+        : user.module_permissions;
     return {
         username: user.username,
         password: '',
@@ -35,7 +47,7 @@ function toInput(user: AccessUser): AccessUserInput {
         promotorias: user.promotorias,
         rfc: user.rfc,
         aseguradoras: user.aseguradoras,
-        module_permissions: user.module_permissions,
+        module_permissions: modulePermissions,
     };
 }
 
@@ -43,10 +55,12 @@ export function AccesosView({
     initialUsers,
     modules,
     promotorias,
+    agents,
 }: {
     initialUsers: AccessUser[];
     modules: AccessModuleConfig[];
     promotorias: string[];
+    agents: AccessAgentOption[];
 }) {
     const [users, setUsers] = useState(initialUsers);
     const [editing, setEditing] = useState<AccessUserInput | null>(null);
@@ -57,6 +71,12 @@ export function AccesosView({
     const activeModules = useMemo(
         () => modules.filter((module) => module.key !== 'inicio'),
         [modules],
+    );
+    const selectedAgent = useMemo(
+        () => editing?.role === 'agente'
+            ? agents.find((agent) => agent.rfc === editing.rfc)
+            : undefined,
+        [agents, editing],
     );
 
     function openCreate() {
@@ -95,6 +115,21 @@ export function AccesosView({
             ...editing.module_permissions,
             [module]: permission,
         });
+    }
+
+    function updateRole(role: AccessUserInput['role']) {
+        if (!editing) return;
+        const modulePermissions = role === 'agente'
+            ? Object.fromEntries(
+                Object.entries(editing.module_permissions).map(([module, permission]) => [
+                    module,
+                    permission === 'operacion' && !AGENT_OPERATION_MODULES.has(module)
+                        ? 'lectura'
+                        : permission,
+                ]),
+            ) as Record<string, AccessPermission>
+            : editing.module_permissions;
+        setEditing({ ...editing, role, module_permissions: modulePermissions });
     }
 
     async function save() {
@@ -239,21 +274,53 @@ export function AccesosView({
                                 Rol
                                 <select
                                     value={editing.role}
-                                    onChange={(event) => updateField('role', event.target.value as AccessUserInput['role'])}
+                                    onChange={(event) => updateRole(event.target.value as AccessUserInput['role'])}
                                     className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"
                                 >
                                     <option value="admin">Admin</option>
                                     <option value="agente">Agente</option>
                                 </select>
                             </label>
-                            <label className="text-sm font-semibold text-slate-700">
-                                RFC
-                                <input
-                                    value={editing.rfc}
-                                    onChange={(event) => updateField('rfc', event.target.value)}
-                                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal uppercase"
-                                />
-                            </label>
+                            {editing.role === 'agente' ? (
+                                <label className="text-sm font-semibold text-slate-700">
+                                    Agente relacionado
+                                    <select
+                                        value={editing.rfc}
+                                        onChange={(event) => {
+                                            const agent = agents.find((item) => item.rfc === event.target.value);
+                                            if (!agent) return updateField('rfc', '');
+                                            setEditing({
+                                                ...editing,
+                                                rfc: agent.rfc,
+                                                promotorias: agent.promotoria ? [agent.promotoria.toUpperCase()] : [],
+                                                aseguradoras: editing.aseguradoras.length ? editing.aseguradoras : ['METLIFE'],
+                                            });
+                                        }}
+                                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"
+                                    >
+                                        <option value="">Selecciona un agente</option>
+                                        {agents.map((agent) => (
+                                            <option key={`${agent.rfc}-${agent.definitive_key}-${agent.start_key}`} value={agent.rfc}>
+                                                {agent.name} · RFC {agent.rfc}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {selectedAgent && (
+                                        <span className="mt-2 block text-xs font-normal text-slate-500">
+                                            Clave definitiva: {selectedAgent.definitive_key || '—'} · Clave de arranque: {selectedAgent.start_key || '—'}
+                                        </span>
+                                    )}
+                                </label>
+                            ) : (
+                                <label className="text-sm font-semibold text-slate-700">
+                                    RFC
+                                    <input
+                                        value={editing.rfc}
+                                        onChange={(event) => updateField('rfc', event.target.value)}
+                                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal uppercase"
+                                    />
+                                </label>
+                            )}
                             <label className="text-sm font-semibold text-slate-700 md:col-span-2">
                                 Aseguradoras
                                 <input
@@ -297,7 +364,9 @@ export function AccesosView({
                                             >
                                                 <option value="ninguno">{permissionLabel('ninguno')}</option>
                                                 <option value="lectura">{permissionLabel('lectura')}</option>
-                                                <option value="operacion">{permissionLabel('operacion')}</option>
+                                                {(editing.role === 'admin' || AGENT_OPERATION_MODULES.has(module.key)) && (
+                                                    <option value="operacion">{permissionLabel('operacion')}</option>
+                                                )}
                                             </select>
                                         </label>
                                     ))}
