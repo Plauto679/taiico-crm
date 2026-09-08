@@ -134,8 +134,33 @@ def find_or_create_client(db, payload: dict) -> Client:
         # Email enrichment must not make renewal ingestion unavailable.
         pass
 
-    for client in db.query(Client).filter(Client.full_name == client_name).all():
+    # RFC is the identity key. A name can legitimately belong to multiple
+    # records when their RFCs differ, while punctuation and ordering in carrier
+    # exports often make the same client name look different.
+    if valid_client_rfc(source_rfc):
+        client = (
+            db.query(Client)
+            .filter(
+                Client.status != "inactive",
+                func.upper(func.trim(Client.rfc)) == source_rfc,
+            )
+            .order_by(Client.created_at, Client.id)
+            .first()
+        )
+        if client is not None:
+            if not client.email and canonical_email:
+                client.email = canonical_email
+            return client
+
+    for client in (
+        db.query(Client)
+        .filter(Client.full_name == client_name, Client.status != "inactive")
+        .all()
+    ):
         if normalize_name(client.full_name) == normalized:
+            client_rfc = normalize_rfc(client.rfc)
+            if valid_client_rfc(source_rfc) and client_rfc and client_rfc != source_rfc:
+                continue
             if not client.email and canonical_email:
                 client.email = canonical_email
             apply_source_rfc(db, client, source_rfc)

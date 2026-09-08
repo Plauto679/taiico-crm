@@ -95,6 +95,10 @@ class ClientMergeTests(unittest.TestCase):
 
     def test_merges_prospect_without_rfc_and_preserves_name_as_alias(self):
         self.duplicate.rfc = None
+        self.duplicate.metadata_json = {
+            "prospectador": "ALBERTO",
+            "source_rfc_conflict_client_id": "canonical",
+        }
         self.db.commit()
 
         merge_duplicate_client(
@@ -106,6 +110,7 @@ class ClientMergeTests(unittest.TestCase):
 
         canonical = self.db.query(Client).filter(Client.id == "canonical").one()
         self.assertIn("VALVERDE ANDALON AXEL", canonical.metadata_json["name_aliases"])
+        self.assertNotIn("source_rfc_conflict_client_id", canonical.metadata_json)
 
 
 if __name__ == "__main__":

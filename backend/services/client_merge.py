@@ -26,7 +26,13 @@ def _merge_metadata(canonical_value: Any, duplicate_value: Any, duplicate_id: st
     return merged
 
 
-def merge_duplicate_client(db, *, canonical_id: str, duplicate_id: str) -> dict:
+def merge_duplicate_client(
+    db,
+    *,
+    canonical_id: str,
+    duplicate_id: str,
+    reflected_metadata: MetaData | None = None,
+) -> dict:
     if canonical_id == duplicate_id:
         raise ValueError("El cliente principal y el duplicado deben ser distintos.")
 
@@ -72,8 +78,9 @@ def merge_duplicate_client(db, *, canonical_id: str, duplicate_id: str) -> dict:
     db.flush()
     db.expire(canonical, ["promotorias"])
 
-    metadata = MetaData()
-    metadata.reflect(bind=bind)
+    metadata = reflected_metadata or MetaData()
+    if reflected_metadata is None:
+        metadata.reflect(bind=bind)
     reference_counts: dict[str, int] = {}
     for table in metadata.sorted_tables:
         if table.name in {Client.__tablename__, ClientPromotoria.__tablename__} or "client_id" not in table.c:
@@ -115,11 +122,14 @@ def merge_duplicate_client(db, *, canonical_id: str, duplicate_id: str) -> dict:
             "name": duplicate.drive_folder_name,
         })
         duplicate_metadata["legacy_drive_folders"] = legacy_folders
-    canonical.metadata_json = _merge_metadata(
+    merged_metadata = _merge_metadata(
         canonical.metadata_json,
         duplicate_metadata,
         duplicate.id,
     )
+    if merged_metadata.get("source_rfc_conflict_client_id") == canonical.id:
+        merged_metadata.pop("source_rfc_conflict_client_id", None)
+    canonical.metadata_json = merged_metadata
     if duplicate.created_at and (
         not canonical.created_at or duplicate.created_at < canonical.created_at
     ):
