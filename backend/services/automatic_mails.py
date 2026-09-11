@@ -182,6 +182,77 @@ def default_automations() -> dict[str, dict]:
             "recipients": pending_recipients,
             "cc_recipients": [],
         },
+        "agent_birthdays_weekly": {
+            "id": "agent_birthdays_weekly",
+            "name": "Cumpleaños de agentes · Resumen general",
+            "description": "Agentes que cumplen años durante los próximos 15 días.",
+            "enabled": True,
+            "cadence": "weekly",
+            "hour": int(os.getenv("AGENT_BIRTHDAY_AUTOMATION_HOUR", "8")),
+            "minute": 0,
+            "timezone": os.getenv("AGENT_BIRTHDAY_AUTOMATION_TIMEZONE", DEFAULT_TIMEZONE),
+            "day_of_week": 0,
+            "day_of_month": None,
+            "sender": pending_sender,
+            "recipient_mode": "manual",
+            "recipient_description": "Misma distribución del resumen diario de pendientes",
+            "recipients": pending_recipients,
+            "cc_recipients": [],
+        },
+        "agent_birthdays_promotoria_abbondanza": {
+            "id": "agent_birthdays_promotoria_abbondanza",
+            "name": "Cumpleaños de agentes · ABBONDANZA",
+            "description": "Cumpleaños próximos de agentes de la promotoría ABBONDANZA.",
+            "enabled": True,
+            "cadence": "weekly",
+            "hour": int(os.getenv("AGENT_BIRTHDAY_AUTOMATION_HOUR", "8")),
+            "minute": 0,
+            "timezone": os.getenv("AGENT_BIRTHDAY_AUTOMATION_TIMEZONE", DEFAULT_TIMEZONE),
+            "day_of_week": 0,
+            "day_of_month": None,
+            "sender": pending_sender,
+            "recipient_mode": "manual",
+            "recipient_description": "Misma distribución de Pendientes · ABBONDANZA",
+            "recipients": ["19eryk@gmail.com"],
+            "cc_recipients": [],
+            "promotoria": "ABBONDANZA",
+        },
+        "agent_birthdays_promotoria_ekilibra": {
+            "id": "agent_birthdays_promotoria_ekilibra",
+            "name": "Cumpleaños de agentes · EKILIBRA",
+            "description": "Cumpleaños próximos de agentes de la promotoría EKILIBRA.",
+            "enabled": True,
+            "cadence": "weekly",
+            "hour": int(os.getenv("AGENT_BIRTHDAY_AUTOMATION_HOUR", "8")),
+            "minute": 0,
+            "timezone": os.getenv("AGENT_BIRTHDAY_AUTOMATION_TIMEZONE", DEFAULT_TIMEZONE),
+            "day_of_week": 0,
+            "day_of_month": None,
+            "sender": pending_sender,
+            "recipient_mode": "manual",
+            "recipient_description": "Misma distribución de Pendientes · EKILIBRA",
+            "recipients": ["mauricio@ekilibra.me"],
+            "cc_recipients": [],
+            "promotoria": "EKILIBRA",
+        },
+        "agent_birthdays_promotoria_fenix_prevision": {
+            "id": "agent_birthdays_promotoria_fenix_prevision",
+            "name": "Cumpleaños de agentes · FENIX PRE-VISION",
+            "description": "Cumpleaños próximos de agentes de la promotoría FENIX PRE-VISION.",
+            "enabled": True,
+            "cadence": "weekly",
+            "hour": int(os.getenv("AGENT_BIRTHDAY_AUTOMATION_HOUR", "8")),
+            "minute": 0,
+            "timezone": os.getenv("AGENT_BIRTHDAY_AUTOMATION_TIMEZONE", DEFAULT_TIMEZONE),
+            "day_of_week": 0,
+            "day_of_month": None,
+            "sender": pending_sender,
+            "recipient_mode": "manual",
+            "recipient_description": "Misma distribución de Pendientes · FENIX PRE-VISION",
+            "recipients": ["vic.villanueva@hotmail.com"],
+            "cc_recipients": [],
+            "promotoria": "FENIX PRE-VISION",
+        },
         "agent_license_expiration": {
             "id": "agent_license_expiration",
             "name": "Vencimiento de cédulas de agentes",
@@ -263,6 +334,17 @@ def all_automation_configs() -> list[dict]:
                 if key in stored:
                     item[key] = stored[key]
         result.append(item)
+    by_id = {item["id"]: item for item in result}
+    inherited_recipients = {
+        "agent_birthdays_weekly": "pending_daily",
+        "agent_birthdays_promotoria_abbondanza": "pending_promotoria_abbondanza",
+        "agent_birthdays_promotoria_ekilibra": "pending_promotoria_ekilibra",
+        "agent_birthdays_promotoria_fenix_prevision": "pending_promotoria_fenix_prevision",
+    }
+    for automation_id, source_id in inherited_recipients.items():
+        stored = overrides.get(automation_id)
+        if not isinstance(stored, dict) or "recipients" not in stored:
+            by_id[automation_id]["recipients"] = list(by_id[source_id]["recipients"])
     return result
 
 

@@ -27,12 +27,14 @@ cp ops/launchd/com.taiico.crm.pending-report.plist ~/Library/LaunchAgents/
 cp ops/launchd/com.taiico.crm.agent-license-report.plist ~/Library/LaunchAgents/
 cp ops/launchd/com.taiico.crm.renewal-agent.plist ~/Library/LaunchAgents/
 cp ops/launchd/com.taiico.crm.database-backups.plist ~/Library/LaunchAgents/
+cp ops/launchd/com.taiico.crm.agent-birthday-report.plist ~/Library/LaunchAgents/
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.backend.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.frontend.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.pending-report.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.agent-license-report.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.renewal-agent.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.database-backups.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.taiico.crm.agent-birthday-report.plist
 ```
 
 ## Estado
@@ -44,6 +46,7 @@ launchctl print gui/$(id -u)/com.taiico.crm.pending-report
 launchctl print gui/$(id -u)/com.taiico.crm.agent-license-report
 launchctl print gui/$(id -u)/com.taiico.crm.renewal-agent
 launchctl print gui/$(id -u)/com.taiico.crm.database-backups
+launchctl print gui/$(id -u)/com.taiico.crm.agent-birthday-report
 ```
 
 ## Reinicio después de desplegar cambios
@@ -57,6 +60,7 @@ launchctl kickstart -k gui/$(id -u)/com.taiico.crm.pending-report
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.agent-license-report
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.renewal-agent
 launchctl kickstart -k gui/$(id -u)/com.taiico.crm.database-backups
+launchctl kickstart -k gui/$(id -u)/com.taiico.crm.agent-birthday-report
 ```
 
 Los logs se escriben en `.runtime/logs/` y no se versionan.
@@ -103,6 +107,12 @@ fecha y hora de Ciudad de México. Sólo el día 1 de cada mes, después de las
 10:00, envía a los mismos destinatarios del informe de Pendientes la lista de
 agentes cuya cédula vence entre ese día y los tres meses calendario siguientes.
 Un archivo de estado evita duplicar el correo durante el mismo mes.
+
+El agente `com.taiico.crm.agent-birthday-report` comprueba cada cinco minutos la
+agenda semanal. Los lunes después de las 08:00, hora de Ciudad de México, envía
+el resumen de cumpleaños de los próximos 15 días a la distribución interna y
+una versión filtrada para cada promotoría configurada. Un estado por semana y
+por informe evita envíos duplicados.
 
 El agente `com.taiico.crm.renewal-agent` realiza la misma comprobación y comienza
 una sola corrida diaria de renovaciones MetLife GMM después de las 07:00 de

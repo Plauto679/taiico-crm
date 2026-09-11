@@ -44,6 +44,10 @@ class AutomaticMailConfigurationTests(unittest.TestCase):
                 "pending_promotoria_ekilibra",
                 "pending_promotoria_fenix_prevision",
                 "pending_weekly_reminder",
+                "agent_birthdays_weekly",
+                "agent_birthdays_promotoria_abbondanza",
+                "agent_birthdays_promotoria_ekilibra",
+                "agent_birthdays_promotoria_fenix_prevision",
                 "agent_license_expiration",
                 "renewal_agent",
             },
@@ -68,6 +72,29 @@ class AutomaticMailConfigurationTests(unittest.TestCase):
         self.assertEqual(
             items["pending_promotoria_fenix_prevision"]["recipients"],
             ["vic.villanueva@hotmail.com"],
+        )
+        self.assertEqual(items["agent_birthdays_weekly"]["day_of_week"], 0)
+        self.assertEqual(items["agent_birthdays_weekly"]["hour"], 8)
+        self.assertEqual(
+            items["agent_birthdays_promotoria_ekilibra"]["recipients"],
+            items["pending_promotoria_ekilibra"]["recipients"],
+        )
+
+    def test_agent_birthday_recipients_follow_pending_overrides(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(
+                '{"pending_promotoria_abbondanza":{"recipients":["actual@abbondanza.test"]}}'
+            )
+            with patch.dict(
+                os.environ,
+                {"AUTOMATIC_MAILS_CONFIG_FILE": str(path)},
+            ):
+                items = {item["id"]: item for item in all_automation_configs()}
+
+        self.assertEqual(
+            items["agent_birthdays_promotoria_abbondanza"]["recipients"],
+            ["actual@abbondanza.test"],
         )
 
     def test_saved_configuration_is_read_by_jobs(self):
