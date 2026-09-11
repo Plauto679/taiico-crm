@@ -54,7 +54,6 @@ CONSOLIDATED_REQUIRED_COLUMNS = [
     "%COMISION",
     "COMDERECHO",
     "TOTAL",
-    "Moneda",
 ]
 
 
@@ -198,7 +197,7 @@ def normalize_consolidated_statement_row(row_number: int, source_payload: dict[s
         "agency_name": clean_cell(source_payload.get("Agente")),
         "office_code": clean_cell(source_payload.get("OFICINA")),
         "branch_code": clean_cell(source_payload.get("RAMO")),
-        "currency": clean_cell(source_payload.get("Moneda")),
+        "currency": clean_cell(source_payload.get("Moneda")) or "MXN",
         "source_cutoff_date": source_cutoff_date,
         "policy_effective_start": parse_date(source_payload.get("INIVIGENCIA")),
         "paid_amount": paid_amount,

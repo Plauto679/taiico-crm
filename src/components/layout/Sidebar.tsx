@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, MailCheck, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, Menu, X, Landmark, UserRoundCog, ChartNoAxesCombined, ArchiveRestore } from 'lucide-react';
+import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, MailCheck, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, Menu, X, Landmark, UserRoundCog, ChartNoAxesCombined, ArchiveRestore, HandCoins } from 'lucide-react';
 import { SmartLink } from '@/components/navigation/SmartLink';
 import { IdleModulePrefetch } from '@/components/navigation/IdleModulePrefetch';
 
@@ -17,6 +17,8 @@ const NAV_ITEMS = [
     { name: 'Agentes', href: '/agentes', icon: UserRoundCog, module: 'agentes' },
     { name: 'Pendientes', href: '/pendientes', icon: ClipboardList, module: 'pendientes' },
     { name: 'Cartera de Prospectadores', href: '/cartera', icon: Briefcase, module: 'cartera' },
+    { name: 'Prospectadores', href: '/prospectadores', icon: UserRoundSearch, module: 'prospectadores' },
+    { name: 'Cobranza para prospectadores', href: '/cobranza-prospectadores', icon: HandCoins, module: 'cobranza_prospectadores' },
     { name: 'Clientes', href: '/clientes', icon: Users, module: 'clientes' },
     { name: 'Recluta', href: '/recluta', icon: UserRoundSearch, module: 'recluta' },
     { name: 'Dashboards', href: '/dashboards', icon: BarChart3, module: 'dashboards' },

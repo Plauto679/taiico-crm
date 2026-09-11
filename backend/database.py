@@ -1066,6 +1066,144 @@ class FinanceIngestion(Base):
     reverted_at = Column(DateTime, nullable=True)
 
 
+class Prospector(Base):
+    __tablename__ = "prospectors"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String(255), nullable=False, index=True)
+    normalized_name = Column(String(255), nullable=False, index=True)
+    rfc = Column(String(20), nullable=True, unique=True, index=True)
+    email = Column(String(320), nullable=True, index=True)
+    additional_emails = Column(JSON, default=list, nullable=False)
+    payment_scheme = Column(String(30), default="factura", nullable=False, index=True)
+    invoice_required = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    linked_username = Column(String(320), nullable=True, index=True)
+    metadata_json = Column("metadata", JSON, default=dict, nullable=False)
+    created_by = Column(String(320), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+
+class PolicyProspectorAssignment(Base):
+    __tablename__ = "policy_prospector_assignments"
+    __table_args__ = (
+        UniqueConstraint(
+            "policy_id", "prospector_id", "effective_from", "source",
+            name="uq_policy_prospector_assignment_source",
+        ),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    policy_id = Column(String(36), ForeignKey("policies.id", ondelete="CASCADE"), nullable=False, index=True)
+    prospector_id = Column(String(36), ForeignKey("prospectors.id", ondelete="CASCADE"), nullable=False, index=True)
+    commission_rate = Column(Numeric(9, 6), nullable=False)
+    effective_from = Column(Date, nullable=False, index=True)
+    effective_to = Column(Date, nullable=True, index=True)
+    source = Column(String(50), default="manual", nullable=False, index=True)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    metadata_json = Column("metadata", JSON, default=dict, nullable=False)
+    created_by = Column(String(320), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+
+class ProspectorCommissionPeriod(Base):
+    __tablename__ = "prospector_commission_periods"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    month = Column(Date, nullable=False, unique=True, index=True)
+    status = Column(String(30), default="borrador", nullable=False, index=True)
+    currency = Column(String(10), default="MXN", nullable=False)
+    utility_coefficient = Column(Numeric(9, 6), default=0.91, nullable=False)
+    vat_rate = Column(Numeric(9, 6), default=0.16, nullable=False)
+    created_by = Column(String(320), nullable=False)
+    closed_by = Column(String(320), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    closed_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+
+class ProspectorOpeningBalance(Base):
+    __tablename__ = "prospector_opening_balances"
+    __table_args__ = (
+        UniqueConstraint("period_id", "prospector_id", name="uq_prospector_opening_balance"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    period_id = Column(String(36), ForeignKey("prospector_commission_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+    prospector_id = Column(String(36), ForeignKey("prospectors.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount = Column(Numeric(16, 2), nullable=False)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String(320), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+
+class ProspectorCommissionBatch(Base):
+    __tablename__ = "prospector_commission_batches"
+    __table_args__ = (
+        UniqueConstraint("period_id", "source", "file_hash", name="uq_prospector_commission_batch_file"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    period_id = Column(String(36), ForeignKey("prospector_commission_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+    source = Column(String(30), nullable=False, index=True)
+    filename = Column(String(500), nullable=False)
+    file_hash = Column(String(64), nullable=False, index=True)
+    currency = Column(String(10), default="MXN", nullable=False)
+    status = Column(String(30), default="cargado", nullable=False, index=True)
+    raw_row_count = Column(Integer, default=0, nullable=False)
+    consolidated_row_count = Column(Integer, default=0, nullable=False)
+    exception_count = Column(Integer, default=0, nullable=False)
+    created_by = Column(String(320), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+
+class ProspectorCommissionLine(Base):
+    __tablename__ = "prospector_commission_lines"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "source_key", name="uq_prospector_commission_line_source"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    batch_id = Column(String(36), ForeignKey("prospector_commission_batches.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_key = Column(String(255), nullable=False)
+    policy_id = Column(String(36), ForeignKey("policies.id"), nullable=True, index=True)
+    policy_number = Column(String(100), nullable=False, index=True)
+    receipt_number = Column(String(100), nullable=True, index=True)
+    insurer_id = Column(String(50), nullable=False, index=True)
+    branch = Column(String(50), nullable=True, index=True)
+    movement_date = Column(Date, nullable=True, index=True)
+    source_commission = Column(Numeric(16, 4), nullable=False)
+    currency = Column(String(10), default="MXN", nullable=False)
+    status = Column(String(30), default="pendiente_asignacion", nullable=False, index=True)
+    exception_reason = Column(Text, nullable=True)
+    raw_payload = Column(JSON, default=dict, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+
+class ProspectorCommissionAllocation(Base):
+    __tablename__ = "prospector_commission_allocations"
+    __table_args__ = (
+        UniqueConstraint("line_id", "prospector_id", name="uq_prospector_commission_allocation"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    line_id = Column(String(36), ForeignKey("prospector_commission_lines.id", ondelete="CASCADE"), nullable=False, index=True)
+    prospector_id = Column(String(36), ForeignKey("prospectors.id"), nullable=False, index=True)
+    assignment_id = Column(String(36), ForeignKey("policy_prospector_assignments.id"), nullable=True, index=True)
+    commission_rate = Column(Numeric(9, 6), nullable=False)
+    utility_coefficient = Column(Numeric(9, 6), nullable=False)
+    vat_rate = Column(Numeric(9, 6), nullable=False)
+    life_divisor = Column(Numeric(9, 6), default=1, nullable=False)
+    commission_amount = Column(Numeric(16, 2), nullable=False)
+    vat_amount = Column(Numeric(16, 2), nullable=False)
+    total_amount = Column(Numeric(16, 2), nullable=False)
+    calculation_json = Column("calculation", JSON, default=dict, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+
 # Helper block to create local SQLite database for development
 def create_all_tables():
     """Initializes the database schema."""

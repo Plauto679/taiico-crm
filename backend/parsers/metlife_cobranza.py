@@ -16,7 +16,6 @@ import pandas as pd
 PARSER_VERSION = "1.0.0"
 
 VIDA_REQUIRED_COLUMNS = [
-    "Año y mes",
     "# de Póliza",
     "Producto",
     "Estatus Recibo",
@@ -28,7 +27,6 @@ VIDA_REQUIRED_COLUMNS = [
 ]
 
 GMM_REQUIRED_COLUMNS = [
-    "Año y mes",
     "# de Póliza",
     "Producto",
     "Estatus Recibo",

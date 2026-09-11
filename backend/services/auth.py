@@ -59,6 +59,8 @@ MODULES = (
     "agentes",
     "pendientes",
     "cartera",
+    "prospectadores",
+    "cobranza_prospectadores",
     "clientes",
     "recluta",
     "dashboards",
@@ -93,6 +95,8 @@ MODULE_COLUMNS["campanas"] = "Permiso_Campanas"
 MODULE_COLUMNS["finanzas"] = "Permiso_Finanzas"
 MODULE_COLUMNS["gestion_comercial"] = "Permiso_Gestion_Comercial"
 MODULE_COLUMNS["time_machine"] = "Permiso_Time_Machine"
+MODULE_COLUMNS["prospectadores"] = "Permiso_Prospectadores"
+MODULE_COLUMNS["cobranza_prospectadores"] = "Permiso_Cobranza_Prospectadores"
 
 MODULE_LABELS = {
     "inicio": "Inicio",
@@ -103,6 +107,8 @@ MODULE_LABELS = {
     "agentes": "Agentes",
     "pendientes": "Pendientes",
     "cartera": "Cartera de Prospectadores",
+    "prospectadores": "Prospectadores",
+    "cobranza_prospectadores": "Cobranza para prospectadores",
     "clientes": "Clientes",
     "recluta": "Recluta",
     "dashboards": "Dashboards",
