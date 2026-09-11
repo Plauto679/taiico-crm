@@ -25,6 +25,7 @@ export function middleware(request: NextRequest) {
         || path.startsWith('/solicitud-datos')
         || path.startsWith('/_next')
         || path.startsWith('/static')
+        || path === '/manifest.webmanifest'
         || path === '/logo.png';
 
     const token = request.cookies.get('taiico_session')?.value;
