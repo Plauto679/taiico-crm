@@ -3,9 +3,11 @@ import tempfile
 import unittest
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
+from openpyxl import load_workbook
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -13,7 +15,7 @@ from parsers.aarco_prospector_commissions import parse_aarco_prospector_workbook
 from parsers.metlife_cobranza import ParsedCobranzaRow
 from parsers.sura_cobranza import parse_sura_cobranza_workbook
 from services import auth
-from services.cobranza_prospectadores import calculate_allocation, consolidate_parsed_rows
+from services.cobranza_prospectadores import build_preview_workbook, calculate_allocation, consolidate_parsed_rows
 from services.prospectadores import normalize_rate, parse_split_prospectors
 
 
@@ -96,6 +98,37 @@ class ProspectorCommissionTests(unittest.TestCase):
         self.assertEqual(issues, [])
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].normalized_payload["source_commission_amount"], Decimal("32.38"))
+
+    def test_preview_export_contains_all_rows_and_keeps_amounts_numeric(self):
+        rows = [
+            {
+                "insurer_id": "metlife", "policy_number": "00123", "receipt_number": "R-1",
+                "branch": "VIDA", "movement_date": "2026-08-01", "currency": "MXN",
+                "source_commission": "116.00", "row_count": 2, "matching_hints": {},
+                "status": "listo", "exception_reason": None,
+                "allocations": [{
+                    "prospector_name": "ANA PRUEBA", "commission_rate": "0.5",
+                    "calculation": {"total_amount": "52.78"},
+                }],
+            },
+            {
+                "insurer_id": "metlife", "policy_number": "00999", "receipt_number": "",
+                "branch": "GMM", "movement_date": "2026-08-02", "currency": "MXN",
+                "source_commission": "80.25", "row_count": 1,
+                "matching_hints": {"office_code": "01", "branch_code": "606"},
+                "status": "pendiente_asignacion", "allocations": [],
+                "exception_reason": "La póliza no tiene un prospectador asignado",
+            },
+        ]
+        workbook = load_workbook(BytesIO(build_preview_workbook("metlife", "agosto.xlsx", rows)))
+        sheet = workbook["Vista previa"]
+        self.assertEqual(sheet.max_row, 3)
+        self.assertEqual(sheet["A1"].value, "Aseguradora")
+        self.assertEqual(sheet["B3"].value, "00999")
+        self.assertIsInstance(sheet["G2"].value, (int, float))
+        self.assertEqual(sheet["G2"].value, 116)
+        self.assertEqual(sheet["L3"].value, "La póliza no tiene un prospectador asignado")
+        self.assertEqual(workbook["Resumen"]["B6"].value, 1)
 
 
 if __name__ == "__main__":

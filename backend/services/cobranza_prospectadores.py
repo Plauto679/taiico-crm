@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import re
@@ -11,7 +12,10 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from starlette.concurrency import run_in_threadpool
@@ -342,6 +346,83 @@ def _load_preview(token: str) -> dict:
     return payload
 
 
+def build_preview_workbook(source: str, filename: str, analyzed: list[dict]) -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Vista previa"
+    headers = [
+        "Aseguradora", "Póliza", "Recibo", "Ramo", "Fecha de movimiento",
+        "Moneda", "Comisión fuente", "Prospectador(es)", "Porcentaje(s)",
+        "Importe prospectador", "Resultado", "Motivo de excepción",
+        "Código oficina", "Código ramo", "Filas consolidadas",
+    ]
+    sheet.append(headers)
+
+    header_fill = PatternFill("solid", fgColor="365F85")
+    for cell in sheet[1]:
+        cell.fill = header_fill
+        cell.font = Font(color="FFFFFF", bold=True)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for line in analyzed:
+        allocations = line.get("allocations") or []
+        hints = line.get("matching_hints") or {}
+        is_ready = line.get("status") == "listo"
+        sheet.append([
+            str(line.get("insurer_id") or source).upper(),
+            str(line.get("policy_number") or ""),
+            str(line.get("receipt_number") or ""),
+            str(line.get("branch") or ""),
+            str(line.get("movement_date") or ""),
+            str(line.get("currency") or "MXN"),
+            float(Decimal(str(line.get("source_commission") or "0"))),
+            ", ".join(str(item.get("prospector_name") or "") for item in allocations),
+            ", ".join(f"{Decimal(str(item.get('commission_rate') or '0')):.2%}" for item in allocations),
+            float(sum(
+                (Decimal(str((item.get("calculation") or {}).get("total_amount") or "0")) for item in allocations),
+                Decimal("0"),
+            )),
+            "Listo" if is_ready else "Excepción",
+            str(line.get("exception_reason") or ""),
+            str(hints.get("office_code") or ""),
+            str(hints.get("branch_code") or ""),
+            int(line.get("row_count") or 0),
+        ])
+
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    sheet.row_dimensions[1].height = 30
+    for row in sheet.iter_rows(min_row=2):
+        row[6].number_format = '$#,##0.00;[Red]-$#,##0.00'
+        row[9].number_format = '$#,##0.00;[Red]-$#,##0.00'
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+        if row[10].value == "Excepción":
+            row[10].font = Font(color="B45309", bold=True)
+            row[11].font = Font(color="B45309")
+        else:
+            row[10].font = Font(color="047857", bold=True)
+
+    widths = [15, 20, 20, 12, 21, 10, 18, 36, 18, 22, 14, 58, 16, 15, 18]
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
+
+    metadata = workbook.create_sheet("Resumen")
+    metadata.append(["Vista previa de cobranza para prospectadores"])
+    metadata.append(["Fuente", source.upper()])
+    metadata.append(["Archivo original", filename])
+    metadata.append(["Registros consolidados", len(analyzed)])
+    metadata.append(["Listos", sum(1 for line in analyzed if line.get("status") == "listo")])
+    metadata.append(["Excepciones", sum(1 for line in analyzed if line.get("status") != "listo")])
+    metadata.column_dimensions["A"].width = 28
+    metadata.column_dimensions["B"].width = 65
+    metadata["A1"].font = Font(bold=True, size=14, color="365F85")
+
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
 class PeriodPayload(BaseModel):
     month: date
     currency: str = Field(default="MXN", min_length=3, max_length=3)
@@ -543,6 +624,31 @@ async def preview_import(
         db.close()
         if temp_path:
             temp_path.unlink(missing_ok=True)
+
+
+@router.get("/imports/{token}/export")
+def export_import_preview(
+    token: str,
+    profile: AccessProfile = Depends(require_module_access("cobranza_prospectadores")),
+):
+    del profile
+    staged = _load_preview(token)
+    db = SessionLocal()
+    try:
+        period = db.get(ProspectorCommissionPeriod, staged["period_id"])
+        if not period:
+            raise HTTPException(status_code=404, detail="Periodo no encontrado")
+        analyzed = analyze_import_lines(db, staged["lines"], period)
+        workbook = build_preview_workbook(staged["source"], staged["filename"], analyzed)
+        period_label = period.month.strftime("%Y-%m")
+        export_name = f"vista-previa-{staged['source']}-{period_label}.xlsx"
+        return Response(
+            content=workbook,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{export_name}"'},
+        )
+    finally:
+        db.close()
 
 
 @router.post("/imports/{token}/apply", status_code=201)

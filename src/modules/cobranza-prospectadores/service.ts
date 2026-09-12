@@ -26,3 +26,26 @@ export const previewCommissionImport = (periodId: string, source: string, file: 
   return fetchFromApi<ImportPreview>('/cobranza-prospectadores/imports/preview', { method: 'POST', body });
 };
 export const applyCommissionImport = (token: string) => fetchFromApi<{ batch_id: string; status: string; consolidated_rows: number; exception_count: number; allocation_count: number }>(`/cobranza-prospectadores/imports/${token}/apply`, { method: 'POST' });
+
+export async function exportCommissionImportPreview(token: string): Promise<void> {
+  const response = await fetch(`/api/cobranza-prospectadores/imports/${token}/export`, { cache: 'no-store' });
+  if (!response.ok) {
+    let message = response.statusText || `HTTP ${response.status}`;
+    try {
+      const body = await response.json();
+      if (body.detail) message = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
+    } catch { /* La respuesta puede no ser JSON. */ }
+    throw new Error(`API Error: ${message}`);
+  }
+
+  const disposition = response.headers.get('content-disposition') || '';
+  const matchedFilename = disposition.match(/filename="?([^";]+)"?/i)?.[1];
+  const blobUrl = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement('a');
+  anchor.href = blobUrl;
+  anchor.download = matchedFilename || 'vista-previa-cobranza-prospectadores.xlsx';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(blobUrl);
+}
