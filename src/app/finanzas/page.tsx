@@ -1,9 +1,9 @@
 import { FinanceView } from '@/components/finanzas/FinanceView';
-import { getFinanceOverview } from '@/modules/finanzas/service';
+import { getFinanceCategories, getFinanceOverview } from '@/modules/finanzas/service';
 
 export const dynamic = 'force-dynamic';
 
 export default async function FinancePage() {
-  const overview = await getFinanceOverview();
-  return <FinanceView initialOverview={overview} />;
+  const [overview, categories] = await Promise.all([getFinanceOverview(), getFinanceCategories()]);
+  return <FinanceView initialOverview={overview} categories={categories} />;
 }

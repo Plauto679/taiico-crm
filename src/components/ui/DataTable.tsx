@@ -21,6 +21,7 @@ interface DataTableProps<T> {
     className?: string;
     onRowClick?: (row: T) => void;
     onProcessedDataChange?: (rows: T[]) => void;
+    onMultiFiltersChange?: (filters: Record<string, string[]>) => void;
     filterMode?: 'text' | 'multi-select';
     pageSize?: number;
 }
@@ -57,7 +58,7 @@ function multiSelectLabel(value: string): string {
     return value === EMPTY_FILTER_VALUE ? EMPTY_FILTER_LABEL : value;
 }
 
-export function DataTable<T>({ data, columns, className, onRowClick, onProcessedDataChange, filterMode = 'text', pageSize }: DataTableProps<T>) {
+export function DataTable<T>({ data, columns, className, onRowClick, onProcessedDataChange, onMultiFiltersChange, filterMode = 'text', pageSize }: DataTableProps<T>) {
     const [sortConfig, setSortConfig] = useState<SortConfig<T>>({ key: null, direction: null });
     const [filters, setFilters] = useState<Record<string, string>>({});
     const [multiFilters, setMultiFilters] = useState<Record<string, string[]>>({});
@@ -151,6 +152,10 @@ export function DataTable<T>({ data, columns, className, onRowClick, onProcessed
     useEffect(() => {
         onProcessedDataChange?.(processedData);
     }, [onProcessedDataChange, processedData]);
+
+    useEffect(() => {
+        onMultiFiltersChange?.(multiFilters);
+    }, [onMultiFiltersChange, multiFilters]);
 
     const totalPages = pageSize ? Math.max(1, Math.ceil(processedData.length / pageSize)) : 1;
     const page = pagination.data === data ? Math.min(pagination.page, totalPages) : 1;

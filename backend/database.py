@@ -57,6 +57,14 @@ class User(Base):
     strategy_proposals = relationship("StrategyProposal", back_populates="approved_by_user")
 
 
+class HomeWidgetPreference(Base):
+    __tablename__ = "home_widget_preferences"
+
+    username = Column(String(320), primary_key=True)
+    module_keys = Column(JSON, nullable=False, default=list)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+
 class UserMailConfiguration(Base):
     __tablename__ = "user_mail_configurations"
 
@@ -921,6 +929,7 @@ class FinanceMovement(Base):
     source_subcategory = Column(String(255), nullable=True)
     category_override = Column(String(255), nullable=True, index=True)
     subcategory_override = Column(String(255), nullable=True)
+    description_note = Column(Text, nullable=True)
     recurring = Column(Boolean, default=False, nullable=False)
     tax = Column(Boolean, default=False, nullable=False)
     payroll = Column(Boolean, default=False, nullable=False)

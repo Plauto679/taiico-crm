@@ -13,6 +13,7 @@ from sqlalchemy.orm import joinedload
 from database import Client, Policy, PolicyProspectorAssignment, Prospector, SessionLocal
 from services.authorization import require_module_access
 from services.auth import AccessProfile
+from services.prospector_merge import merge_prospectors
 
 
 router = APIRouter(prefix="/prospectadores", tags=["prospectadores"])
@@ -106,6 +107,10 @@ class AssignmentPayload(BaseModel):
     commission_percentage: Decimal = Field(ge=0, le=100)
     effective_from: date
     effective_to: date | None = None
+
+
+class MergePayload(BaseModel):
+    target_id: str = Field(min_length=1, max_length=36)
 
 
 def _serialize_prospector(row: Prospector, assignment_count: int = 0) -> dict:
@@ -212,6 +217,35 @@ def update_prospector(prospector_id: str, payload: ProspectorPayload, profile: A
         row.linked_username = (payload.linked_username or "").strip().casefold() or None
         db.commit()
         return {"prospector": _serialize_prospector(row)}
+    finally:
+        db.close()
+
+
+@router.post("/{prospector_id}/merge")
+def merge_prospector(
+    prospector_id: str,
+    payload: MergePayload,
+    profile: AccessProfile = Depends(require_module_access("prospectadores", operation=True)),
+):
+    db = SessionLocal()
+    try:
+        try:
+            result = merge_prospectors(
+                db,
+                source_id=prospector_id,
+                target_id=payload.target_id,
+                actor=profile.username,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        db.commit()
+        return result
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"No fue posible consolidar los prospectadores: {exc}") from exc
     finally:
         db.close()
 

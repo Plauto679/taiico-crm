@@ -40,6 +40,7 @@ from database import (
 )
 from services.auth import AccessProfile
 from services.authorization import require_module_access
+from services.finance_categories import FINANCE_CATEGORIES
 from drive.client import download_drive_file_bytes
 
 
@@ -60,6 +61,12 @@ SOURCE_META = {
     "tla_banorte": ("TLA", "BANORTE"),
     "ts_bbva": ("TS", "BBVA"),
 }
+STATEMENT_SOURCE_NAMES = {
+    "tla_amex": ("TLA/Estados Mensuales Amex", "AMEX"),
+    "tla_bbva": ("TLA/Estados Mensuales BBVA", "BBVA"),
+    "tla_banorte": ("TLA/Estados Mensuales Banorte", "Banorte"),
+    "ts_bbva": ("TS/Estados Mensuales BBVA", "BBVA"),
+}
 BANK_ALIASES = {
     "AMEX": {"AMEX", "AMERICAN EXPRESS"},
 }
@@ -70,11 +77,21 @@ RUNTIME_DIR = Path(__file__).resolve().parents[2] / ".runtime" / "finanzas"
 class MovementPatch(BaseModel):
     categoria: str | None = Field(default=None, max_length=255)
     subcategoria: str | None = Field(default=None, max_length=255)
+    descripcion: str | None = Field(default=None, max_length=2000)
     recurrente: bool | None = None
     impuesto: bool | None = None
     nomina: bool | None = None
     requiere_factura: bool | None = None
     estatus_revision: str | None = Field(default=None, max_length=50)
+
+
+class MovementExportInput(BaseModel):
+    company: str = Field(default="CONSOLIDADO", pattern="^(CONSOLIDADO|TLA|TS)$")
+    search: str = ""
+    bank: str = ""
+    start_date: date | None = None
+    end_date: date | None = None
+    column_filters: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class BulkClassification(BaseModel):
@@ -123,6 +140,13 @@ class BudgetInput(BaseModel):
 
 def _text(value: object) -> str:
     return " ".join(str(value or "").strip().split())
+
+
+def _validate_classification(category: str | None, subcategory: str | None, *, allow_clear: bool = False) -> None:
+    if allow_clear and category is None and subcategory is None:
+        return
+    if category not in FINANCE_CATEGORIES or subcategory not in FINANCE_CATEGORIES[category]:
+        raise HTTPException(422, "Selecciona una categoría y subcategoría válidas del catálogo")
 
 
 def _canonical_bank(value: object) -> str:
@@ -247,8 +271,49 @@ def _amex_account(value: object) -> str:
     return account
 
 
-def _amex_source_filename(filename: str) -> str:
-    return f"TLA/Estados Mensuales Amex/{Path(filename or 'estado.csv').name}"
+def _statement_source_filename(source_key: str, statement_month: str, extension: str = ".csv") -> str:
+    folder, bank_name = STATEMENT_SOURCE_NAMES[source_key]
+    return f"{folder}/{bank_name} {statement_month}{extension}"
+
+
+def _normalize_statement_source(source_key: str, rows: list[dict[str, object]]) -> str:
+    if not rows:
+        raise ValueError("El CSV no contiene movimientos")
+    company, bank = SOURCE_META[source_key]
+    if any(row["company"] != company or row["bank"] != bank for row in rows):
+        raise ValueError(f"El CSV contiene movimientos ajenos a {company} · {bank}")
+    dates = [row["operation_date"] for row in rows]
+    if source_key == "tla_amex":
+        if (max(dates) - min(dates)).days > 45:
+            raise ValueError("El CSV de AMEX abarca más de un estado mensual; carga cada periodo por separado")
+        statement_month = max(dates).strftime("%Y-%m")
+    else:
+        periods = {str(row["statement_period"] or "") for row in rows}
+        if len(periods) != 1:
+            raise ValueError("El CSV contiene varios periodos de estado; carga cada mes por separado")
+        stated = periods.pop()
+        if stated:
+            try:
+                statement_month = datetime.strptime(stated, "%Y-%m").strftime("%Y-%m")
+            except ValueError as exc:
+                raise ValueError(f"Periodo de estado inválido: {stated}") from exc
+            if max(dates).strftime("%Y-%m") != statement_month or (max(dates) - min(dates)).days > 45:
+                raise ValueError("Las fechas no corresponden al periodo del estado; revisa el CSV")
+        else:
+            months = {operation_date.strftime("%Y-%m") for operation_date in dates}
+            if len(months) != 1:
+                raise ValueError("No se puede determinar un solo mes para este CSV; informa el periodo de estado")
+            statement_month = months.pop()
+    source_names = {str(row["source_filename"] or "") for row in rows}
+    if len(source_names) != 1:
+        raise ValueError("El CSV contiene varios archivos fuente; carga cada estado por separado")
+    source_name = source_names.pop()
+    extension = ".pdf" if Path(source_name).suffix.casefold() == ".pdf" else ".csv"
+    normalized = _statement_source_filename(source_key, statement_month, extension)
+    for row in rows:
+        row["statement_period"] = statement_month
+        row["source_filename"] = normalized
+    return normalized
 
 
 def parse_amex_monthly_csv(content: bytes, *, filename: str = "estado.csv") -> list[dict[str, object]]:
@@ -272,7 +337,6 @@ def parse_amex_monthly_csv(content: bytes, *, filename: str = "estado.csv") -> l
 
     rows: list[dict[str, object]] = []
     occurrences: Counter[str] = Counter()
-    source_filename = _amex_source_filename(filename)
     source_hash = _sha256(content)
     for line, source in enumerate(reader, start=2):
         if not any(_text(value) for value in source.values()):
@@ -310,9 +374,10 @@ def parse_amex_monthly_csv(content: bytes, *, filename: str = "estado.csv") -> l
             "source_category": "", "source_subcategory": "", "recurring": False,
             "tax": False, "payroll": False, "requires_invoice": False,
             "invoice_uuid": "", "invoice_reconciliation_status": "", "review_status": "",
-            "statement_period": operation_date.strftime("%Y-%m"),
-            "source_filename": source_filename, "source_page": None, "source_hash": source_hash,
+            "statement_period": "",
+            "source_filename": "", "source_page": None, "source_hash": source_hash,
         })
+    _normalize_statement_source("tla_amex", rows)
     return rows
 
 
@@ -372,7 +437,9 @@ def parse_canonical_csv(content: bytes) -> list[dict[str, object]]:
 def parse_ingestion_csv(source_key: str, content: bytes, *, filename: str = "estado.csv") -> list[dict[str, object]]:
     headers = list(_csv_reader(content).fieldnames or ())
     if all(column in headers for column in CANONICAL_COLUMNS):
-        return parse_canonical_csv(content)
+        rows = parse_canonical_csv(content)
+        _normalize_statement_source(source_key, rows)
+        return rows
     if source_key == "tla_amex":
         return parse_amex_monthly_csv(content, filename=filename)
     _validate_headers(headers)
@@ -527,7 +594,7 @@ def _movement_dict(row: FinanceMovement) -> dict[str, object]:
         "descripcion_original": row.original_description, "referencia": row.reference,
         "contraparte": row.counterparty, "cargo": float(row.debit), "abono": float(row.credit),
         "importe_neto": float(row.net_amount), "saldo": float(row.balance) if row.balance is not None else None,
-        "categoria": category, "subcategoria": subcategory, "recurrente": row.recurring,
+        "categoria": category, "subcategoria": subcategory, "descripcion": row.description_note or "", "recurrente": row.recurring,
         "impuesto": row.tax, "nomina": row.payroll, "requiere_factura": row.requires_invoice,
         "factura_uuid": row.invoice_uuid, "estatus_conciliacion_factura": row.invoice_reconciliation_status,
         "estatus_revision": row.review_status, "periodo_estado": row.statement_period,
@@ -616,11 +683,16 @@ def _recurring_fingerprint(row: FinanceMovement) -> str:
     return hashlib.sha256(seed.encode()).hexdigest()
 
 
-def recurring_groups(db, company: str = "CONSOLIDADO", bank: str = "", start_date: date | None = None, end_date: date | None = None) -> list[dict[str, object]]:
+def _recurring_group_rows(db, company: str = "CONSOLIDADO", bank: str = "", start_date: date | None = None, end_date: date | None = None) -> dict[str, list[FinanceMovement]]:
     query = _movement_scope(db.query(FinanceMovement), company, bank, start_date, end_date)
     groups: dict[str, list[FinanceMovement]] = defaultdict(list)
     for row in query.order_by(FinanceMovement.operation_date).all():
         groups[_recurring_fingerprint(row)].append(row)
+    return groups
+
+
+def recurring_groups(db, company: str = "CONSOLIDADO", bank: str = "", start_date: date | None = None, end_date: date | None = None) -> list[dict[str, object]]:
+    groups = _recurring_group_rows(db, company, bank, start_date, end_date)
     decisions = {row.fingerprint: row for row in db.query(FinanceRecurringDecision).all()}
     result = []
     for fingerprint, rows in groups.items():
@@ -738,6 +810,11 @@ def get_overview(company: str = Query(default="CONSOLIDADO", pattern="^(CONSOLID
     return overview(company, bank, start_date, end_date)
 
 
+@router.get("/categories")
+def list_categories():
+    return {category: list(subcategories) for category, subcategories in FINANCE_CATEGORIES.items()}
+
+
 @router.get("/movements")
 def list_movements(company: str = "CONSOLIDADO", search: str = "", category: str = "", bank: str = "", start_date: date | None = None, end_date: date | None = None, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=5000), sort: str = "operation_date", direction: str = "desc"):
     db = SessionLocal()
@@ -745,7 +822,7 @@ def list_movements(company: str = "CONSOLIDADO", search: str = "", category: str
         query = _movement_scope(db.query(FinanceMovement), company, bank, start_date, end_date)
         if search:
             pattern = f"%{search.strip()}%"
-            query = query.filter(or_(FinanceMovement.original_description.ilike(pattern), FinanceMovement.counterparty.ilike(pattern), FinanceMovement.reference.ilike(pattern), FinanceMovement.external_id.ilike(pattern)))
+            query = query.filter(or_(FinanceMovement.original_description.ilike(pattern), FinanceMovement.description_note.ilike(pattern), FinanceMovement.counterparty.ilike(pattern), FinanceMovement.reference.ilike(pattern), FinanceMovement.external_id.ilike(pattern)))
         if category: query = query.filter(or_(FinanceMovement.category_override == category, (FinanceMovement.category_override.is_(None)) & (FinanceMovement.source_category == category)))
         total = query.count()
         allowed_sort = {"operation_date": FinanceMovement.operation_date, "net_amount": FinanceMovement.net_amount, "bank": FinanceMovement.bank, "company": FinanceMovement.company}
@@ -758,14 +835,50 @@ def list_movements(company: str = "CONSOLIDADO", search: str = "", category: str
 
 @router.get("/movements/export")
 def export_movements(company: str = "CONSOLIDADO", search: str = "", bank: str = "", start_date: date | None = None, end_date: date | None = None):
+    return _export_movements(MovementExportInput(company=company, search=search, bank=bank, start_date=start_date, end_date=end_date))
+
+
+@router.post("/movements/export")
+def export_filtered_movements(payload: MovementExportInput):
+    return _export_movements(payload)
+
+
+_EXPORT_FILTER_KEYS = {
+    "fecha_operacion", "empresa", "banco", "descripcion_original", "categoria",
+    "descripcion", "importe_neto", "Recurrente", "Factura", "archivo_fuente",
+}
+_EMPTY_FILTER_VALUE = "__TAIICO_EMPTY_FILTER_VALUE__"
+
+
+def _export_filter_value(item: dict[str, object], key: str) -> str:
+    if key == "Factura":
+        value = "Conciliada" if item["factura_uuid"] else "Pendiente" if item["requiere_factura"] else ""
+    elif key == "Recurrente":
+        value = "Sí" if item["recurrente"] else "No"
+    else:
+        value = item[key]
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    text = str(value) if value is not None else ""
+    return text if text.strip() else _EMPTY_FILTER_VALUE
+
+
+def _matches_export_filters(item: dict[str, object], column_filters: dict[str, list[str]]) -> bool:
+    return all(not selected or _export_filter_value(item, key) in selected for key, selected in column_filters.items())
+
+
+def _export_movements(payload: MovementExportInput):
+    if unknown := set(payload.column_filters) - _EXPORT_FILTER_KEYS:
+        raise HTTPException(422, f"Filtros de columna no reconocidos: {', '.join(sorted(unknown))}")
+    company, search, bank, start_date, end_date = payload.company, payload.search, payload.bank, payload.start_date, payload.end_date
     db = SessionLocal()
     try:
         query = _movement_scope(db.query(FinanceMovement), company, bank, start_date, end_date)
         if search:
             pattern = f"%{search.strip()}%"
-            query = query.filter(or_(FinanceMovement.original_description.ilike(pattern), FinanceMovement.counterparty.ilike(pattern), FinanceMovement.reference.ilike(pattern), FinanceMovement.external_id.ilike(pattern)))
+            query = query.filter(or_(FinanceMovement.original_description.ilike(pattern), FinanceMovement.description_note.ilike(pattern), FinanceMovement.counterparty.ilike(pattern), FinanceMovement.reference.ilike(pattern), FinanceMovement.external_id.ilike(pattern)))
 
-        headers = ["ID", "Empresa", "Banco", "Fecha", "Descripción", "Contraparte", "Moneda", "Cargo", "Abono", "Importe neto", "Saldo", "Categoría", "Subcategoría", "UUID factura", "Archivo fuente", "Página"]
+        headers = ["ID", "Empresa", "Banco", "Fecha", "Descripción original", "Contraparte", "Moneda", "Cargo", "Abono", "Importe neto", "Saldo", "Categoría", "Subcategoría", "UUID factura", "Archivo fuente", "Página", "Descripción interna", "Recurrente"]
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Movimientos"
@@ -773,12 +886,14 @@ def export_movements(company: str = "CONSOLIDADO", search: str = "", bank: str =
 
         for row in query.order_by(FinanceMovement.operation_date, FinanceMovement.id).all():
             item = _movement_dict(row)
+            if not _matches_export_filters(item, payload.column_filters):
+                continue
             sheet.append([
                 item["id_movimiento"], item["empresa"], item["banco"], row.operation_date,
                 item["descripcion_original"], item["contraparte"], item["moneda"],
                 item["cargo"], item["abono"], item["importe_neto"], item["saldo"],
                 item["categoria"], item["subcategoria"], item["factura_uuid"],
-                item["archivo_fuente"], item["pagina_fuente"],
+                item["archivo_fuente"], item["pagina_fuente"], item["descripcion"], "Sí" if item["recurrente"] else "No",
             ])
 
         header_fill = PatternFill("solid", fgColor="17365D")
@@ -792,7 +907,7 @@ def export_movements(company: str = "CONSOLIDADO", search: str = "", bank: str =
             for column_number in (8, 9, 10, 11):
                 sheet.cell(row_number, column_number).number_format = '$#,##0.00;[Red]-$#,##0.00'
 
-        widths = (24, 12, 16, 13, 48, 32, 12, 16, 16, 18, 16, 24, 24, 38, 36, 10)
+        widths = (24, 12, 16, 13, 48, 32, 12, 16, 16, 18, 16, 24, 24, 38, 36, 10, 50, 16)
         for column_number, width in enumerate(widths, start=1):
             sheet.column_dimensions[get_column_letter(column_number)].width = width
         sheet.freeze_panes = "A2"
@@ -817,7 +932,13 @@ def update_movement(movement_id: str, payload: MovementPatch, profile: AccessPro
         row = db.get(FinanceMovement, movement_id)
         if not row: raise HTTPException(404, "Movimiento no encontrado")
         values = payload.model_dump(exclude_unset=True)
-        mapping = {"categoria": "category_override", "subcategoria": "subcategory_override", "recurrente": "recurring", "impuesto": "tax", "nomina": "payroll", "requiere_factura": "requires_invoice", "estatus_revision": "review_status"}
+        if "categoria" in values or "subcategoria" in values:
+            if "categoria" not in values or "subcategoria" not in values:
+                raise HTTPException(422, "Envía categoría y subcategoría juntas")
+            _validate_classification(values["categoria"], values["subcategoria"], allow_clear=True)
+        if "descripcion" in values:
+            values["descripcion"] = _text(values["descripcion"]) or None
+        mapping = {"categoria": "category_override", "subcategoria": "subcategory_override", "descripcion": "description_note", "recurrente": "recurring", "impuesto": "tax", "nomina": "payroll", "requiere_factura": "requires_invoice", "estatus_revision": "review_status"}
         for key, value in values.items(): setattr(row, mapping[key], value)
         row.enrichment_updated_by = profile.username; row.enrichment_updated_at = datetime.utcnow()
         db.commit(); db.refresh(row)
@@ -827,6 +948,7 @@ def update_movement(movement_id: str, payload: MovementPatch, profile: AccessPro
 
 @router.post("/movements/bulk-classify")
 def bulk_classify(payload: BulkClassification, profile: AccessProfile = Depends(require_module_access("finanzas", operation=True))):
+    _validate_classification(payload.categoria, payload.subcategoria)
     db = SessionLocal()
     try:
         rows = db.query(FinanceMovement).filter(FinanceMovement.id.in_(payload.movement_ids)).all()
@@ -842,6 +964,67 @@ def list_recurring(company: str = "CONSOLIDADO", bank: str = "", start_date: dat
     db = SessionLocal()
     try: return {"items": recurring_groups(db, company, bank, start_date, end_date)}
     finally: db.close()
+
+
+@router.get("/recurring/{fingerprint}/export")
+def export_recurring_movements(
+    fingerprint: str,
+    company: str = Query(default="CONSOLIDADO", pattern="^(CONSOLIDADO|TLA|TS)$"),
+    bank: str = "",
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
+    if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+        raise HTTPException(404, "Grupo recurrente no encontrado")
+    db = SessionLocal()
+    try:
+        rows = _recurring_group_rows(db, company, bank, start_date, end_date).get(fingerprint)
+        decision = db.get(FinanceRecurringDecision, fingerprint)
+        if not rows or (len({row.operation_date.strftime("%Y-%m") for row in rows}) < 2 and not decision):
+            raise HTTPException(404, "Grupo recurrente no encontrado en los filtros aplicados")
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Movimientos"
+        sheet.append([
+            "ID movimiento", "Empresa", "Banco", "Fecha", "Mes", "Descripción",
+            "Contraparte", "Referencia", "Cargo", "Abono", "Importe neto",
+            "Categoría", "Subcategoría", "UUID factura", "Archivo fuente", "Página fuente", "Descripción interna",
+        ])
+        for row in rows:
+            item = _movement_dict(row)
+            sheet.append([
+                item["id_movimiento"], item["empresa"], item["banco"], row.operation_date,
+                row.operation_date.strftime("%Y-%m"), item["descripcion_original"],
+                item["contraparte"], item["referencia"], item["cargo"], item["abono"],
+                item["importe_neto"], item["categoria"], item["subcategoria"],
+                item["factura_uuid"], item["archivo_fuente"], item["pagina_fuente"], item["descripcion"],
+            ])
+        header_fill = PatternFill("solid", fgColor="17365D")
+        for cell in sheet[1]:
+            cell.fill = header_fill
+            cell.font = Font(color="FFFFFF", bold=True)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        for row_number in range(2, sheet.max_row + 1):
+            sheet.cell(row_number, 4).number_format = "dd/mm/yyyy"
+            for column_number in (9, 10, 11):
+                sheet.cell(row_number, column_number).number_format = '$#,##0.00;[Red]-$#,##0.00'
+        widths = (25, 12, 16, 13, 12, 52, 32, 30, 16, 16, 18, 24, 24, 38, 42, 14, 50)
+        for column_number, width in enumerate(widths, start=1):
+            sheet.column_dimensions[get_column_letter(column_number)].width = width
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        sheet.sheet_view.showGridLines = False
+        output = io.BytesIO()
+        workbook.save(output)
+        filename = f"recurrente-{fingerprint[:12]}-{date.today():%Y%m%d}.xlsx"
+        return Response(
+            content=output.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    finally:
+        db.close()
 
 
 @router.put("/recurring/{fingerprint}")
@@ -949,6 +1132,8 @@ def list_budgets(company: str = "CONSOLIDADO", month: date | None = None):
 
 @router.put("/budgets")
 def upsert_budget(payload: BudgetInput, profile: AccessProfile = Depends(require_module_access("finanzas", operation=True))):
+    if payload.category not in FINANCE_CATEGORIES:
+        raise HTTPException(422, "Selecciona una categoría válida del catálogo")
     db = SessionLocal()
     try:
         month = payload.month.replace(day=1)
@@ -999,6 +1184,7 @@ def list_rules():
 
 @router.post("/rules", status_code=201)
 def create_rule(payload: RuleInput, profile: AccessProfile = Depends(require_module_access("finanzas", operation=True))):
+    _validate_classification(payload.category, payload.subcategory)
     if payload.operator == "regex":
         try: re.compile(payload.value)
         except re.error as exc: raise HTTPException(422, f"Expresión regular inválida: {exc}") from exc
@@ -1037,6 +1223,8 @@ def apply_rule(rule_id: str, profile: AccessProfile = Depends(require_module_acc
     try:
         rule = db.get(FinanceClassificationRule, rule_id)
         if not rule: raise HTTPException(404, "Regla no encontrada")
+        if not rule.exclusion:
+            _validate_classification(rule.category, rule.subcategory)
         updated = 0; run_id = str(uuid.uuid4())
         for row in db.query(FinanceMovement).all():
             if not _rule_matches(rule, row): continue
@@ -1084,9 +1272,10 @@ async def preview_ingestion(source_key: str, file: UploadFile = File(...), profi
         ingestion_id = str(uuid.uuid4()); staging = RUNTIME_DIR / f"{ingestion_id}.csv"
         canonical_content = serialize_canonical_csv(rows)
         temporary = staging.with_suffix(".tmp"); temporary.write_bytes(canonical_content); os.chmod(temporary, 0o600); os.replace(temporary, staging)
-        record = FinanceIngestion(id=ingestion_id, source_key=source_key, filename=Path(file.filename or "estado.csv").name, file_hash=digest, status="previsualizada", row_count=len(rows), new_rows=sum(row["external_id"] not in existing for row in rows), duplicate_rows=sum(row["external_id"] in existing for row in rows), staging_path=str(staging), created_by=profile.username)
+        stored_filename = Path(_statement_source_filename(source_key, str(rows[0]["statement_period"]))).name
+        record = FinanceIngestion(id=ingestion_id, source_key=source_key, filename=stored_filename, file_hash=digest, status="previsualizada", row_count=len(rows), new_rows=sum(row["external_id"] not in existing for row in rows), duplicate_rows=sum(row["external_id"] in existing for row in rows), staging_path=str(staging), created_by=profile.username)
         db.add(record); db.commit()
-        return {"ingestion_id": record.id, "rows": record.row_count, "new_rows": record.new_rows, "duplicates": record.duplicate_rows, "sample": [{"id_movimiento": row["external_id"], "fecha_operacion": row["operation_date"].isoformat(), "descripcion_original": row["original_description"], "importe_neto": float(row["net_amount"])} for row in rows[:20]]}
+        return {"ingestion_id": record.id, "filename": record.filename, "source_filename": rows[0]["source_filename"], "rows": record.row_count, "new_rows": record.new_rows, "duplicates": record.duplicate_rows, "sample": [{"id_movimiento": row["external_id"], "fecha_operacion": row["operation_date"].isoformat(), "descripcion_original": row["original_description"], "importe_neto": float(row["net_amount"])} for row in rows[:20]]}
     finally: db.close()
 
 

@@ -20,4 +20,7 @@ export const createProspector = (payload: ProspectorInput) => fetchFromApi<{ pro
 export const updateProspector = (id: string, payload: ProspectorInput) => fetchFromApi<{ prospector: Prospector }>(`/prospectadores/${id}`, {
   method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
 });
+export const mergeProspector = (sourceId: string, targetId: string) => fetchFromApi<{ target_id: string; target_name: string; removed_source_id: string; moved_assignments: number; moved_balances: number }>(`/prospectadores/${sourceId}/merge`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_id: targetId }),
+});
 export const migrateCarteraProspectors = () => fetchFromApi<{ created_prospectors: number; created_assignments: number; skipped: number }>('/prospectadores/migrate-cartera', { method: 'POST' });

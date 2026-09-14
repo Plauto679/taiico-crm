@@ -1,6 +1,7 @@
 import { fetchFromApi } from '@/lib/api';
 
 export type Company = 'CONSOLIDADO' | 'TLA' | 'TS';
+export type FinanceCategories = Record<string, string[]>;
 export type FinanceFilters = { bank?: string; startDate?: string; endDate?: string };
 export type FinanceSource = { key: string; company: string; bank: string; available: boolean; row_count: number; last_modified_at: string | null; last_synced_at: string | null; error?: string | null };
 export type MonthlyPoint = { month: string; entries: number; exits: number; net: number };
@@ -9,7 +10,7 @@ export type FinanceOverview = {
   kpis: { active_cash: number; credit_liability: number; net_flow_month: number; entries_month: number; exits_month: number; unclassified: number; recurring_pending: number; invoice_gaps: number; tax_month: number; future_commitments: number };
   monthly: MonthlyPoint[]; sources: FinanceSource[];
 };
-export type FinanceMovement = { id: string; id_movimiento: string; empresa: string; banco: string; tipo_cuenta?: string; naturaleza_cuenta?: string; moneda: string; fecha_operacion: string; fecha_liquidacion?: string | null; descripcion_original: string; referencia?: string; contraparte?: string; cargo: number; abono: number; importe_neto: number; saldo?: number | null; categoria: string; subcategoria: string; recurrente: boolean; impuesto: boolean; nomina: boolean; requiere_factura: boolean; factura_uuid?: string; estatus_conciliacion_factura?: string; estatus_revision?: string; periodo_estado?: string; archivo_fuente?: string; pagina_fuente?: number | null };
+export type FinanceMovement = { id: string; id_movimiento: string; empresa: string; banco: string; tipo_cuenta?: string; naturaleza_cuenta?: string; moneda: string; fecha_operacion: string; fecha_liquidacion?: string | null; descripcion_original: string; descripcion: string; referencia?: string; contraparte?: string; cargo: number; abono: number; importe_neto: number; saldo?: number | null; categoria: string; subcategoria: string; recurrente: boolean; impuesto: boolean; nomina: boolean; requiere_factura: boolean; factura_uuid?: string; estatus_conciliacion_factura?: string; estatus_revision?: string; periodo_estado?: string; archivo_fuente?: string; pagina_fuente?: number | null };
 export type MovementResponse = { items: FinanceMovement[]; total: number; page: number; page_size: number; categories: string[] };
 export type RecurringGroup = { fingerprint: string; company: string; label: string; occurrences: number; months: number; average_amount: number; last_date: string; status: string; note?: string | null; basis: string };
 export type FinanceInvoice = { id: string; filename: string; file_type: string; uuid?: string | null; issuer_rfc?: string | null; receiver_rfc?: string | null; issued_at?: string | null; total?: number | null; currency?: string | null; status: string; parse_error?: string | null };
@@ -27,17 +28,28 @@ function financeQuery(company: Company, filters: FinanceFilters = {}, extra: Rec
 }
 
 export const getFinanceOverview = (company: Company = 'CONSOLIDADO', filters: FinanceFilters = {}) => fetchFromApi<FinanceOverview>(`/finanzas/overview?${financeQuery(company, filters)}`);
+export const getFinanceCategories = () => fetchFromApi<FinanceCategories>('/finanzas/categories');
 export const getMovements = (company: Company, search = '', filters: FinanceFilters = {}) => fetchFromApi<MovementResponse>(`/finanzas/movements?${financeQuery(company, filters, { search, page: 1, page_size: 5000 })}`);
 export const updateMovement = (id: string, payload: Record<string, unknown>) => fetchFromApi<{ movement: FinanceMovement }>(`/finanzas/movements/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-export async function exportMovements(company: Company, search = '', filters: FinanceFilters = {}) {
-  const response = await fetch(`/api/finanzas/movements/export?${financeQuery(company, filters, { search })}`, { credentials: 'same-origin' });
+async function downloadExcel(response: Response, fallbackName: string) {
   if (!response.ok) throw new Error('No se pudo exportar el archivo de Excel');
   const blob = await response.blob(); const url = URL.createObjectURL(blob); const anchor = document.createElement('a');
   const disposition = response.headers.get('Content-Disposition');
-  const filename = disposition?.match(/filename="?([^";]+)"?/i)?.[1] || `movimientos-${company.toLowerCase()}.xlsx`;
+  const filename = disposition?.match(/filename="?([^";]+)"?/i)?.[1] || fallbackName;
   anchor.href = url; anchor.download = filename; anchor.click(); URL.revokeObjectURL(url);
 }
+export async function exportMovements(company: Company, search = '', filters: FinanceFilters = {}, columnFilters: Record<string, string[]> = {}) {
+  const response = await fetch('/api/finanzas/movements/export', {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ company, search, bank: filters.bank || '', start_date: filters.startDate || null, end_date: filters.endDate || null, column_filters: columnFilters }),
+  });
+  await downloadExcel(response, `movimientos-${company.toLowerCase()}.xlsx`);
+}
 export const getRecurring = (company: Company, filters: FinanceFilters = {}) => fetchFromApi<{ items: RecurringGroup[] }>(`/finanzas/recurring?${financeQuery(company, filters)}`);
+export async function exportRecurringMovements(fingerprint: string, company: Company, filters: FinanceFilters = {}) {
+  const response = await fetch(`/api/finanzas/recurring/${encodeURIComponent(fingerprint)}/export?${financeQuery(company, filters)}`, { credentials: 'same-origin' });
+  await downloadExcel(response, `recurrente-${fingerprint.slice(0, 12)}.xlsx`);
+}
 export const decideRecurring = (fingerprint: string, status: string) => fetchFromApi(`/finanzas/recurring/${fingerprint}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
 export const getInvoices = () => fetchFromApi<{ items: FinanceInvoice[]; folder_available: boolean }>('/finanzas/invoices');
 export const scanInvoices = () => fetchFromApi<{ available: boolean; indexed: number; errors: number; message?: string }>('/finanzas/invoices/scan', { method: 'POST' });
@@ -57,6 +69,6 @@ export const revertRule = (id: string) => fetchFromApi<{ restored: number }>(`/f
 export const syncSources = () => fetchFromApi<{ sources: FinanceSource[] }>('/finanzas/sources/sync', { method: 'POST' });
 export async function previewIngestion(sourceKey: string, file: File) {
   const data = new FormData(); data.set('file', file);
-  return fetchFromApi<{ ingestion_id: string; rows: number; new_rows: number; duplicates: number; sample: Array<Record<string, unknown>> }>(`/finanzas/ingestions/preview?source_key=${sourceKey}`, { method: 'POST', body: data });
+  return fetchFromApi<{ ingestion_id: string; filename: string; source_filename: string; rows: number; new_rows: number; duplicates: number; sample: Array<Record<string, unknown>> }>(`/finanzas/ingestions/preview?source_key=${sourceKey}`, { method: 'POST', body: data });
 }
 export const publishIngestion = (id: string) => fetchFromApi<{ success: boolean; published_rows: number; backup_created: boolean }>(`/finanzas/ingestions/${id}/publish`, { method: 'POST' });

@@ -20,6 +20,7 @@ from services.auth import AccessProfile
 from services.authorization import current_access_profile, require_module_access
 from services.agent_scope import profile_allows_insurer, profile_allows_policy
 from services.data_cache import data_cache
+from services.prospector_merge import reassign_policy_to_named_prospector
 
 
 router = APIRouter(prefix="/cartera", tags=["cartera"])
@@ -700,6 +701,10 @@ def update_cartera_record(
             "carrier": str(payload.carrier or "").strip(),
         }
         policy.client.full_name = payload.contractor.strip()
+        try:
+            reassign_policy_to_named_prospector(db, policy, payload.prospector)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         canonical_snapshot = _write_canonical(payload, original_policy_number)
         db.commit()
         db.refresh(policy)
