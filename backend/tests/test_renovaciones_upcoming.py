@@ -73,7 +73,8 @@ class UpcomingRenewalsTests(unittest.TestCase):
                 renovaciones,
                 "run_in_threadpool",
                 new=AsyncMock(side_effect=[
-                    {("GMM-1", "2026-10-02"): {"AGENTE": "00008589", "NOMBRE": "Agente"}},
+                    {("GMM-1", "2026-10-02"): {"AGENTE": "00008589", "NOMBRE": "Agente", "PAGADO_HASTA_BASE": "2026-08-30"}},
+                    {("GMM-1", "2026-10-02"): {"paid_until": "2026-09-30", "checked_at": "2026-09-14T12:00:00+00:00"}},
                     {("VIDA-1", "2026-10-01"): {"AGENTE": "00008589", "NOMBRE": "Agente"}},
                     {"8589": "TAIICO"},
                 ]),
@@ -85,6 +86,7 @@ class UpcomingRenewalsTests(unittest.TestCase):
                     end_date="2026-11-01",
                     insurer="Metlife",
                     type="ALL",
+                    profile=SimpleNamespace(is_agent=False, is_central_admin=True),
                 )
             )
 
@@ -92,6 +94,9 @@ class UpcomingRenewalsTests(unittest.TestCase):
         self.assertEqual([row["PROMOTORIA"] for row in result], ["TAIICO", "TAIICO"])
         self.assertEqual(query.filters[0].right.value, date(2026, 9, 1))
         self.assertEqual(query.filters[1].right.value, date(2026, 11, 1))
+        self.assertEqual(result[1]["PAGADO_HASTA_BASE"], "2026-08-30")
+        self.assertEqual(result[1]["PAGADOHASTA"], "2026-09-30")
+        self.assertEqual(result[1]["ULTIMA_CONSULTA_PORTAL"], "2026-09-14 12:00")
         db.close.assert_called_once()
 
 

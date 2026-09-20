@@ -28,3 +28,10 @@ export async function getCobranzaGMM(startDate?: string, endDate?: string, insur
 
     return fetchFromApi<CobranzaGMM[]>(`/cobranza/gmm?${queryString}`);
 }
+
+export async function getMetlifeCollectionBase(branch: 'VIDA' | 'GMM', startDate?: string, endDate?: string) {
+    const params = new URLSearchParams({ branch });
+    if (startDate) params.set('start_date', startDate);
+    if (endDate) params.set('end_date', endDate);
+    return fetchFromApi<import('@/lib/types/cobranza').CobranzaMetlifeBase[]>(`/cobranza/metlife/base?${params}`);
+}

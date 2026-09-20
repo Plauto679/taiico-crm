@@ -8,7 +8,9 @@ export interface RenovacionGMM {
     IVA: number;
     NOMBREL: string; // Asegurado
     DEDUCIBLE: number;
-    PAGADOHASTA: string; // Date DD/MM/YYYY
+    PAGADOHASTA: string | null; // Portal date YYYY-MM-DD
+    PAGADO_HASTA_BASE?: string | null;
+    ULTIMA_CONSULTA_PORTAL?: string | null;
     COASEGURO?: number; // Optional as it wasn't strictly in the display list but is useful
     AGENTE: string;
     NOMBRE: string;

@@ -28,6 +28,7 @@ _sync_lock = threading.Lock()
 def _module_for_path(path: str) -> str:
     root = path.strip("/").split("/", 1)[0].replace("-", "_") or "sistema"
     aliases = {
+        "estados_prospectadores": "estados_agentes",
         "base_loads": "carga_bases",
         "mail_configuration": "configuracion_mail",
         "automatic_mails": "mails_automaticos",

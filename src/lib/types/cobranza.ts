@@ -55,3 +55,25 @@ export interface CobranzaAarco {
     '% COMISION PROSPECTADOR': number;
     '$ COMISION PROSPECTADOR': number;
 }
+
+export interface CobranzaMetlifeBase {
+    '# de Póliza': string;
+    'Contratante': string | null;
+    'RFC': string | null;
+    'Producto': string;
+    'Inicio Vigencia': string | null;
+    'Fin Vigencia': string | null;
+    'Forma de Pago': string | null;
+    'Conducto de Cobro': string | null;
+    'Estado': string | null;
+    'Moneda': string | null;
+    'Prima Anual': number | null;
+    'Prima Modal': number | null;
+    'Pagado Hasta': string | null;
+    'Pagado Hasta (base)'?: string | null;
+    'Pagado Hasta (portal)'?: string | null;
+    'Última consulta al portal'?: string | null;
+    'Clave Agente': string;
+    'Agente': string | null;
+    'Promotoría': string;
+}

@@ -26,6 +26,24 @@ from services.prospector_merge import merge_prospectors, reassign_policy_to_name
 
 
 class ProspectorMergeTests(unittest.TestCase):
+    def test_blank_cartera_start_is_retroactive_and_has_no_expiration(self):
+        from services.cobranza_prospectadores import _matching_assignments
+        self.assignment.effective_from = datetime.date(2026, 9, 15)
+        self.assignment.effective_to = datetime.date(2027, 9, 15)
+        self.db.flush()
+        for movement in (datetime.date(2020, 1, 1), datetime.date(2040, 1, 1)):
+            rows, expired = _matching_assignments(self.db, self.policy.id, movement)
+            self.assertEqual([row.id for row in rows], [self.assignment.id])
+            self.assertFalse(expired)
+
+    def test_explicit_cartera_start_and_expiration_are_respected(self):
+        from services.cobranza_prospectadores import _matching_assignments
+        self.policy.metadata_json = {"payment_start_date": "2026-08-01"}
+        self.db.flush()
+        self.assertEqual(_matching_assignments(self.db, self.policy.id, datetime.date(2026, 7, 31)), ([], False))
+        self.assertFalse(_matching_assignments(self.db, self.policy.id, datetime.date(2026, 8, 3))[1])
+        self.assertTrue(_matching_assignments(self.db, self.policy.id, datetime.date(2027, 8, 1))[1])
+
     def setUp(self):
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(engine)
@@ -65,6 +83,40 @@ class ProspectorMergeTests(unittest.TestCase):
         )
         self.db.add_all([self.assignment, self.period, self.balance])
         self.db.commit()
+
+    def test_migration_count_recognizes_all_active_assignment_sources(self):
+        from services.prospectadores import migration_preview
+        for source in ('cartera_edit', 'manual', 'cartera_migration'):
+            self.assignment.source = source
+            self.db.flush()
+            self.assertEqual(migration_preview(self.db)['policies_pending'], 0)
+        self.assignment.is_active = False
+        self.db.flush()
+        self.assertEqual(migration_preview(self.db)['policies_pending'], 1)
+
+    def test_migration_count_detects_missing_member_of_split(self):
+        from services.prospectadores import migration_preview
+        self.policy.metadata_json = {'prospector': '50% Alberto Alfaro, 50% Alberto Alfaro Mendoza'}
+        self.db.flush()
+        self.assertEqual(migration_preview(self.db)['policies_pending'], 1)
+        self.db.add(PolicyProspectorAssignment(
+            policy_id=self.policy.id, prospector_id=self.target.id,
+            commission_rate=Decimal('0.5'), effective_from=datetime.date(2026, 1, 1),
+            source='cartera_edit', created_by='user',
+        ))
+        self.db.flush()
+        self.assertEqual(migration_preview(self.db)['policies_pending'], 0)
+
+    def test_zero_cartera_rate_overrides_old_migration_rate(self):
+        from services.cobranza_prospectadores import analyze_import_lines
+        self.policy.commission_percentage = Decimal('0')
+        self.db.flush()
+        item=analyze_import_lines(self.db,[{'policy_number':'19696','movement_date':'2026-08-07',
+            'source_commission':'1315.16','currency':'MXN','branch':'GMM'}],self.period)[0]
+        self.assertEqual(Decimal(item['allocations'][0]['commission_rate']),Decimal('0'))
+        self.assertEqual(Decimal(item['allocations'][0]['calculation']['total_amount']),Decimal('0'))
+        reassign_policy_to_named_prospector(self.db,self.policy,self.source.name)
+        self.assertEqual(self.assignment.commission_rate,Decimal('0'))
 
     def tearDown(self):
         self.db.close()

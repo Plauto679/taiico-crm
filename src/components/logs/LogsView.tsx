@@ -6,7 +6,7 @@ import { AuditLogEntry, syncAuditLogs } from '@/modules/logs/service';
 
 const MODULE_LABELS: Record<string, string> = {
   accesos: 'Accesos', base_loads: 'Carga de bases', carga_bases: 'Carga de bases',
-  cartera: 'Cartera de Prospectadores', prospectadores: 'Prospectadores', cobranza_prospectadores: 'Cobranza para prospectadores', clientes: 'Clientes', cobranza: 'Cobranza', cotizaciones: 'Cotizaciones',
+  estados_agentes: 'Estados de Prospectadores', cartera: 'Cartera de Prospectadores', prospectadores: 'Prospectadores', cobranza_prospectadores: 'Cobranza para prospectadores', clientes: 'Clientes', cobranza: 'Cobranza', cotizaciones: 'Cotizaciones',
   pendientes: 'Pendientes', recluta: 'Recluta', renovaciones: 'Renovaciones', configuracion_mail: 'Configuración de Mail', mails_automaticos: 'Mails automáticos', gestion_comercial: 'Gestión Comercial',
 };
 

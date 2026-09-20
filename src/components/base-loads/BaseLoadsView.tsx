@@ -76,7 +76,7 @@ export function BaseLoadsView() {
     }
 
     async function applyLoad() {
-        if (!preview || applying) return;
+        if (!preview || applying || preview.preview.rows_after_agent_filter === 0) return;
         setApplying(true);
         setError('');
         try {
@@ -93,6 +93,7 @@ export function BaseLoadsView() {
     }
 
     const stats = preview?.preview;
+    const noMatches = stats?.rows_after_agent_filter === 0;
 
     return (
         <div className="h-full overflow-y-auto overscroll-contain">
@@ -149,6 +150,11 @@ export function BaseLoadsView() {
                     {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
                     {loading ? 'Analizando…' : 'Generar vista previa'}
                 </button>
+                {loading && product === 'gmm' && (
+                    <p role="status" className="mt-3 text-sm text-slate-600">
+                        Preparando la vista previa. Los reportes grandes pueden tardar varios minutos; mantén esta página abierta.
+                    </p>
+                )}
             </section>
 
             {error && (
@@ -180,6 +186,11 @@ export function BaseLoadsView() {
                             tone="warning"
                         />
                     </div>
+                    {noMatches ? (
+                        <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+                            No es necesario actualizar la base con el archivo cargado. No hay claves de agente con coincidencias en el módulo de Agentes.
+                        </div>
+                    ) : (<>
                     <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
                         {product === 'gmm' ? (
                             <>Se preservarán datos de Y en adelante en <strong>{number.format(stats.rows_with_preserved_y_plus_data || 0)}</strong> filas. El resultado tendrá <strong>{number.format(stats.final_policy_count)}</strong> pólizas y <strong>{number.format(stats.final_row_count)}</strong> vigencias/variantes A–X.</>
@@ -198,6 +209,7 @@ export function BaseLoadsView() {
                             {applying ? 'Actualizando…' : 'Aplicar actualización y crear respaldo'}
                         </button>
                     </div>
+                    </>)}
                 </section>
             )}
 

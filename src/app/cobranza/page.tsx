@@ -1,7 +1,7 @@
-import { getCobranzaVida, getCobranzaGMM } from '@/modules/cobranza/service';
+import { getCobranzaVida, getMetlifeCollectionBase } from '@/modules/cobranza/service';
 import { CobranzaView } from '@/components/cobranza/CobranzaView';
 import { DateRangeFilter } from '@/components/ui/DateRangeFilter';
-import { CobranzaVida, CobranzaGMM, CobranzaSura, CobranzaAarco } from '@/lib/types/cobranza';
+import { CobranzaMetlifeBase, CobranzaSura, CobranzaAarco } from '@/lib/types/cobranza';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
@@ -16,15 +16,17 @@ export default async function CobranzaPage({
     const startDate = params.startDate;
     const endDate = params.endDate;
 
-    let vidaData: CobranzaVida[] = [];
-    let gmmData: CobranzaGMM[] = [];
+    let vidaData: CobranzaMetlifeBase[] = [];
+    let gmmData: CobranzaMetlifeBase[] = [];
     let suraData: CobranzaSura[] = [];
     let aarcoData: CobranzaAarco[] = [];
 
     if (insurer === 'Metlife') {
         // Fetch Metlife Data
-        vidaData = await getCobranzaVida(startDate, endDate, insurer) as CobranzaVida[];
-        gmmData = await getCobranzaGMM(startDate, endDate, insurer) as CobranzaGMM[];
+        [vidaData, gmmData] = await Promise.all([
+            getMetlifeCollectionBase('VIDA', startDate, endDate),
+            getMetlifeCollectionBase('GMM', startDate, endDate),
+        ]);
     } else if (insurer === 'SURA') {
         // Fetch SURA Data
         suraData = await getCobranzaVida(startDate, endDate, insurer) as CobranzaSura[];
@@ -56,7 +58,10 @@ export default async function CobranzaPage({
                     </div>
                 </div>
 
-                <DateRangeFilter />
+                <DateRangeFilter
+                    startLabel={insurer === 'Metlife' ? 'Pagado Hasta desde' : 'Fecha Inicio'}
+                    endLabel={insurer === 'Metlife' ? 'Pagado Hasta hasta' : 'Fecha Fin'}
+                />
             </div>
             <div className="flex-1 min-h-0 px-4 pb-4 sm:px-8 sm:pb-8">
                 <CobranzaView

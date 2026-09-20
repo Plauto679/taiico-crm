@@ -1,13 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { DataTable } from '@/components/ui/DataTable';
-import { CobranzaGMM, CobranzaVida, CobranzaSura, CobranzaAarco } from '@/lib/types/cobranza';
+import { DataTable, type Column } from '@/components/ui/DataTable';
+import { CobranzaMetlifeBase, CobranzaSura, CobranzaAarco } from '@/lib/types/cobranza';
 import { exportToExcel } from '@/lib/utils/export';
 
 interface CobranzaViewProps {
-    vidaData?: CobranzaVida[];
-    gmmData?: CobranzaGMM[];
+    vidaData?: CobranzaMetlifeBase[];
+    gmmData?: CobranzaMetlifeBase[];
     suraData?: CobranzaSura[];
     aarcoData?: CobranzaAarco[];
     insurer?: string;
@@ -17,11 +17,13 @@ export function CobranzaView({ vidaData = [], gmmData = [], suraData = [], aarco
     const [activeTab, setActiveTab] = useState<'VIDA' | 'GMM'>('VIDA');
 
     const handleExport = () => {
-        let data: any[] = [];
+        let data: (CobranzaMetlifeBase | CobranzaSura | CobranzaAarco)[] = [];
         let prefix = '';
 
         if (insurer === 'Metlife') {
-            data = activeTab === 'VIDA' ? vidaData : gmmData;
+            data = activeTab === 'VIDA' ? vidaData : gmmData.map(row =>
+                Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'Pagado Hasta'))
+            ) as CobranzaMetlifeBase[];
             prefix = `Cobranza_Metlife_${activeTab}`;
         } else if (insurer === 'SURA') {
             data = suraData;
@@ -35,71 +37,27 @@ export function CobranzaView({ vidaData = [], gmmData = [], suraData = [], aarco
         exportToExcel(data, fileName);
     };
 
-    const vidaColumns = [
-        { header: '# Póliza', accessorKey: '# de Póliza' as keyof CobranzaVida },
-        { header: 'Producto', accessorKey: 'Producto' as keyof CobranzaVida },
-        { header: 'Conducto', accessorKey: 'Conducto de Cobro' as keyof CobranzaVida },
-        { header: 'Fecha Pago', accessorKey: 'Fecha de Pago del Recibo' as keyof CobranzaVida },
-        { header: 'Año Póliza', accessorKey: 'Año de Vida Póliza' as keyof CobranzaVida },
-        {
-            header: 'Prima Pagada',
-            accessorKey: (row: CobranzaVida) => {
-                if (row['Prima Pagada'] === undefined || row['Prima Pagada'] === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Prima Pagada']);
-            }
-        },
-        {
-            header: 'Comisión Bruto',
-            accessorKey: (row: CobranzaVida) => {
-                if (row['Comisión Bruto'] === undefined || row['Comisión Bruto'] === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Comisión Bruto']);
-            }
-        },
-        {
-            header: 'Comisión Neta',
-            accessorKey: (row: CobranzaVida) => {
-                if (row['Comisión Neta'] === undefined || row['Comisión Neta'] === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Comisión Neta']);
-            }
-        },
+    const baseColumns: Column<CobranzaMetlifeBase>[] = [
+        ...(['# de Póliza', 'Contratante', 'Producto', 'Pagado Hasta', 'Estado',
+            'Inicio Vigencia', 'Fin Vigencia', 'Forma de Pago', 'Conducto de Cobro', 'Moneda'] as const)
+            .map(key => ({ header: key, accessorKey: key })),
+        ...(['Prima Anual', 'Prima Modal'] as const).map(key => ({
+            header: key,
+            accessorKey: key,
+            cell: (row: CobranzaMetlifeBase) => row[key] == null ? '—' :
+                new Intl.NumberFormat('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(row[key]),
+        })),
+        ...(['Clave Agente', 'Agente', 'Promotoría', 'RFC'] as const)
+            .map(key => ({ header: key, accessorKey: key })),
     ];
-
-    const gmmColumns = [
-        { header: '# Póliza', accessorKey: '# de Póliza' as keyof CobranzaGMM },
-        { header: 'Producto', accessorKey: 'Producto' as keyof CobranzaGMM },
-        { header: 'Conducto', accessorKey: 'Conducto de Cobro' as keyof CobranzaGMM },
-        { header: 'Fecha Pago', accessorKey: 'Fecha de Pago del Recibo' as keyof CobranzaGMM },
-        { header: 'Año Póliza', accessorKey: 'Año de Vida Póliza' as keyof CobranzaGMM },
-        { header: 'Estado', accessorKey: 'Estado' as keyof CobranzaGMM },
-        {
-            header: 'Prima Pagada',
-            accessorKey: (row: CobranzaGMM) => {
-                if (row['Prima Pagada'] === undefined || row['Prima Pagada'] === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Prima Pagada']);
-            }
-        },
-        {
-            header: 'Comisión Bruto',
-            accessorKey: (row: CobranzaGMM) => {
-                if (row['Comisión Bruto'] === undefined || row['Comisión Bruto'] === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Comisión Bruto']);
-            }
-        },
-        {
-            header: 'Comisión Neta',
-            accessorKey: (row: CobranzaGMM) => {
-                if (row['Comisión Neta'] === undefined || row['Comisión Neta'] === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['Comisión Neta']);
-            }
-        },
-        {
-            header: 'IVA Causado',
-            accessorKey: (row: CobranzaGMM) => {
-                if (row['IVA Causado'] === undefined || row['IVA Causado'] === null) return 'N/A';
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row['IVA Causado']);
-            }
-        },
-    ];
+    const vidaColumns = baseColumns;
+    const gmmColumns: Column<CobranzaMetlifeBase>[] = baseColumns
+        .filter(column => column.accessorKey !== 'Prima Modal')
+        .flatMap(column => column.accessorKey === 'Pagado Hasta' ? [
+            { header: 'Pagado Hasta (base)', accessorKey: 'Pagado Hasta (base)' },
+            { header: 'Pagado Hasta (portal)', accessorKey: 'Pagado Hasta (portal)' },
+            { header: 'Última consulta al portal (UTC)', accessorKey: 'Última consulta al portal' },
+        ] : [column]);
 
     // 'Póliza', 'Contratante', 'Ramo', 'Prima Total', 'Prima Neta', '% Comisión pagado', 'Monto Comisión Neta', 'Total Comisión pagado' & 'Fecha aplicación de la póliza'
     const suraColumns = [
@@ -182,6 +140,11 @@ export function CobranzaView({ vidaData = [], gmmData = [], suraData = [], aarco
 
     return (
         <div className="flex flex-col h-full space-y-4">
+            {insurer === 'Metlife' && (
+                <p className="text-sm text-white/80">
+                    Bases de Vida y GMM actualizadas desde Carga de Bases. El rango filtra por Pagado Hasta de la base. En GMM, la fecha del portal corresponde a la última consulta; queda vacía si no hay un resultado válido.
+                </p>
+            )}
             <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-2 flex-none">
                 <div className="flex min-w-0 space-x-2 sm:space-x-4">
                     {insurer === 'Metlife' && (

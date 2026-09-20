@@ -13,7 +13,7 @@ from sqlalchemy.orm import joinedload
 from database import Client, Policy, PolicyProspectorAssignment, Prospector, SessionLocal
 from services.authorization import require_module_access
 from services.auth import AccessProfile
-from services.prospector_merge import merge_prospectors
+from services.prospector_merge import merge_prospectors, cartera_assignment_window
 
 
 router = APIRouter(prefix="/prospectadores", tags=["prospectadores"])
@@ -285,6 +285,15 @@ def migration_preview(db) -> dict:
     policies = db.query(Policy).options(joinedload(Policy.client)).all()
     candidates = []
     split_rows = 0
+    pending_policy_ids = set()
+    # Use the same active policy/prospector match as migrate_cartera,
+    # regardless of whether the assignment came from editing or migration.
+    existing_assignments = set(
+        db.query(PolicyProspectorAssignment.policy_id, Prospector.normalized_name)
+        .join(Prospector, Prospector.id == PolicyProspectorAssignment.prospector_id)
+        .filter(PolicyProspectorAssignment.is_active.is_(True))
+        .all()
+    )
     for policy in policies:
         text = _prospector_text(policy)
         if not text:
@@ -295,15 +304,13 @@ def migration_preview(db) -> dict:
             names = [name for name, _ in splits]
         else:
             names = [text]
-        candidates.extend(normalize_name(name) for name in names)
-    existing_policy_ids = {
-        row[0] for row in db.query(PolicyProspectorAssignment.policy_id).filter(
-            PolicyProspectorAssignment.source == "cartera_migration"
-        ).all()
-    }
+        normalized_names = [normalize_name(name) for name in names]
+        candidates.extend(normalized_names)
+        if any((policy.id, name) not in existing_assignments for name in normalized_names):
+            pending_policy_ids.add(policy.id)
     return {
         "policies_with_prospector": len({policy.id for policy in policies if _prospector_text(policy)}),
-        "policies_pending": len({policy.id for policy in policies if _prospector_text(policy) and policy.id not in existing_policy_ids}),
+        "policies_pending": len(pending_policy_ids),
         "unique_prospectors": len(set(candidates)),
         "split_policies": split_rows,
     }
@@ -332,7 +339,7 @@ def migrate_cartera(profile: AccessProfile = Depends(require_module_access("pros
             if not text:
                 continue
             metadata = policy.metadata_json if isinstance(policy.metadata_json, dict) else {}
-            starts_on = _date(metadata.get("payment_start_date")) or policy.effective_start_date
+            starts_on, ends_on = cartera_assignment_window(policy)
             if not starts_on:
                 skipped += 1
                 continue
@@ -354,15 +361,14 @@ def migrate_cartera(profile: AccessProfile = Depends(require_module_access("pros
                 exists = db.query(PolicyProspectorAssignment).filter(
                     PolicyProspectorAssignment.policy_id == policy.id,
                     PolicyProspectorAssignment.prospector_id == prospector.id,
-                    PolicyProspectorAssignment.effective_from == starts_on,
-                    PolicyProspectorAssignment.source == "cartera_migration",
+                    PolicyProspectorAssignment.is_active.is_(True),
                 ).first()
                 if exists:
                     continue
                 db.add(PolicyProspectorAssignment(
                     policy_id=policy.id, prospector_id=prospector.id,
                     commission_rate=rate, effective_from=starts_on,
-                    effective_to=first_anniversary(starts_on), source="cartera_migration",
+                    effective_to=ends_on, source="cartera_migration",
                     metadata_json={"legacy_value": text}, created_by=profile.username,
                 ))
                 created_assignments += 1

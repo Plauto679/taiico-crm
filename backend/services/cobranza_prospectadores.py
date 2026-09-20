@@ -212,21 +212,29 @@ def _incoming_policy_aliases(line: dict) -> list[str]:
 def _matching_assignments(
     db, policy_id: str, movement_date: date,
 ) -> tuple[list[PolicyProspectorAssignment], bool]:
-    query = db.query(PolicyProspectorAssignment).filter(
+    from services.prospector_merge import cartera_assignment_window
+    policy = db.get(Policy, policy_id)
+    rows = db.query(PolicyProspectorAssignment).filter(
         PolicyProspectorAssignment.policy_id == policy_id,
-        PolicyProspectorAssignment.effective_from <= movement_date,
-    )
-    current = query.filter(or_(
-        PolicyProspectorAssignment.effective_to.is_(None),
-        PolicyProspectorAssignment.effective_to > movement_date,
-    ), PolicyProspectorAssignment.is_active.is_(True)).all()
+    ).all()
+    eligible = []
+    current = []
+    for row in rows:
+        start, end = row.effective_from, row.effective_to
+        if policy and row.source in {"cartera_migration", "cartera_edit"}:
+            # Cartera is authoritative, including old imports that substituted
+            # the registration date when Inicio de pago was empty.
+            start, end = cartera_assignment_window(policy)
+        if start <= movement_date:
+            eligible.append((row, start))
+            if row.is_active and (end is None or movement_date < end):
+                current.append(row)
     if current:
         return current, False
-    historical = query.order_by(PolicyProspectorAssignment.effective_from.desc()).all()
-    if not historical:
+    if not eligible:
         return [], False
-    latest_start = historical[0].effective_from
-    return [row for row in historical if row.effective_from == latest_start], True
+    latest_start = max(start for _, start in eligible)
+    return [row for row, start in eligible if start == latest_start], True
 
 
 def analyze_import_lines(db, lines: list[dict], period: ProspectorCommissionPeriod) -> list[dict]:
@@ -271,9 +279,22 @@ def analyze_import_lines(db, lines: list[dict], period: ProspectorCommissionPeri
         if policy and movement_date:
             assignments, expired_assignment = _matching_assignments(db, policy.id, movement_date)
             if not assignments:
-                reasons.append("La póliza no tiene un prospectador asignado")
+                next_assignment = db.query(PolicyProspectorAssignment).filter(
+                    PolicyProspectorAssignment.policy_id == policy.id,
+                    PolicyProspectorAssignment.is_active.is_(True),
+                    PolicyProspectorAssignment.effective_from > movement_date,
+                ).order_by(PolicyProspectorAssignment.effective_from).first()
+                if next_assignment:
+                    reasons.append(
+                        f"La asignación del prospectador inicia el {next_assignment.effective_from.isoformat()}, "
+                        f"después del movimiento del {movement_date.isoformat()}. Revisa Inicio de pago."
+                    )
+                else:
+                    reasons.append("La póliza no tiene un prospectador asignado")
             effective_rates = [
-                Decimal("0") if expired_assignment and amount >= 0 else Decimal(str(row.commission_rate))
+                Decimal("0") if expired_assignment and amount >= 0 else (Decimal(str(policy.commission_percentage or 0)) / (100 if Decimal(str(policy.commission_percentage or 0)) > 1 else 1)
+                 if len(assignments) == 1
+                 else Decimal(str(row.commission_rate)))
                 for row in assignments
             ]
             total_rate = sum(effective_rates, Decimal("0"))
@@ -582,7 +603,7 @@ async def preview_import(
             ProspectorCommissionBatch.file_hash == file_hash,
         ).first()
         if duplicate:
-            raise HTTPException(status_code=409, detail="Este mismo archivo ya fue aplicado al periodo")
+            raise HTTPException(status_code=409, detail="Este mismo archivo ya fue aplicado al periodo. Usa Revisar excepciones para consultar las asignaciones actuales sin duplicar la carga")
 
         try:
             lines, workbook_issues, raw_rows = await run_in_threadpool(
@@ -618,7 +639,7 @@ async def preview_import(
             "source": normalized_source,
             "filename": filename,
             "summary": summary,
-            "sample": analyzed[:30],
+            "sample": sorted(analyzed, key=lambda line: line["status"] == "listo"),
         }
     finally:
         db.close()
@@ -651,6 +672,27 @@ def export_import_preview(
         db.close()
 
 
+def save_line_allocations(db, line, item: dict, period) -> int:
+    allocation_count = 0
+    for allocation in item.get("allocations", []):
+        calculation = allocation["calculation"]
+        db.add(ProspectorCommissionAllocation(
+            line_id=line.id,
+            prospector_id=allocation["prospector_id"],
+            assignment_id=allocation["assignment_id"],
+            commission_rate=Decimal(allocation["commission_rate"]),
+            utility_coefficient=Decimal(str(period.utility_coefficient)),
+            vat_rate=Decimal(str(period.vat_rate)),
+            life_divisor=Decimal(calculation["life_divisor"]),
+            commission_amount=Decimal(calculation["commission_amount"]),
+            vat_amount=Decimal(calculation["vat_amount"]),
+            total_amount=Decimal(calculation["total_amount"]),
+            calculation_json=calculation,
+        ))
+        allocation_count += 1
+    return allocation_count
+
+
 @router.post("/imports/{token}/apply", status_code=201)
 def apply_import(
     token: str,
@@ -669,7 +711,7 @@ def apply_import(
             ProspectorCommissionBatch.source == staged["source"],
             ProspectorCommissionBatch.file_hash == staged["file_hash"],
         ).first():
-            raise HTTPException(status_code=409, detail="Este mismo archivo ya fue aplicado al periodo")
+            raise HTTPException(status_code=409, detail="Este mismo archivo ya fue aplicado al periodo. Usa Revisar excepciones para consultar las asignaciones actuales sin duplicar la carga")
 
         analyzed = analyze_import_lines(db, staged["lines"], period)
         exception_count = sum(1 for line in analyzed if line["status"] != "listo")
@@ -716,22 +758,7 @@ def apply_import(
             )
             db.add(line)
             db.flush()
-            for allocation in item.get("allocations", []):
-                calculation = allocation["calculation"]
-                db.add(ProspectorCommissionAllocation(
-                    line_id=line.id,
-                    prospector_id=allocation["prospector_id"],
-                    assignment_id=allocation["assignment_id"],
-                    commission_rate=Decimal(allocation["commission_rate"]),
-                    utility_coefficient=Decimal(str(period.utility_coefficient)),
-                    vat_rate=Decimal(str(period.vat_rate)),
-                    life_divisor=Decimal(calculation["life_divisor"]),
-                    commission_amount=Decimal(calculation["commission_amount"]),
-                    vat_amount=Decimal(calculation["vat_amount"]),
-                    total_amount=Decimal(calculation["total_amount"]),
-                    calculation_json=calculation,
-                ))
-                allocation_count += 1
+            allocation_count += save_line_allocations(db, line, item, period)
         db.commit()
         (import_staging_root() / f"{token}.json").unlink(missing_ok=True)
         return {
@@ -809,3 +836,58 @@ def preview_calculation(payload: CalculationPreview):
         branch=payload.branch,
     )
     return {key: float(value) for key, value in result.items()}
+
+
+@router.post("/periods/{period_id}/review-exceptions")
+def review_period_exceptions(
+    period_id: str,
+    profile: AccessProfile = Depends(require_module_access("cobranza_prospectadores", operation=True)),
+):
+    db = SessionLocal()
+    try:
+        period = db.query(ProspectorCommissionPeriod).filter_by(id=period_id).with_for_update().first()
+        if not period:
+            raise HTTPException(404, "Periodo no encontrado")
+        if period.status != "borrador":
+            raise HTTPException(409, "Solo se pueden revisar excepciones en un periodo en borrador")
+        batches = db.query(ProspectorCommissionBatch).filter_by(period_id=period.id).all()
+        batch_ids = [batch.id for batch in batches]
+        rows = db.query(ProspectorCommissionLine).filter(
+            ProspectorCommissionLine.batch_id.in_(batch_ids),
+            ProspectorCommissionLine.status != "listo",
+        ).with_for_update().all()
+        inputs = [{
+            **(row.raw_payload or {}),
+            "source_key": row.source_key, "policy_number": row.policy_number,
+            "receipt_number": row.receipt_number, "insurer_id": row.insurer_id,
+            "branch": row.branch, "currency": row.currency,
+            "movement_date": row.movement_date.isoformat() if row.movement_date else None,
+            "source_commission": str(row.source_commission),
+        } for row in rows]
+        analyzed = analyze_import_lines(db, inputs, period) if inputs else []
+        resolved = 0
+        for row, item in zip(rows, analyzed):
+            # Pending lines normally have no allocations. Never overwrite any existing allocation.
+            if db.query(ProspectorCommissionAllocation).filter_by(line_id=row.id).first():
+                continue
+            row.policy_id = item.get("policy_id")
+            row.status = item["status"]
+            row.exception_reason = item.get("exception_reason")
+            if item["status"] == "listo":
+                save_line_allocations(db, row, item, period)
+                resolved += 1
+        db.flush()
+        for batch in batches:
+            batch.exception_count = db.query(ProspectorCommissionLine).filter(
+                ProspectorCommissionLine.batch_id == batch.id,
+                ProspectorCommissionLine.status != "listo",
+            ).count()
+            batch.status = "con_excepciones" if batch.exception_count else "procesado"
+        pending = sum(batch.exception_count for batch in batches)
+        db.commit()
+        return {"reviewed": len(rows), "resolved": resolved, "pending": pending}
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()

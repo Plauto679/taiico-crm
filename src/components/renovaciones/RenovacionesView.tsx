@@ -126,6 +126,14 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         }
 
         const fileName = `${prefix}_${new Date().toISOString().split('T')[0]}.xlsx`;
+        if (insurer === 'Metlife' && activeTab === 'GMM') {
+            data = data.map(({ PAGADOHASTA, PAGADO_HASTA_BASE, ULTIMA_CONSULTA_PORTAL, ...row }) => ({
+                ...row,
+                'Pagado Hasta (base)': PAGADO_HASTA_BASE,
+                'Pagado Hasta (portal)': PAGADOHASTA,
+                'Última consulta al portal (UTC)': ULTIMA_CONSULTA_PORTAL,
+            }));
+        }
         exportToExcel(data, fileName);
     };
 
@@ -282,7 +290,9 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
             }
         },
 
-        { header: 'Pagado Hasta', accessorKey: 'PAGADOHASTA' as keyof RenovacionGMM },
+        { header: 'Pagado Hasta (base)', accessorKey: 'PAGADO_HASTA_BASE' as keyof RenovacionGMM },
+        { header: 'Pagado Hasta (portal)', accessorKey: 'PAGADOHASTA' as keyof RenovacionGMM },
+        { header: 'Última consulta al portal (UTC)', accessorKey: 'ULTIMA_CONSULTA_PORTAL' as keyof RenovacionGMM },
         { header: 'Agente', accessorKey: 'AGENTE' as keyof RenovacionGMM },
         { header: 'Nombre', accessorKey: 'NOMBRE' as keyof RenovacionGMM },
         { header: 'Promotoría', accessorKey: 'PROMOTORIA' as keyof RenovacionGMM },
@@ -377,6 +387,11 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
 
     return (
         <div className="flex flex-col h-full space-y-4">
+            {insurer === 'Metlife' && activeTab === 'GMM' && (
+                <p className="text-sm text-white/80">
+                    Base: dato del archivo cargado. Portal: última consulta automatizada; queda vacío si no hay un resultado válido. La hora de consulta se muestra en UTC.
+                </p>
+            )}
             <DateRangeFilter
                 initialStartDate={dateRange.start}
                 initialEndDate={dateRange.end}

@@ -13,7 +13,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 from openpyxl import load_workbook
 from starlette.concurrency import run_in_threadpool
 
@@ -830,6 +831,9 @@ def cleanup_expired_previews() -> None:
             modified = datetime.fromtimestamp(candidate.stat().st_mtime, timezone.utc)
         except FileNotFoundError:
             continue
+        # Completed receipts are small and must remain available for retries.
+        if (candidate / "apply-result.json").exists() or (candidate / "apply-state.json").exists():
+            continue
         if candidate.is_dir() and modified < cutoff:
             shutil.rmtree(candidate, ignore_errors=True)
 
@@ -855,8 +859,73 @@ def safe_filename(value: str | None) -> str:
     return cleaned or "carga.xlsx"
 
 
+def write_preview_status(token_dir: Path, payload: dict) -> None:
+    temporary = token_dir / "status.tmp"
+    temporary.write_text(json.dumps(payload, ensure_ascii=False))
+    temporary.replace(token_dir / "status.json")
+
+
+def prepare_gmm_preview(token_dir: Path, filename: str, size: int, sha256: str) -> dict:
+    canonical_path = Path(METLIFE_PATHS["RENOVACIONES_GMM"])
+    canonical_sha256 = file_sha256(canonical_path)
+    agents_path = token_dir / "agents.xlsx"
+    candidate_path = token_dir / "prepared.xlsx"
+    stage_agents_workbook(agents_path)
+    preview = prepare_candidate_workbook(
+        token_dir / "source.xlsx", canonical_path, agents_path, candidate_path,
+    )
+    manifest = {
+        "token": token_dir.name,
+        "source_key": "renovaciones.metlife_gmm",
+        "filename": filename,
+        "size": size,
+        "sha256": sha256,
+        "canonical_sha256": canonical_sha256,
+        "candidate_sha256": file_sha256(candidate_path),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "preview": preview,
+    }
+    temporary = token_dir / "manifest.tmp"
+    temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+    temporary.replace(token_dir / "manifest.json")
+    return manifest
+
+
+def run_gmm_preview_job(token_dir: Path, filename: str, size: int, sha256: str) -> None:
+    try:
+        prepare_gmm_preview(token_dir, filename, size, sha256)
+        write_preview_status(token_dir, {"status": "completed"})
+    except Exception as exc:
+        logger.exception("GMM background preview failed; token=%s", token_dir.name)
+        write_preview_status(token_dir, {"status": "failed", "detail": str(exc)})
+
+
+@router.get("/metlife-gmm/preview/{token}")
+async def get_gmm_preview_status(token: str):
+    if not re.fullmatch(r"[a-f0-9]{32}", token):
+        raise HTTPException(400, "Token de carga inválido")
+    token_dir = staging_root() / token
+    manifest_path = token_dir / "manifest.json"
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text())
+        if manifest.get("source_key") != "renovaciones.metlife_gmm":
+            raise HTTPException(409, "La vista previa no corresponde a MetLife GMM")
+        return {"status": "completed", "result": manifest}
+    status_path = token_dir / "status.json"
+    if not status_path.exists():
+        raise HTTPException(404, "La vista previa expiró o no existe")
+    progress = json.loads(status_path.read_text())
+    if progress.get("status") == "processing" and progress.get("worker_pid") != os.getpid():
+        return {"status": "failed", "detail": "El servicio se reinició durante la preparación. Genera la vista previa nuevamente."}
+    return {key: value for key, value in progress.items() if key != "worker_pid"}
+
+
 @router.post("/metlife-gmm/preview")
-async def preview_metlife_gmm_base(file: UploadFile = File(...)):
+async def preview_metlife_gmm_base(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    background: bool = False,
+):
     cleanup_expired_previews()
     filename = safe_filename(file.filename)
     if not filename.casefold().endswith(".xlsx"):
@@ -864,36 +933,13 @@ async def preview_metlife_gmm_base(file: UploadFile = File(...)):
     token = uuid.uuid4().hex
     token_dir = staging_root() / token
     token_dir.mkdir(parents=True)
-    upload_path = token_dir / "source.xlsx"
-    agents_path = token_dir / "agents.xlsx"
-    candidate_path = token_dir / "prepared.xlsx"
     try:
-        size, sha256 = await save_upload(file, upload_path)
-        canonical_path = Path(METLIFE_PATHS["RENOVACIONES_GMM"])
-        canonical_sha256 = await run_in_threadpool(file_sha256, canonical_path)
-        await run_in_threadpool(stage_agents_workbook, agents_path)
-        preview = await run_in_threadpool(
-            prepare_candidate_workbook,
-            upload_path,
-            canonical_path,
-            agents_path,
-            candidate_path,
-        )
-        manifest = {
-            "token": token,
-            "source_key": "renovaciones.metlife_gmm",
-            "filename": filename,
-            "size": size,
-            "sha256": sha256,
-            "canonical_sha256": canonical_sha256,
-            "candidate_sha256": await run_in_threadpool(file_sha256, candidate_path),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "preview": preview,
-        }
-        (token_dir / "manifest.json").write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
-        )
-        return manifest
+        size, sha256 = await save_upload(file, token_dir / "source.xlsx")
+        if background:
+            write_preview_status(token_dir, {"status": "processing", "worker_pid": os.getpid()})
+            background_tasks.add_task(run_gmm_preview_job, token_dir, filename, size, sha256)
+            return JSONResponse({"token": token, "status": "processing"}, status_code=202)
+        return await run_in_threadpool(prepare_gmm_preview, token_dir, filename, size, sha256)
     except HTTPException:
         shutil.rmtree(token_dir, ignore_errors=True)
         raise
@@ -904,56 +950,96 @@ async def preview_metlife_gmm_base(file: UploadFile = File(...)):
         await file.close()
 
 
-@router.post("/metlife-gmm/apply/{token}")
-async def apply_metlife_gmm_base(token: str):
-    if not re.fullmatch(r"[a-f0-9]{32}", token):
-        raise HTTPException(status_code=400, detail="Token de carga inválido")
-    token_dir = staging_root() / token
-    upload_path = token_dir / "source.xlsx"
-    candidate_path = token_dir / "prepared.xlsx"
-    manifest_path = token_dir / "manifest.json"
-    if not upload_path.exists() or not candidate_path.exists() or not manifest_path.exists():
-        raise HTTPException(status_code=404, detail="La vista previa expiró o no existe")
-    manifest = json.loads(manifest_path.read_text())
-    if manifest.get("source_key") != "renovaciones.metlife_gmm":
-        raise HTTPException(status_code=409, detail="La vista previa no corresponde a MetLife GMM")
-    digest = await run_in_threadpool(file_sha256, upload_path)
-    if digest != manifest.get("sha256"):
-        raise HTTPException(status_code=409, detail="El archivo cambió después de la vista previa")
+def write_apply_record(token_dir: Path, name: str, payload: dict) -> None:
+    temporary = token_dir / f"{name}.tmp"
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+    temporary.replace(token_dir / f"{name}.json")
+
+
+def apply_job_status(token_dir: Path) -> dict:
+    result_path = token_dir / "apply-result.json"
+    if result_path.exists():
+        return {"status": "completed", "result": json.loads(result_path.read_text())}
+    state_path = token_dir / "apply-state.json"
+    if not state_path.exists():
+        raise HTTPException(404, "No existe una aplicación registrada para esta vista previa")
+    state = json.loads(state_path.read_text())
+    if state.get("status") == "processing" and state.get("worker_pid") != os.getpid():
+        return {"status": "failed", "detail": "El servicio se reinició. Revisa el respaldo y la base antes de iniciar otra carga; la operación pudo haberse aplicado."}
+    return {key: value for key, value in state.items() if key != "worker_pid"}
+
+
+def run_gmm_apply_job(token_dir: Path, manifest: dict) -> dict:
     try:
-        result = await run_in_threadpool(
-            apply_prepared_workbook,
-            candidate_path,
-            Path(METLIFE_PATHS["RENOVACIONES_GMM"]),
-            manifest["candidate_sha256"],
-            manifest["canonical_sha256"],
+        if file_sha256(token_dir / "source.xlsx") != manifest["sha256"]:
+            raise ValueError("El archivo cambió después de la vista previa")
+        result = apply_prepared_workbook(
+            token_dir / "prepared.xlsx", Path(METLIFE_PATHS["RENOVACIONES_GMM"]),
+            manifest["candidate_sha256"], manifest["canonical_sha256"],
             "renovaciones.metlife_gmm",
         )
+        # Retain backup details immediately, before the longer SQL synchronization.
+        write_apply_record(token_dir, "applied-workbook", result)
         try:
             from services.renewal_ingestion import sync_local_canonical_renewals
-
-            renewal_sync = await run_in_threadpool(
-                sync_local_canonical_renewals,
-                "renovaciones.metlife_gmm",
-            )
-        except Exception as sync_exc:
+            renewal_sync = sync_local_canonical_renewals("renovaciones.metlife_gmm")
+        except Exception as exc:
             logger.exception("Canonical workbook applied but renewal synchronization failed")
-            renewal_sync = {"status": "failed", "error": str(sync_exc)}
-        shutil.rmtree(token_dir, ignore_errors=True)
-        return {
-            "applied": True,
-            "filename": manifest["filename"],
-            **manifest["preview"],
-            **result,
-            "renewal_sync": renewal_sync,
+            renewal_sync = {"status": "failed", "error": str(exc)}
+        completed = {
+            "applied": True, "filename": manifest["filename"],
+            **manifest["preview"], **result, "renewal_sync": renewal_sync,
         }
+        write_apply_record(token_dir, "apply-result", completed)
+        write_apply_record(token_dir, "apply-state", {"status": "completed"})
+        for name in ("source.xlsx", "prepared.xlsx", "agents.xlsx"):
+            (token_dir / name).unlink(missing_ok=True)
+        return {"status": "completed", "result": completed}
     except Exception as exc:
-        logger.exception(
-            "MetLife GMM base apply failed; token=%s staging=%s",
-            token,
-            token_dir,
-        )
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("GMM apply job failed; token=%s", token_dir.name)
+        state = {"status": "failed", "detail": str(exc)}
+        write_apply_record(token_dir, "apply-state", state)
+        return state
+
+
+@router.get("/metlife-gmm/apply/{token}")
+async def get_gmm_apply_status(token: str):
+    if not re.fullmatch(r"[a-f0-9]{32}", token):
+        raise HTTPException(400, "Token de carga inválido")
+    return apply_job_status(staging_root() / token)
+
+
+@router.post("/metlife-gmm/apply/{token}")
+async def apply_metlife_gmm_base(token: str, background_tasks: BackgroundTasks, background: bool = False):
+    if not re.fullmatch(r"[a-f0-9]{32}", token):
+        raise HTTPException(400, "Token de carga inválido")
+    token_dir = staging_root() / token
+    if (token_dir / "apply-state.json").exists() or (token_dir / "apply-result.json").exists():
+        state = apply_job_status(token_dir)
+        if state["status"] == "completed":
+            return state["result"]
+        return JSONResponse({"token": token, **state}, status_code=202)
+    paths = [token_dir / name for name in ("source.xlsx", "prepared.xlsx", "manifest.json")]
+    if not all(path.exists() for path in paths):
+        raise HTTPException(404, "La vista previa ya no está disponible. Si ya pulsaste Aplicar, verifica el resultado antes de generar otra carga.")
+    manifest = json.loads(paths[2].read_text())
+    if manifest.get("source_key") != "renovaciones.metlife_gmm":
+        raise HTTPException(409, "La vista previa no corresponde a MetLife GMM")
+    if manifest.get("preview", {}).get("rows_after_agent_filter") == 0:
+        raise HTTPException(status_code=409, detail='No es necesario actualizar la base con el archivo cargado. No hay claves de agente con coincidencias en el módulo de Agentes.')
+    # Atomic claim also prevents duplicate submission from another request/worker.
+    try:
+        (token_dir / "apply-claim").mkdir()
+    except FileExistsError:
+        return JSONResponse({"token": token, "status": "processing"}, status_code=202)
+    write_apply_record(token_dir, "apply-state", {"status": "processing", "worker_pid": os.getpid()})
+    if background:
+        background_tasks.add_task(run_gmm_apply_job, token_dir, manifest)
+        return JSONResponse({"token": token, "status": "processing"}, status_code=202)
+    state = await run_in_threadpool(run_gmm_apply_job, token_dir, manifest)
+    if state["status"] == "failed":
+        raise HTTPException(500, state["detail"])
+    return state["result"]
 
 
 @router.post("/metlife-vida/preview")
@@ -1018,6 +1104,8 @@ async def apply_metlife_vida_base(token: str):
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("source_key") != "renovaciones.metlife_vida":
         raise HTTPException(status_code=409, detail="La vista previa no corresponde a MetLife Vida")
+    if manifest.get("preview", {}).get("rows_after_agent_filter") == 0:
+        raise HTTPException(status_code=409, detail='No es necesario actualizar la base con el archivo cargado. No hay claves de agente con coincidencias en el módulo de Agentes.')
     digest = await run_in_threadpool(file_sha256, upload_path)
     if digest != manifest.get("sha256"):
         raise HTTPException(status_code=409, detail="El archivo cambió después de la vista previa")

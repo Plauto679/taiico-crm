@@ -4,7 +4,10 @@ from typing import Optional
 from datetime import datetime
 from services.cartera import prospector_commission_is_expired
 from services.auth import AccessProfile
-from services.authorization import current_access_profile
+from services.authorization import current_access_profile, require_module_access
+from services.metlife_collection_base import collection_base
+from starlette.concurrency import run_in_threadpool
+from typing import Literal
 from services.agent_scope import profile_allows_insurer, profile_policy_numbers
 
 router = APIRouter(prefix="/cobranza", tags=["cobranza"])
@@ -164,6 +167,16 @@ def get_payment_evidence_summary_for_insurer(
         ]
     finally:
         db.close()
+
+
+@router.get("/metlife/base")
+async def get_metlife_collection_base(
+    branch: Literal["VIDA", "GMM"] = Query("VIDA"),
+    start_date: Optional[str] = Query(None, description="Pagado Hasta desde YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="Pagado Hasta hasta YYYY-MM-DD"),
+    profile: AccessProfile = Depends(require_module_access("cobranza")),
+):
+    return await run_in_threadpool(collection_base, branch, start_date, end_date, profile)
 
 
 @router.get("/metlife/evidence")

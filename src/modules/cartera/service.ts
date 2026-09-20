@@ -31,3 +31,7 @@ export async function updateCarteraRecord(id: string, payload: CarteraRecordInpu
         body: JSON.stringify(payload),
     });
 }
+
+export type CarteraProspectorOption = { id: string; name: string };
+export const getCarteraProspectors = () =>
+    fetchFromApi<{ prospectors: CarteraProspectorOption[] }>('/cartera/prospectors');

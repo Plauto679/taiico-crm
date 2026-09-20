@@ -61,6 +61,7 @@ MODULES = (
     "cartera",
     "prospectadores",
     "cobranza_prospectadores",
+    "estados_agentes",
     "clientes",
     "recluta",
     "dashboards",
@@ -97,6 +98,7 @@ MODULE_COLUMNS["gestion_comercial"] = "Permiso_Gestion_Comercial"
 MODULE_COLUMNS["time_machine"] = "Permiso_Time_Machine"
 MODULE_COLUMNS["prospectadores"] = "Permiso_Prospectadores"
 MODULE_COLUMNS["cobranza_prospectadores"] = "Permiso_Cobranza_Prospectadores"
+MODULE_COLUMNS["estados_agentes"] = "Permiso_Estados_Agentes"
 
 MODULE_LABELS = {
     "inicio": "Inicio",
@@ -109,6 +111,7 @@ MODULE_LABELS = {
     "cartera": "Cartera de Prospectadores",
     "prospectadores": "Prospectadores",
     "cobranza_prospectadores": "Cobranza para prospectadores",
+    "estados_agentes": "Estados de Prospectadores",
     "clientes": "Clientes",
     "recluta": "Recluta",
     "dashboards": "Dashboards",

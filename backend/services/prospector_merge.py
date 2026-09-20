@@ -35,6 +35,18 @@ def _move_allocation(db, allocation: ProspectorCommissionAllocation, target_id: 
     allocation.prospector_id = target_id
 
 
+def cartera_assignment_window(policy: Policy):
+    raw = (policy.metadata_json or {}).get("payment_start_date")
+    if not raw:
+        return datetime.date.min, None
+    start = datetime.date.fromisoformat(str(raw))
+    try:
+        end = start.replace(year=start.year + 1)
+    except ValueError:
+        end = start.replace(year=start.year + 1, day=28)
+    return start, end
+
+
 def reassign_policy_to_named_prospector(db, policy: Policy, name: str) -> bool:
     """Keep a single-policy Cartera edit aligned with the master prospector catalog."""
     normalized = _normalized_name(name)
@@ -45,10 +57,25 @@ def reassign_policy_to_named_prospector(db, policy: Policy, name: str) -> bool:
         PolicyProspectorAssignment.policy_id == policy.id,
         PolicyProspectorAssignment.is_active.is_(True),
     ).all()
-    if len(targets) != 1 or len(assignments) != 1:
+    if len(targets) != 1 or len(assignments) > 1:
         return False
     target = targets[0]
+    start, end = cartera_assignment_window(policy)
+    if not assignments:
+        rate = Decimal(str(policy.commission_percentage or 0))
+        if rate > 1:
+            rate /= 100
+        db.add(PolicyProspectorAssignment(
+            policy_id=policy.id, prospector_id=target.id, commission_rate=rate,
+            effective_from=start, effective_to=end, source="cartera_edit",
+            created_by=policy.responsible_user_id,
+        ))
+        return True
     assignment = assignments[0]
+    rate = Decimal(str(policy.commission_percentage or 0))
+    assignment.commission_rate = rate / 100 if rate > 1 else rate
+    if assignment.source in {"cartera_migration", "cartera_edit"}:
+        assignment.effective_from, assignment.effective_to = start, end
     if assignment.prospector_id == target.id:
         return False
 

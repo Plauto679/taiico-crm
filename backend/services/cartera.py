@@ -14,7 +14,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from config import AARCO_PATHS, CARTERA_SOURCE_FILE_IDS, METLIFE_PATHS, SURA_PATHS
-from database import Client, Insurer, Policy, Product, SessionLocal, User
+from database import Client, Insurer, Policy, Product, Prospector, SessionLocal, User
 from drive.client import download_drive_file_bytes
 from services.auth import AccessProfile
 from services.authorization import current_access_profile, require_module_access
@@ -380,6 +380,7 @@ def sync_cartera_source(insurer: str, *, contents: bytes | None = None, db=None)
                     policy.client.full_name = contractor
                 client_metadata = dict(policy.client.metadata_json or {})
                 policy.client.metadata_json = {**client_metadata, "prospectador": row["prospector"]}
+                reassign_policy_to_named_prospector(session, policy, row["prospector"])
                 updated += 1
                 continue
             if row["policy_number"] in policies_by_number:
@@ -506,6 +507,17 @@ def sync_cartera_sql_to_canonical(insurer: str, *, db=None) -> dict:
         finally:
             if owns_session:
                 session.close()
+
+
+@router.get("/prospectors")
+def cartera_prospector_catalog():
+    """Names available to portfolio operators without exposing contact details."""
+    db = SessionLocal()
+    try:
+        rows = db.query(Prospector).filter(Prospector.is_active.is_(True)).order_by(Prospector.name).all()
+        return {"prospectors": [{"id": row.id, "name": row.name} for row in rows]}
+    finally:
+        db.close()
 
 
 @router.get("/data")
@@ -637,6 +649,8 @@ def create_cartera_record(
                 },
             )
             db.add(policy)
+        db.flush()
+        reassign_policy_to_named_prospector(db, policy, payload.prospector)
         canonical_snapshot = _write_canonical(
             payload,
             original_policy_number=policy_number if existing_policy else None,

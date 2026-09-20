@@ -12,7 +12,7 @@ export async function POST(
     { params }: { params: Promise<{ token: string }> },
 ) {
     const { token } = await params;
-    const backendUrl = `${API_BASE_URL}/base-loads/metlife-gmm/apply/${encodeURIComponent(token)}`;
+    const backendUrl = `${API_BASE_URL}/base-loads/metlife-gmm/apply/${encodeURIComponent(token)}?background=true`;
     try {
         const response = await fetch(backendUrl, {
             method: 'POST',
@@ -45,5 +45,24 @@ export async function POST(
                 headers: { 'X-Taiico-Route': 'base-load-apply' },
             },
         );
+    }
+}
+
+export async function GET(
+    request: NextRequest,
+    { params }: { params: Promise<{ token: string }> },
+) {
+    const { token } = await params;
+    try {
+        const response = await fetch(`${API_BASE_URL}/base-loads/metlife-gmm/apply/${encodeURIComponent(token)}`, {
+            headers: { Cookie: request.headers.get('cookie') || '' },
+            cache: 'no-store', signal: AbortSignal.timeout(30_000),
+        });
+        return new Response(await response.text(), {
+            status: response.status,
+            headers: { 'Content-Type': response.headers.get('content-type') || 'application/json' },
+        });
+    } catch {
+        return Response.json({ detail: 'No se pudo consultar el estado. La actualización puede seguir en curso.' }, { status: 502 });
     }
 }

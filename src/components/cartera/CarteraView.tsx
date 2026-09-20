@@ -6,7 +6,7 @@ import { CheckCircle2, Download, Loader2, Plus, Search, X } from 'lucide-react';
 import clsx from 'clsx';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { CarteraRecord, CarteraRecordInput } from '@/lib/types/cartera';
-import { createCarteraRecord, updateCarteraRecord } from '@/modules/cartera/service';
+import { createCarteraRecord, updateCarteraRecord, getCarteraProspectors, type CarteraProspectorOption } from '@/modules/cartera/service';
 import { exportToExcel } from '@/lib/utils/export';
 
 interface Props { data: CarteraRecord[]; insurer: string; type: string; }
@@ -182,15 +182,18 @@ export function CarteraView({ data, insurer, type }: Props) {
             <DataTable data={searchedData} columns={columns} filterMode="multi-select" pageSize={150} onProcessedDataChange={captureProcessedRows} onRowClick={setEditing} className="max-h-full min-w-full overflow-auto border-0 shadow-none" />
         </div>
         {record && <div className="fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) { setEditing(null); setCreating(false); } }}>
-            <form onSubmit={submit} className="my-auto w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
+            <form key={record.id || 'new'} onSubmit={submit} className="my-auto w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
                 <div className="flex items-start justify-between border-b px-6 py-5"><div><h2 className="text-2xl font-bold text-slate-900">{editing ? 'Editar registro' : 'Nuevo registro'}</h2><p className="text-sm text-slate-500">{insurer}{type !== 'ALL' ? ` · ${type}` : ''}</p></div><button type="button" onClick={() => { setEditing(null); setCreating(false); }} className="rounded-full p-2 text-slate-400 hover:bg-slate-100"><X /></button></div>
                 <div className="grid gap-4 p-6 sm:grid-cols-2">
                     {insurer === 'AARCO' && <Field label="Aseguradora" name="carrier" defaultValue={record.carrier || ''} placeholder="Ej. AXA, Mapfre, HDI…" required />}
                     <Field label="Póliza" name="policy_number" defaultValue={record.policy_number} required />
                     {insurer === 'Metlife' && type === 'GMM' && <Field label="Póliza actual" name="current_policy_number" defaultValue={record.current_policy_number || ''} />}
                     <Field label="Contratante" name="contractor" defaultValue={record.contractor} required wide />
-                    <Field label="Prospectador" name="prospector" defaultValue={record.prospector} required />
-                    <Field label="Inicio de pago" name="payment_start_date" type="date" defaultValue={record.payment_start_date || ''} />
+                    <ProspectorSelect currentValue={record.prospector} />
+                    <div className="grid gap-1.5">
+                        <Field label="Inicio de pago" name="payment_start_date" type="date" defaultValue={record.payment_start_date || ''} />
+                        <p className="text-xs text-slate-500">Sin fecha: aplica a movimientos pasados y futuros, sin vencimiento. Con fecha: aplica durante un año desde ese inicio.</p>
+                    </div>
                     <Field label="Porcentaje" name="percentage" type="number" min="0" max="100" step="0.01" defaultValue={String(record.percentage ?? 0)} required />
                     {error && <p className="sm:col-span-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
                 </div>
@@ -202,4 +205,42 @@ export function CarteraView({ data, insurer, type }: Props) {
 
 function Field({ label, wide, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label: string; wide?: boolean }) {
     return <label className={clsx('grid gap-1.5 text-sm font-semibold text-slate-700', wide && 'sm:col-span-2')}>{label}<input {...props} className="rounded-lg border border-slate-300 px-3 py-2.5 font-normal text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>;
+}
+
+function ProspectorSelect({ currentValue }: { currentValue: string }) {
+    const [selectedValue, setSelectedValue] = useState(currentValue || '');
+    const [options, setOptions] = useState<CarteraProspectorOption[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState('');
+    const [attempt, setAttempt] = useState(0);
+    useEffect(() => {
+        let cancelled = false;
+        getCarteraProspectors().then(({ prospectors }) => {
+            if (!cancelled) {
+                setOptions(prospectors.sort((a, b) => a.name.localeCompare(b.name, 'es')));
+                setLoading(false);
+            }
+        }).catch(() => {
+            if (!cancelled) {
+                setLoadError('No se pudo cargar el catálogo de prospectadores.');
+                setLoading(false);
+            }
+        });
+        return () => { cancelled = true; };
+    }, [attempt]);
+    const names = [...new Set(options.map(option => option.name))];
+    return <label className="grid gap-1.5 text-sm font-semibold text-slate-700">
+        Prospectador
+        <select name="prospector" value={selectedValue} onChange={event => setSelectedValue(event.target.value)} required
+            aria-busy={loading}
+            className="min-w-0 rounded-lg border border-slate-300 bg-white px-3 py-2.5 font-normal text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
+            <option value="" disabled>{loading ? 'Cargando prospectadores…' : 'Selecciona un prospectador'}</option>
+            {currentValue && !names.includes(currentValue) && <option value={currentValue}>{currentValue} (asignación actual)</option>}
+            {names.map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
+        {!loading && !loadError && names.length === 0 && <span className="font-normal text-slate-600">No hay prospectadores activos. Regístralos en el módulo Prospectadores.</span>}
+        {loadError && <span role="alert" className="font-normal text-red-700">{loadError}{' '}
+            <button type="button" className="underline" onClick={() => { setLoadError(''); setLoading(true); setAttempt(value => value + 1); }}>Reintentar</button>
+        </span>}
+    </label>;
 }

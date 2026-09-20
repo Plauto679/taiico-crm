@@ -19,6 +19,7 @@ const NAV_ITEMS = [
     { name: 'Cartera de Prospectadores', href: '/cartera', icon: Briefcase, module: 'cartera' },
     { name: 'Prospectadores', href: '/prospectadores', icon: UserRoundSearch, module: 'prospectadores' },
     { name: 'Cobranza para prospectadores', href: '/cobranza-prospectadores', icon: HandCoins, module: 'cobranza_prospectadores' },
+    { name: 'Estados de Prospectadores', href: '/estados-prospectadores', icon: ScrollText, module: 'estados_agentes' },
     { name: 'Clientes', href: '/clientes', icon: Users, module: 'clientes' },
     { name: 'Recluta', href: '/recluta', icon: UserRoundSearch, module: 'recluta' },
     { name: 'Dashboards', href: '/dashboards', icon: BarChart3, module: 'dashboards' },

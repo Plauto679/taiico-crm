@@ -13,3 +13,5 @@ httpx
 playwright
 cryptography
 certifi
+
+reportlab>=4.4,<5

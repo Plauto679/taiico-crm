@@ -49,3 +49,5 @@ export async function exportCommissionImportPreview(token: string): Promise<void
   anchor.remove();
   URL.revokeObjectURL(blobUrl);
 }
+
+export const reviewCommissionExceptions = (periodId: string) => fetchFromApi<{ reviewed: number; resolved: number; pending: number }>(`/cobranza-prospectadores/periods/${periodId}/review-exceptions`, { method: "POST" });

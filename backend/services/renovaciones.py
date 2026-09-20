@@ -27,6 +27,7 @@ from database import (
     PolicyDocumentRetrievalStep,
 )
 from config import METLIFE_PATHS
+from services.metlife_portal_collection import portal_collection_index, display_checked_timestamp
 from parsers.metlife_gmm_renovaciones import PARSER_VERSION as METLIFE_GMM_RENEWAL_PARSER_VERSION
 from parsers.metlife_gmm_renovaciones import parse_metlife_gmm_renewal_workbook
 from parsers.metlife_vida_renovaciones import PARSER_VERSION as METLIFE_VIDA_RENEWAL_PARSER_VERSION
@@ -204,6 +205,7 @@ def _cached_metlife_gmm_agents(
         agent = {
             "AGENTE": str(payload.get("agent_code") or ""),
             "NOMBRE": str(payload.get("agent_name") or ""),
+            "PAGADO_HASTA_BASE": format_date(payload.get("paid_until_date")),
         }
         indexed[(policy_number, deadline_key)] = agent
         indexed[(policy_number, "")] = agent
@@ -567,11 +569,12 @@ def upsert_retrieval_task(db, payload: dict) -> tuple[PolicyDocumentRetrievalTas
         ]:
             if field == "rfc" and preserve_recovered_rfc:
                 continue
-            if field == "normalized_payload" and preserve_recovered_rfc:
+            if field == "normalized_payload":
                 normalized_payload = dict(payload.get(field) or {})
-                normalized_payload["rfc"] = existing.rfc
+                if preserve_recovered_rfc:
+                    normalized_payload["rfc"] = existing.rfc
                 for key, value in (existing.normalized_payload or {}).items():
-                    if key.startswith("rfc_recovered_"):
+                    if key == "collection_check" or (preserve_recovered_rfc and key.startswith("rfc_recovered_")):
                         normalized_payload[key] = value
                 setattr(existing, field, normalized_payload)
                 continue
@@ -1609,11 +1612,13 @@ async def get_upcoming_renewals(
     db = SessionLocal()
     try:
         results = []
+        portal_checks = {}
         gmm_agents: dict[tuple[str, str], dict[str, str]] = {}
         vida_agents: dict[tuple[str, str], dict[str, str]] = {}
         promoterias: dict[str, str] = {}
         if insurer.lower() == "metlife" and type.upper() in {"ALL", "GMM"}:
             gmm_agents = await run_in_threadpool(metlife_gmm_agents)
+            portal_checks = await run_in_threadpool(portal_collection_index)
         if insurer.lower() == "metlife" and type.upper() in {"ALL", "VIDA"}:
             vida_agents = await run_in_threadpool(metlife_vida_agents)
         if insurer.lower() == "metlife":
@@ -1680,6 +1685,7 @@ async def get_upcoming_renewals(
                         gmm_agents.get((str(pol.policy_number).strip(), ""), {}),
                     )
                     agent_code = agent.get("AGENTE", "")
+                    portal = portal_checks.get((str(pol.policy_number).strip(), format_date(ren.renewal_deadline)), {})
                     results.append({
                         "NPOLIZA": pol.policy_number,
                         "POLORIG": pol.policy_number,
@@ -1690,11 +1696,11 @@ async def get_upcoming_renewals(
                         "IVA": float(pol.premium_amount) * 0.16 if pol.premium_amount else 0.0,
                         "NOMBREL": pol.client.full_name if pol.client else "",
                         "DEDUCIBLE": 0.0,
-                        "PAGADOHASTA": (
-                            ren.paid_until.strftime("%d/%m/%Y")
-                            if ren.paid_until
-                            else ""
-                        ),
+                        "PAGADOHASTA": portal.get("paid_until"),
+                        "PAGADO_HASTA_BASE": gmm_agents.get(
+                            (str(pol.policy_number).strip(), format_date(ren.renewal_deadline)), {}
+                        ).get("PAGADO_HASTA_BASE"),
+                        "ULTIMA_CONSULTA_PORTAL": display_checked_timestamp(portal.get("checked_at")),
                         "COASEGURO": 0.0,
                         "AGENTE": agent_code,
                         "NOMBRE": agent.get("NOMBRE", ""),

@@ -5,7 +5,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-const FASTAPI_URL = `${process.env.INTERNAL_API_BASE_URL || 'http://127.0.0.1:7777'}/base-loads/metlife-gmm/preview`;
+const FASTAPI_URL = `${process.env.INTERNAL_API_BASE_URL || 'http://127.0.0.1:7777'}/base-loads/metlife-gmm/preview?background=true`;
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
