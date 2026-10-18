@@ -188,7 +188,7 @@ export function CarteraView({ data, insurer, type }: Props) {
                     {insurer === 'AARCO' && <Field label="Aseguradora" name="carrier" defaultValue={record.carrier || ''} placeholder="Ej. AXA, Mapfre, HDI…" required />}
                     <Field label="Póliza" name="policy_number" defaultValue={record.policy_number} required />
                     {insurer === 'Metlife' && type === 'GMM' && <Field label="Póliza actual" name="current_policy_number" defaultValue={record.current_policy_number || ''} />}
-                    <Field label="Contratante" name="contractor" defaultValue={record.contractor} required wide />
+                    <Field label="Contratante (opcional)" name="contractor" defaultValue={record.contractor} wide />
                     <ProspectorSelect currentValue={record.prospector} />
                     <div className="grid gap-1.5">
                         <Field label="Inicio de pago" name="payment_start_date" type="date" defaultValue={record.payment_start_date || ''} />

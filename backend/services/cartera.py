@@ -31,7 +31,7 @@ _DATA_CACHE_TTL_SECONDS = max(30, int(os.getenv("CARTERA_DATA_CACHE_TTL_SECONDS"
 class CarteraRecordPayload(BaseModel):
     policy_number: str = Field(min_length=1, max_length=100)
     current_policy_number: str | None = Field(default=None, max_length=100)
-    contractor: str = Field(min_length=1, max_length=255)
+    contractor: str = Field(default="", max_length=255)
     prospector: str = Field(min_length=1, max_length=255)
     percentage: float = Field(ge=0, le=100)
     payment_start_date: date | None = None
@@ -594,10 +594,15 @@ def create_cartera_record(
         if not db.query(Insurer).filter(Insurer.id == insurer_id).first():
             raise HTTPException(status_code=422, detail="La aseguradora no está configurada")
         contractor = payload.contractor.strip()
-        client = db.query(Client).filter(
-            func.upper(func.trim(Client.full_name)) == contractor.upper(),
-            Client.status != "inactive",
-        ).first()
+        # Missing names must never merge unrelated policies into one client.
+        client = existing_policy.client if existing_policy and not contractor else None
+        if contractor:
+            client = db.query(Client).filter(
+                func.upper(func.trim(Client.full_name)) == contractor.upper(),
+                Client.status != "inactive",
+            ).first()
+        elif client:
+            payload = payload.model_copy(update={"contractor": client.full_name})
         if not client:
             client = Client(
                 full_name=contractor,
@@ -714,7 +719,11 @@ def update_cartera_record(
             "payment_start_date": payload.payment_start_date.isoformat() if payload.payment_start_date else None,
             "carrier": str(payload.carrier or "").strip(),
         }
-        policy.client.full_name = payload.contractor.strip()
+        if payload.contractor.strip():
+            policy.client.full_name = payload.contractor.strip()
+        else:
+            # An omitted optional name must not erase an existing client identity.
+            payload = payload.model_copy(update={"contractor": policy.client.full_name})
         try:
             reassign_policy_to_named_prospector(db, policy, payload.prospector)
         except ValueError as exc:

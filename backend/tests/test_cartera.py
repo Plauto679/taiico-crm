@@ -5,6 +5,7 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import create_engine
@@ -58,6 +59,35 @@ class CarteraModuleTests(unittest.TestCase):
         ])
         db.commit()
         db.close()
+
+    def test_manual_records_allow_missing_contractor_without_merging_clients(self):
+        profile = SimpleNamespace(is_agent=False)
+        with patch.object(cartera, "SessionLocal", self.Session), \
+             patch.object(cartera, "_owner_for", return_value=SimpleNamespace(id="usr_pamela")), \
+             patch.object(cartera, "_write_canonical"), \
+             patch.object(cartera, "reassign_policy_to_named_prospector"):
+            for number, extra in [("OPTIONAL-1", {}), ("OPTIONAL-2", {"contractor": "   "})]:
+                payload = cartera.CarteraRecordPayload(
+                    policy_number=number, insurer="aarco", carrier="AXA",
+                    prospector="ANA", percentage=20, **extra,
+                )
+                result = cartera.create_cartera_record(payload, profile)
+                self.assertEqual(result["contractor"], "")
+            db = self.Session()
+            policies = db.query(Policy).order_by(Policy.policy_number).all()
+            self.assertEqual(len(policies), 2)
+            self.assertNotEqual(policies[0].client_id, policies[1].client_id)
+            record_id = policies[0].id
+            db.close()
+            payload = cartera.CarteraRecordPayload(
+                policy_number="OPTIONAL-1", insurer="aarco", carrier="AXA",
+                contractor="Nombre conocido", prospector="ANA", percentage=20,
+            )
+            cartera.update_cartera_record(record_id, payload, profile)
+            result = cartera.update_cartera_record(
+                record_id, payload.model_copy(update={"contractor": ""}), profile,
+            )
+            self.assertEqual(result["contractor"], "Nombre conocido")
 
     def test_parser_uses_last_repeated_policy_and_normalizes_columns(self):
         rows = cartera.parse_cartera_workbook(sura_workbook(
