@@ -275,6 +275,9 @@ class RenewalAgentJobTests(unittest.TestCase):
             ), patch(
                 "jobs.run_renewal_agent.send_email_smtp",
             ) as send_email, patch(
+                "jobs.run_renewal_agent.renewal_smtp_settings",
+                return_value={"sender": "sender@example.com"},
+            ), patch(
                 "jobs.run_renewal_agent.persist_result",
             ) as persist, patch(
                 "jobs.run_renewal_agent.record_action",
@@ -284,7 +287,7 @@ class RenewalAgentJobTests(unittest.TestCase):
                 old_adapter.return_value.run.return_value = retrieval_result
                 item, portal_failure = process_one("run-1", task.id)
 
-        self.assertEqual(item["status"], "completed")
+        self.assertEqual(item["status"], "completed", item.get("detail"))
         self.assertFalse(portal_failure)
         call = send_email.call_args.kwargs
         self.assertEqual(call["recipients"], ["agente@example.com"])
