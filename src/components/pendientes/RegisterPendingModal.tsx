@@ -25,6 +25,7 @@ const GMM_REQUESTS = [
     'EMISION PERSONA FISICA',
     'EMISION PERSONA MORAL',
     'Modificación de nombre y apellidos GMM',
+    'Corrección de nombre de asegurado GMM',
     'Cambio de contratante GMM',
     'Cambio de domicilio GMM',
     'Corrección RFC GMM',
@@ -49,6 +50,7 @@ const VIDA_REQUESTS = [
     'EMISION PERSONA FISICA',
     'EMISION PERSONA MORAL',
     'Modificación de nombre y apellidos VIDA',
+    'Corrección de nombre de asegurado VIDA',
     'Cambio de contratante VIDA',
     'Cambio de domicilio VIDA',
     'Corrección RFC VIDA',
@@ -66,6 +68,9 @@ const VIDA_REQUESTS = [
     'Devolución de primas VIDA',
     'Aclaración de pagos VIDA',
     'Aplicación de pagos VIDA',
+    'Aportaciones adicionales fijas VIDA',
+    'Aportaciones adicionales variables VIDA',
+    'Cancelación de pólizas VIDA',
 ];
 
 export function RegisterPendingModal({ source, onClose, onCreated, access }: RegisterPendingModalProps) {

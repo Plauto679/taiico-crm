@@ -266,6 +266,14 @@ app.include_router(finanzas.router, dependencies=[Depends(require_module_access(
 app.include_router(gestion_comercial.router, dependencies=[Depends(require_module_access("gestion_comercial"))])
 app.include_router(time_machine.router)
 
+
+# Plauto uses the same session and authorization layer as the CRM modules.
+from services import plauto
+app.include_router(plauto.router)
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="127.0.0.1", port=7777)
+
+from services.campaign_surveys import router as survey_router
+app.include_router(survey_router)

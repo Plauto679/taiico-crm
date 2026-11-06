@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { DataTable } from '@/components/ui/DataTable';
 import { DateRangeFilter } from '@/components/ui/DateRangeFilter';
@@ -35,6 +35,9 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
     const [dateRange, setDateRange] = useState({ start: initialStartDate, end: initialEndDate });
     const [isLoading, setIsLoading] = useState(false);
     const [loadError, setLoadError] = useState('');
+    const [controlsOpen, setControlsOpen] = useState(false);
+    const [search, setSearch] = useState('');
+    const normalizeSearch = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
     const activeRenewals = insurer === 'Metlife'
         ? (activeTab === 'VIDA' ? vidaData : gmmData)
@@ -44,6 +47,14 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                 ? aarcoData
                 : promotoriaSuraData;
 
+    const searchedRenewals = useMemo(() => {
+        const query = normalizeSearch(search.trim());
+        if (!query) return activeRenewals;
+        return activeRenewals.filter(row => Object.values(row).some(value =>
+            (typeof value === 'string' || typeof value === 'number') && normalizeSearch(String(value)).includes(query)
+        ));
+    }, [activeRenewals, search]);
+
     useEffect(() => setVidaData(vidaRenewals), [vidaRenewals]);
     useEffect(() => setGmmData(gmmRenewals), [gmmRenewals]);
     useEffect(() => setSuraData(suraRenewals), [suraRenewals]);
@@ -51,8 +62,8 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
     useEffect(() => setPromotoriaSuraData(promotoriaSuraRenewals), [promotoriaSuraRenewals]);
 
     useEffect(() => {
-        setVisibleRenewals(activeRenewals);
-    }, [activeTab, insurer, vidaData, gmmData, suraData, aarcoData, promotoriaSuraData]);
+        setVisibleRenewals(searchedRenewals);
+    }, [searchedRenewals]);
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -386,7 +397,19 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
     ];
 
     return (
-        <div className="flex flex-col h-full space-y-4">
+        <div className="flex min-h-0 flex-col h-full gap-2 sm:gap-4">
+            <div className="flex-none sm:hidden">
+                <button type="button" aria-expanded={controlsOpen} aria-controls="renewal-controls" onClick={() => setControlsOpen(!controlsOpen)} className="flex w-full items-center justify-between gap-2 rounded-lg border border-white/30 px-3 py-2 text-left text-sm text-white">
+                    <span><span className="font-semibold">{insurer === 'AARCO_AXA' ? 'AARCO & AXA' : insurer}</span><span className="ml-2 text-xs text-white/80">{dateRange.start.split('-').reverse().join('/')} – {dateRange.end.split('-').reverse().join('/')}</span></span>
+                    <span className="shrink-0 font-semibold">{controlsOpen ? 'Cerrar ▴' : 'Filtros ▾'}</span>
+                </button>
+            </div>
+            <div id="renewal-controls" className={`${controlsOpen ? 'block' : 'hidden'} max-h-[45dvh] flex-none space-y-3 overflow-y-auto sm:block sm:max-h-none sm:overflow-visible`}>
+                <label className="block text-sm text-white sm:hidden">Aseguradora
+                    <select aria-label="Aseguradora" value={insurer} onChange={event => { const params = new URLSearchParams(window.location.search); params.set('insurer', event.target.value); params.set('renewalType', activeTab); router.push(`?${params.toString()}`, {scroll: false}); }} className="mt-1 w-full rounded-lg bg-white p-2.5 text-base text-slate-900">
+                        {['Metlife','SURA','AARCO_AXA','Promotoria SURA'].map(value => <option key={value} value={value}>{value === 'AARCO_AXA' ? 'AARCO & AXA' : value}</option>)}
+                    </select>
+                </label>
             {insurer === 'Metlife' && activeTab === 'GMM' && (
                 <p className="text-sm text-white/80">
                     Base: dato del archivo cargado. Portal: última consulta automatizada; queda vacío si no hay un resultado válido. La hora de consulta se muestra en UTC.
@@ -398,8 +421,14 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                 startLabel="Fin de vigencia desde"
                 endLabel="Fin de vigencia hasta"
                 initializeUrl={false}
-                onApply={handleDateRangeApply}
+                onApply={async (start, end) => { await handleDateRangeApply(start, end); setControlsOpen(false); }}
             />
+                <button type="button" onClick={handleExport} className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white sm:hidden">Exportar Excel</button>
+            </div>
+            <div className="relative flex-none">
+                <label htmlFor="renewal-search" className="sr-only">Buscar cliente o póliza</label>
+                <input id="renewal-search" type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar cliente o póliza…" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-base text-slate-900" />
+            </div>
             <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-2 flex-none">
                 <div className="flex min-w-0 space-x-2 sm:space-x-4">
                     {insurer === 'Metlife' && (
@@ -438,7 +467,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                 </div>
                 <button
                     onClick={handleExport}
-                    className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
+                    className="hidden sm:block rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
                 >
                     Exportar Excel
                 </button>
@@ -460,7 +489,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                     activeTab === 'VIDA' ? (
                         <DataTable
                             key="metlife-vida"
-                            data={vidaData}
+                            data={searchedRenewals as RenovacionVida[]}
                             columns={vidaColumns}
                             filterMode="multi-select"
                             onProcessedDataChange={setVisibleRenewals}
@@ -470,7 +499,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                     ) : (
                         <DataTable
                             key="metlife-gmm"
-                            data={gmmData}
+                            data={searchedRenewals as RenovacionGMM[]}
                             columns={gmmColumns}
                             filterMode="multi-select"
                             onProcessedDataChange={setVisibleRenewals}
@@ -481,7 +510,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                 ) : insurer === 'SURA' ? (
                     <DataTable
                         key="sura"
-                        data={suraData}
+                        data={searchedRenewals as RenovacionSura[]}
                         columns={suraColumns}
                         filterMode="multi-select"
                         onProcessedDataChange={setVisibleRenewals}
@@ -491,7 +520,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                 ) : insurer === 'AARCO_AXA' ? (
                     <DataTable
                         key="aarco-axa"
-                        data={aarcoData}
+                        data={searchedRenewals as RenovacionAarco[]}
                         columns={aarcoColumns}
                         filterMode="multi-select"
                         onProcessedDataChange={setVisibleRenewals}
@@ -501,7 +530,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
                 ) : (
                     <DataTable
                         key="promotoria-sura"
-                        data={promotoriaSuraData}
+                        data={searchedRenewals as RenovacionPromotoriaSura[]}
                         columns={promotoriaSuraColumns}
                         filterMode="multi-select"
                         onProcessedDataChange={setVisibleRenewals}

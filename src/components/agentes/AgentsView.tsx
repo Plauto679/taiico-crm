@@ -9,6 +9,7 @@ import {
   AgentInput,
   createAgent,
   updateAgent,
+  updateAgentCommunications,
 } from '@/modules/agentes/service';
 
 const EMPTY_AGENT: AgentInput = {
@@ -94,6 +95,12 @@ export function AgentsView({ initialDirectory }: { initialDirectory: AgentDirect
       cell: (agent: Agent) => <span className="font-mono">{agent.rfc || '—'}</span>,
     },
     {
+      header: 'Recibir comunicaciones',
+      accessorKey: 'recibir_comunicaciones' as keyof Agent,
+      filterValue: (agent: Agent) => agent.recibir_comunicaciones === false ? 'No recibir' : 'Sí recibir',
+      cell: (agent: Agent) => <button type="button" role="switch" aria-checked={agent.recibir_comunicaciones !== false} aria-label={`Recibir comunicaciones: ${agent.nombre}`} disabled={!directory.can_operate || saving} onClick={async(event)=>{event.stopPropagation();setSaving(true);setError('');try {setDirectory(await updateAgentCommunications(agent,agent.recibir_comunicaciones===false));setSuccessMessage('Preferencia de comunicaciones guardada.');}catch(e){setError(e instanceof Error?e.message:'No se pudo guardar la preferencia.');}finally{setSaving(false);}}} className={`rounded-full px-3 py-1 text-sm font-semibold disabled:opacity-50 ${agent.recibir_comunicaciones===false?'bg-red-100 text-red-800':'bg-emerald-100 text-emerald-800'}`}>{agent.recibir_comunicaciones===false?'No recibir':'Sí recibir'}</button>,
+    },
+    {
       header: 'Correo personal',
       accessorKey: 'correo_personal' as keyof Agent,
       filterValue: (agent: Agent) => agent.correo_personal || 'Sin correo personal',
@@ -131,7 +138,7 @@ export function AgentsView({ initialDirectory }: { initialDirectory: AgentDirect
       filterValue: (agent: Agent) => agent.estatus_met || 'Sin estatus',
       cell: (agent: Agent) => <Status value={agent.estatus_met} />,
     },
-  ], []);
+  ], [directory.can_operate, saving]);
 
   function openAgent(agent?: Agent) {
     if (!directory.can_operate) return;

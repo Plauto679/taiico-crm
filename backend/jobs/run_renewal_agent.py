@@ -223,7 +223,8 @@ def attachment_payloads(folder: str | None) -> list[dict]:
         raise RuntimeError(
             f"Los adjuntos pesan {total} bytes y exceden el límite seguro"
         )
-    return [
+    from services.renewal_documents import customer_renewal_attachments
+    return customer_renewal_attachments([
         {
             "name": path.name,
             "content": path.read_bytes(),
@@ -231,7 +232,7 @@ def attachment_payloads(folder: str | None) -> list[dict]:
             or "application/octet-stream",
         }
         for path in paths
-    ]
+    ], max_bytes=MAX_ATTACHMENT_BYTES, max_count=MAX_ATTACHMENT_COUNT)
 
 
 def step(

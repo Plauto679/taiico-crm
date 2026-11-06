@@ -33,8 +33,14 @@ __pycache__/
 
 # local databases and backups
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
+*.sqlite-wal
+*.sqlite-shm
 *.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 *.backup-*.db
 
 # debug
@@ -55,3 +61,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Isolated frontend build for release validation
+/.next-plauto/
+
+# Local validation builds and generated business artifacts
+/.next-contact-campaign/
+/.next-renewals-mobile/
+/output/
+/outputs/
+/tmp/

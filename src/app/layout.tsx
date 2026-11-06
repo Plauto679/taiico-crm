@@ -1,3 +1,4 @@
+import { Plauto } from "@/components/plauto/Plauto";
 import type { Metadata } from "next";
 import "./globals.css";
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -54,6 +55,7 @@ export default function RootLayout({
         <div className="flex h-screen bg-gray-100">
           <SessionActivityGuard />
           <NavigationProgress />
+          <Plauto />
           <Sidebar />
           <main className="min-w-0 flex-1 flex flex-col overflow-hidden bg-[#34587C]">
             {children}

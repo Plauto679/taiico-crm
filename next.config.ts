@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   experimental: {
     // MetLife workbooks can be up to 100 MB. Leave room for multipart framing
     // before the same-origin route streams the request to FastAPI.

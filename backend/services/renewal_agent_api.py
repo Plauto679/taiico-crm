@@ -14,7 +14,9 @@ from database import AgentAction, PolicyDocumentRetrievalTask, SessionLocal
 
 router = APIRouter(prefix="/renewal-agent", tags=["renewal-agent"])
 
-TAIICO_AGENT_CODES = frozenset({"16200", "18412", "73640"})
+# Delivery routing only: 16190 is Isis Karina Cervera Garza.
+# This exception does not transfer ownership of her portfolio in the CRM.
+TAIICO_AGENT_CODES = frozenset({"16200", "18412", "73640", "16190"})
 DEFAULT_WINDOW_DAYS = 45
 PROCESS_TIMEZONE = ZoneInfo("America/Mexico_City")
 ALLOWED_CLAIM_STATUSES = frozenset({"queued"})

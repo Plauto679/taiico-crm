@@ -10,6 +10,9 @@ from email.parser import BytesParser
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from collections import Counter
+from typing import Literal
+from copy import deepcopy
+from services.campaign_surveys import AI_SURVEY, SURVEYS_BY_TYPE, build_agent_audience, survey_link, invitation_body
 
 import pandas as pd
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -19,6 +22,7 @@ from sqlalchemy import desc
 
 from database import Campaign, CampaignDelivery, Client, SessionLocal
 from drive.client import build_drive_service
+from services.agent_communications import blocked_emails, CommunicationOptOutError
 from services.auth import AccessProfile
 from services.authorization import require_module_access
 from services.client_email_directory import load_email_directory, normalize_client_name
@@ -47,6 +51,7 @@ BOUNCE_SUBJECT_MARKERS = ("delivery status", "undeliver", "no se ha podido entre
 
 
 class CampaignInput(BaseModel):
+    tipo: Literal["gmm_deducible", "agentes_encuesta_ia", "agentes_actualizacion_datos"] = "gmm_deducible"
     nombre: str = Field(min_length=1, max_length=255)
     asunto: str = Field(min_length=1, max_length=500)
     cuerpo: str = Field(min_length=1, max_length=20000)
@@ -54,12 +59,15 @@ class CampaignInput(BaseModel):
 
 
 class CampaignTestRequest(BaseModel):
-    recipient_key: str = Field(min_length=1, max_length=500)
+    recipient_key: str = Field(default="", max_length=500)
     test_email: str = Field(min_length=3, max_length=320)
 
 
-class CampaignSendRequest(BaseModel):
+class CampaignLaunchRequest(BaseModel):
     confirmation: str = Field(min_length=1, max_length=255)
+
+
+class CampaignSendRequest(CampaignLaunchRequest):
     batch_size: int = Field(default=20, ge=1, le=25)
 
 
@@ -249,6 +257,9 @@ def _serialize_campaign(campaign: Campaign) -> dict[str, object]:
         "asunto": campaign.subject,
         "cuerpo": campaign.body,
         "estatus": campaign.status,
+        "tipo": segment.get("tipo", "gmm_deducible"),
+        "promotoria": "TAIICO" if segment.get("tipo") == "agentes_actualizacion_datos" else segment.get("promotoria"),
+        "encuesta": segment.get("encuesta"),
         "deducible_minimo": float(segment.get("deducible_minimo", 1000000)),
         "creado_por": campaign.created_by,
         "created_at": campaign.created_at.isoformat(),
@@ -287,6 +298,7 @@ def _delivery_report(db, campaign_id: str) -> dict[str, object]:
             "enviando": counts["enviando"],
             "enviados": counts["enviado"],
             "sin_correo": counts["sin_correo"],
+            "excluidos_comunicaciones": counts["excluido_comunicaciones"],
             "variables_incompletas": counts["variables_incompletas"],
             "rechazados": counts["rechazado"],
             "errores": counts["error"],
@@ -301,12 +313,17 @@ def prepare_campaign_deliveries(db, campaign: Campaign) -> dict[str, object]:
     if existing:
         return _delivery_report(db, campaign.id)
     audience = _campaign_audience(campaign)
+    blocked = blocked_emails()
     for row in audience["rows"]:
         subject, missing_subject = render_template(campaign.subject, row)
         body, missing_body = render_template(campaign.body, row)
+        if (campaign.segment_json or {}).get("encuesta"):
+            body = invitation_body(body, survey_link(db, campaign, row))
         missing = sorted(set(missing_subject + missing_body))
         email = str(row.get("email") or "").strip().casefold()
-        if not email:
+        if row.get("recibir_comunicaciones") is False or email in blocked:
+            status, error = "excluido_comunicaciones", "El agente solicitó no recibir comunicaciones."
+        elif not email:
             status, error = "sin_correo", "El cliente no tiene un correo válido registrado."
         elif missing:
             status, error = "variables_incompletas", "Faltan variables: " + ", ".join(missing)
@@ -347,13 +364,23 @@ def _finish_campaign_status(db, campaign_id: str) -> None:
 
 def process_campaign_batch(campaign_id: str, delivery_ids: list[str], sender_username: str) -> None:
     settings = smtp_settings_for(sender_username)
-    for delivery_id in delivery_ids:
+    for position, delivery_id in enumerate(delivery_ids):
         db = SessionLocal()
         try:
             delivery = db.query(CampaignDelivery).filter(CampaignDelivery.id == delivery_id).first()
             if not delivery or delivery.campaign_id != campaign_id or delivery.status != "enviando":
                 continue
             try:
+                campaign = _campaign_or_404(db, campaign_id)
+                if (campaign.segment_json or {}).get("tipo") == "agentes_actualizacion_datos":
+                    allowed = {row["key"]: row for row in _campaign_audience(campaign)["rows"]}
+                    current = allowed.get(delivery.recipient_key)
+                    if not current or str(current.get("email") or "").strip().casefold() != str(delivery.email or "").strip().casefold():
+                        delivery.status = "rechazado"
+                        delivery.error_detail = "Destinatario fuera de la promotoría TAIICO o correo modificado."
+                        delivery.updated_at = datetime.utcnow()
+                        db.commit()
+                        continue
                 send_email_smtp(
                     delivery.rendered_subject or "",
                     delivery.rendered_body or "",
@@ -365,6 +392,9 @@ def process_campaign_batch(campaign_id: str, delivery_ids: list[str], sender_use
                 delivery.status = "enviado"
                 delivery.sent_at = datetime.utcnow()
                 delivery.error_detail = None
+            except CommunicationOptOutError as exc:
+                delivery.status = "excluido_comunicaciones"
+                delivery.error_detail = str(exc)
             except smtplib.SMTPRecipientsRefused as exc:
                 delivery.status = "rechazado"
                 delivery.error_detail = str(exc)[:2000]
@@ -376,6 +406,18 @@ def process_campaign_batch(campaign_id: str, delivery_ids: list[str], sender_use
                 delivery.error_detail = f"{type(exc).__name__}: {exc}"[:2000]
             delivery.updated_at = datetime.utcnow()
             db.commit()
+            if delivery.status in {"entrega_incierta", "error"}:
+                # Stop the run on transport trouble; leave unsent messages available
+                # for an explicit launch, never retry an uncertain delivery.
+                remaining = delivery_ids[position + 1:]
+                if remaining:
+                    db.query(CampaignDelivery).filter(
+                        CampaignDelivery.id.in_(remaining),
+                        CampaignDelivery.campaign_id == campaign_id,
+                        CampaignDelivery.status == "enviando",
+                    ).update({"status": "pendiente"}, synchronize_session=False)
+                    db.commit()
+                break
         finally:
             db.close()
     db = SessionLocal()
@@ -474,6 +516,10 @@ def _campaign_or_404(db, campaign_id: str) -> Campaign:
 
 
 def _campaign_audience(campaign: Campaign) -> dict[str, object]:
+    if (campaign.segment_json or {}).get("tipo") == "agentes_actualizacion_datos":
+        return build_agent_audience(promotoria="TAIICO")
+    if (campaign.segment_json or {}).get("tipo") in SURVEYS_BY_TYPE:
+        return build_agent_audience()
     minimum = Decimal(str((campaign.segment_json or {}).get("deducible_minimo", 1000000)))
     return build_gmm_audience(minimum)
 
@@ -508,7 +554,9 @@ def create_campaign(
             subject=payload.asunto.strip(),
             body=payload.cuerpo.strip(),
             status="borrador",
-            segment_json={"tipo": "gmm_deducible", "deducible_minimo": float(payload.deducible_minimo)},
+            segment_json={"tipo": payload.tipo, "deducible_minimo": float(payload.deducible_minimo),
+                          "encuesta": deepcopy(SURVEYS_BY_TYPE.get(payload.tipo)),
+                          "promotoria": "TAIICO" if payload.tipo == "agentes_actualizacion_datos" else None},
             created_by=profile.username,
         )
         db.add(campaign)
@@ -534,7 +582,9 @@ def update_campaign(
         campaign.name = _optional_text(payload.nombre)
         campaign.subject = payload.asunto.strip()
         campaign.body = payload.cuerpo.strip()
-        campaign.segment_json = {"tipo": "gmm_deducible", "deducible_minimo": float(payload.deducible_minimo)}
+        campaign.segment_json = {"tipo": payload.tipo, "deducible_minimo": float(payload.deducible_minimo),
+                          "encuesta": deepcopy(SURVEYS_BY_TYPE.get(payload.tipo)),
+                          "promotoria": "TAIICO" if payload.tipo == "agentes_actualizacion_datos" else None}
         campaign.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(campaign)
@@ -567,6 +617,9 @@ def campaign_preview(
         row = _recipient(_campaign_audience(campaign), recipient_key)
         subject, missing_subject = render_template(campaign.subject, row)
         body, missing_body = render_template(campaign.body, row)
+        if (campaign.segment_json or {}).get("encuesta"):
+            body = invitation_body(body, survey_link(db, campaign, row, is_test=True))
+            db.commit()
         return {
             "recipient": row,
             "subject": subject,
@@ -589,9 +642,20 @@ def send_campaign_test(
     db = SessionLocal()
     try:
         campaign = _campaign_or_404(db, campaign_id)
-        row = _recipient(_campaign_audience(campaign), payload.recipient_key)
+        if payload.recipient_key:
+            row = _recipient(_campaign_audience(campaign), payload.recipient_key)
+        elif (campaign.segment_json or {}).get("encuesta"):
+            row = {"key": "internal-test", "nombre_cliente": "Equipo TAIICO", "agente": "Equipo TAIICO"}
+        else:
+            audience = _campaign_audience(campaign)
+            if not audience["rows"]:
+                raise HTTPException(422, "No hay destinatarios de ejemplo. Revisa la audiencia de la campaña.")
+            row = audience["rows"][0]
         subject, missing_subject = render_template(campaign.subject, row)
         body, missing_body = render_template(campaign.body, row)
+        if (campaign.segment_json or {}).get("encuesta"):
+            body = invitation_body(body, survey_link(db, campaign, row, is_test=True))
+            db.commit()
     finally:
         db.close()
     missing = sorted(set(missing_subject + missing_body))
@@ -646,10 +710,28 @@ def send_campaign_batch(
     background_tasks: BackgroundTasks,
     profile: AccessProfile = Depends(require_module_access("campanas", operation=True)),
 ):
+    return _dispatch_campaign(campaign_id, payload.confirmation, background_tasks, profile, payload.batch_size)
+
+
+@router.post("/{campaign_id}/launch")
+def launch_campaign(
+    campaign_id: str,
+    payload: CampaignLaunchRequest,
+    background_tasks: BackgroundTasks,
+    profile: AccessProfile = Depends(require_module_access("campanas", operation=True)),
+):
+    return _dispatch_campaign(campaign_id, payload.confirmation, background_tasks, profile)
+
+
+def _dispatch_campaign(campaign_id, confirmation, background_tasks, profile, batch_size=None):
     db = SessionLocal()
     try:
+        if db.bind.dialect.name == "sqlite":
+            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        else:
+            db.query(Campaign).filter(Campaign.id == campaign_id).with_for_update().first()
         campaign = _campaign_or_404(db, campaign_id)
-        if payload.confirmation.strip() != campaign.name:
+        if confirmation.strip() != campaign.name:
             raise HTTPException(status_code=422, detail="Escribe exactamente el nombre de la campaña para confirmar")
         if campaign.status not in {"preparada", "envío parcial"}:
             raise HTTPException(status_code=409, detail="Prepara primero la audiencia o revisa el estado de la campaña")
@@ -659,7 +741,7 @@ def send_campaign_batch(
             db.query(CampaignDelivery)
             .filter(CampaignDelivery.campaign_id == campaign_id, CampaignDelivery.status == "pendiente")
             .order_by(CampaignDelivery.created_at)
-            .limit(payload.batch_size)
+            .limit(batch_size)
             .all()
         )
         if not deliveries:
@@ -674,7 +756,7 @@ def send_campaign_batch(
         campaign.updated_at = datetime.utcnow()
         db.commit()
         background_tasks.add_task(process_campaign_batch, campaign_id, delivery_ids, profile.username)
-        return {"accepted": len(delivery_ids), "batch_size": payload.batch_size}
+        return {"accepted": len(delivery_ids), "batch_size": batch_size}
     finally:
         db.close()
 

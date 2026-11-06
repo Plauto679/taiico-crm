@@ -5,6 +5,7 @@ import re
 import shutil
 import time
 import zipfile
+from services.renewal_documents import extract_customer_documents
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -639,14 +640,5 @@ class MetLifeGmmOldPortalAdapter(MetLifeGmmPortalAdapter):
         if destination.exists():
             shutil.rmtree(destination)
         destination.mkdir(parents=True)
-        if not zipfile.is_zipfile(archive):
-            shutil.copy2(archive, destination / archive.name)
-            return destination
-        with zipfile.ZipFile(archive) as bundle:
-            root = destination.resolve()
-            for member in bundle.infolist():
-                target = (destination / member.filename).resolve()
-                if root not in target.parents and target != root:
-                    raise MetLifePortalAdapterError("El ZIP contiene una ruta insegura")
-            bundle.extractall(destination)
+        extract_customer_documents(archive, destination)
         return destination

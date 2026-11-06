@@ -9,6 +9,7 @@ import tempfile
 import time
 import urllib.request
 import zipfile
+from services.renewal_documents import extract_customer_documents
 from dataclasses import dataclass, field
 from datetime import datetime
 from urllib.parse import urlparse
@@ -882,11 +883,7 @@ class MetLifeGmmPortalAdapter:
             shutil.rmtree(folder)
         folder.mkdir(parents=True, exist_ok=True)
 
-        if zipfile.is_zipfile(zip_path):
-            with zipfile.ZipFile(zip_path) as zf:
-                zf.extractall(folder)
-        else:
-            shutil.copy2(zip_path, folder / zip_path.name)
+        extract_customer_documents(zip_path, folder)
         return folder
 
 

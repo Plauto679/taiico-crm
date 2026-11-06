@@ -1,6 +1,11 @@
 import { fetchFromApi } from '@/lib/api';
 
+export type SurveyDraft = { title: string; description: string; header_title?: string; header_description?: string; success_title?: string; success_description?: string; privacy_url?: string; questions: Array<{ id: string; type: string; format?: string; required: boolean; label: string; options?: string[]; max_choices?: number; max_length?: number; exclusive_option?: string }> };
+
 export type Campaign = {
+  tipo: 'gmm_deducible' | 'agentes_encuesta_ia' | 'agentes_actualizacion_datos';
+  encuesta?: SurveyDraft | null;
+  promotoria?: string | null;
   id: string;
   nombre: string;
   asunto: string;
@@ -12,7 +17,7 @@ export type Campaign = {
   updated_at: string;
 };
 
-export type CampaignInput = Pick<Campaign, 'nombre' | 'asunto' | 'cuerpo' | 'deducible_minimo'>;
+export type CampaignInput = Pick<Campaign, 'nombre' | 'asunto' | 'cuerpo' | 'deducible_minimo' | 'tipo'>;
 
 export type AudienceRow = {
   key: string;
@@ -70,6 +75,7 @@ export type CampaignDeliveryReport = {
     enviando: number;
     enviados: number;
     sin_correo: number;
+    excluidos_comunicaciones: number;
     variables_incompletas: number;
     rechazados: number;
     errores: number;
@@ -124,4 +130,10 @@ export async function sendCampaignBatch(id: string, confirmation: string, batchS
 
 export async function reconcileCampaignBounces(id: string) {
   return fetchFromApi<CampaignDeliveryReport & { matched: number; scanned: number }>(`/campanas/${encodeURIComponent(id)}/reconcile-bounces`, { method: 'POST' });
+}
+
+export async function launchCampaign(id: string, confirmation: string) {
+  return fetchFromApi<{ accepted: number }>(`/campanas/${encodeURIComponent(id)}/launch`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation }),
+  });
 }

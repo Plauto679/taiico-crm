@@ -8,7 +8,7 @@ export type Statement = {
 };
 export type StatementDetail = Statement & {
   lines: { policy: string; date: string; insurer: string; branch: string; rate: string | null; manual?: boolean; id?: string; commission: string; vat: string; total: string }[];
-  adjustments: { concept: string; amount: string }[]; carry: { id: string; month: string; amount: string; vat?: string }[];
+  adjustments: { concept: string; amount: string; reference_key?: string; policy?: string; insurer?: string; branch?: string; percentage?: number }[]; carry: { id: string; month: string; amount: string; vat?: string }[];
   notes: string; history: { at: string; actor: string; action: string }[];
 };
 export type StatementWorkspace = { periods: { id: string; month: string }[]; statements: Statement[]; prospectors: { id: string; name: string }[] };

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from services.renewal_documents import UnsafeRenewalDocuments
 
 from fastapi import APIRouter, HTTPException, Query, Body, Depends
 from starlette.concurrency import run_in_threadpool
@@ -760,6 +761,7 @@ def send_email_smtp(
     cc_recipients: Optional[List[str]] = None,
     settings: dict | None = None,
     html_body: str | None = None,
+    respect_agent_preferences: bool = True,
 ):
     settings = settings or {}
     host = settings.get("host") or os.environ.get("SMTP_HOST")
@@ -774,11 +776,18 @@ def send_email_smtp(
     if not all([host, user, password, sender]):
         raise RuntimeError("Missing SMTP configuration")
 
+    if respect_agent_preferences:
+        from services.agent_communications import filter_recipients, CommunicationOptOutError
+        recipients = filter_recipients(recipients)
+        if not recipients:
+            raise CommunicationOptOutError('Envío omitido: el agente no desea recibir comunicaciones.')
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = sender
     message["To"] = ", ".join(recipients)
     effective_cc = renewal_email_cc_recipients(recipients) if cc_recipients is None else cc_recipients
+    if respect_agent_preferences:
+        effective_cc = filter_recipients(effective_cc)
     if effective_cc:
         message["Cc"] = ", ".join(effective_cc)
     message.set_content(body)
@@ -1932,6 +1941,9 @@ async def send_renewal_email_endpoint(
             elif exp_path.startswith("http"):
                 body += f"\n\nLink al expediente: {exp_path}"
                 
+        if insurer.lower() == "metlife" and type.upper() == "GMM":
+            from services.renewal_documents import customer_renewal_attachments
+            attachments = customer_renewal_attachments(attachments)
         # Send Email
         recipients = renewal_email_recipients(recipient_email)
         renewal_settings = renewal_smtp_settings()
@@ -1963,7 +1975,7 @@ async def send_renewal_email_endpoint(
         
     except HTTPException:
         raise
-    except DriveAttachmentError as e:
+    except (DriveAttachmentError, UnsafeRenewalDocuments) as e:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(e)) from e
     except SmtpDeliveryUncertainError as e:
@@ -2074,6 +2086,9 @@ async def send_renewal_agent_email_endpoint(
             elif exp_path.startswith("http"):
                 body += f"\n\nLink al expediente: {exp_path}"
 
+        from services.renewal_documents import customer_renewal_attachments
+        attachments = customer_renewal_attachments(attachments)
+
         send_email_smtp(
             subject,
             body,
@@ -2103,7 +2118,7 @@ async def send_renewal_agent_email_endpoint(
         }
     except HTTPException:
         raise
-    except DriveAttachmentError as exc:
+    except (DriveAttachmentError, UnsafeRenewalDocuments) as exc:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SmtpDeliveryUncertainError as exc:

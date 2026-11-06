@@ -37,6 +37,7 @@ GMM_DOCUMENT_REQUIREMENTS: dict[str, list[str]] = {
         "Articulo 492",
     ],
     "Modificación de nombre y apellidos GMM": ["Solicitud de Cambios", "Acta de Nacimiento", "Identificación Oficial Vigente", "Formato 5"],
+    "Corrección de nombre de asegurado GMM": ["Solicitud de Cambios", "Acta de Nacimiento", "Identificación Oficial Vigente", "Formato 5"],
     "Cambio de contratante GMM": ["Solicitud de Cambios", "Cédula Fiscal", "Identificación Oficial Vigente", "Formato 5"],
     "Cambio de domicilio GMM": ["Solicitud de Cambios", "Comprobante de domicilio", "Identificación Oficial Vigente", "Formato 5", "Constancia de situacion fiscal"],
     "Corrección RFC GMM": ["Solicitud de Cambios", "Cédula Fiscal", "Identificación Oficial Vigente", "Formato 5"],
@@ -62,6 +63,7 @@ VIDA_DOCUMENT_REQUIREMENTS: dict[str, list[str]] = {
     "EMISION PERSONA FISICA": ["Solicitud Única Digital", "Carta Firma Solicitud Única Digital Sign Now", "Identificación oficial", "Comprobante de domicilio", "Cotización", "Documentos adicionales", "Carta Reconocimiento de antigüedad o carátula de la póliza anterior"],
     "EMISION PERSONA MORAL": ["Solicitud Única Digital (SUD)", "Carta Firma Solicitud Única Digital Sign Now", "Identificación oficial", "Cédula Fiscal de la empresa", "Comprobante de domicilio de la empresa", "Cotización", "Documentos adicionales", "Articulo 492"],
     "Modificación de nombre y apellidos VIDA": ["Solicitud de Cambios", "Acta de Nacimiento", "Identificación Oficial Vigente", "Formato 5"],
+    "Corrección de nombre de asegurado VIDA": ["Solicitud de Cambios", "Acta de Nacimiento", "Identificación Oficial Vigente", "Formato 5"],
     "Cambio de contratante VIDA": ["Solicitud de Cambios", "Cédula Fiscal", "Identificación Oficial Vigente", "Formato 5"],
     "Cambio de domicilio VIDA": ["Solicitud de Cambios", "Comprobante de domicilio", "Identificación Oficial Vigente", "Formato 5", "Constancia de situacion fiscal"],
     "Corrección RFC VIDA": ["Solicitud de Cambios", "Cédula Fiscal", "Identificación Oficial Vigente", "Formato 5"],
@@ -79,6 +81,10 @@ VIDA_DOCUMENT_REQUIREMENTS: dict[str, list[str]] = {
     "Devolución de primas VIDA": ["Solicitud de Cambios", "Identificación Oficial Vigente", "Comprobante de Pago"],
     "Aclaración de pagos VIDA": ["Solicitud de Cambios", "Identificación Oficial Vigente", "Comprobante de Pago"],
     "Aplicación de pagos VIDA": ["Recibo", "Escrito de aplicación de pago"],
+    # No fixed document checklist has been defined for these service types.
+    "Aportaciones adicionales fijas VIDA": [],
+    "Aportaciones adicionales variables VIDA": [],
+    "Cancelación de pólizas VIDA": [],
 }
 
 

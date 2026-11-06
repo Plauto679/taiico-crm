@@ -81,7 +81,8 @@ async def capture_request(request: Request) -> tuple[str | None, dict[str, Any]]
         try:
             parsed = json.loads((await request.body()).decode("utf-8"))
             if isinstance(parsed, dict):
-                payload = _safe_value(parsed)
+                payload = ({'search_only': bool(parsed.get('search_only')), 'message_length': len(str(parsed.get('message', '')))}
+                           if request.url.path == '/plauto/chat' else _safe_value(parsed))
         except (UnicodeDecodeError, json.JSONDecodeError):
             payload = {}
     return username, payload

@@ -289,3 +289,19 @@ def test_manual_policy_validation_and_send(store):
     with patch.object(s,'smtp_settings_for',return_value={'sender':'sender@example.com','host':'test','port':587,'user':'test','password':'test','use_starttls':True}),patch.object(s.smtplib,'SMTP') as smtp:
         s.send(a['id'],s.SendInput(revision=data['revision']),ACTOR)
         smtp.return_value.__enter__.return_value.send_message.assert_called_once()
+
+
+def test_edit_preserves_regularization_reference_and_source(store):
+    generate(10)
+    a=state(10)
+    with store() as db:
+        row=db.get(s.AgentStatement,a['id'])
+        row.adjustments=[{'reference_key':'retro:1','concept':'Retroactiva','amount':'10.00','vat':'1.60','policy':'1439833','original_date':'2026-07-01','insurer':'MetLife','branch':'GMM'}]
+        db.commit()
+    result=s.edit(a['id'],s.EditInput(revision=a['revision'],adjustments=[s.Adjustment(reference_key='retro:1',concept='Corregida',amount='15.00')]),ACTOR)
+    item=result['adjustments'][0]
+    assert item['original_date']=='2026-07-01'
+    assert item['policy']=='1439833'
+    assert item['vat']=='2.40'
+    with pytest.raises(HTTPException):
+        s.edit(a['id'],s.EditInput(revision=result['revision'],adjustments=[s.Adjustment(reference_key='foreign',concept='Ajeno',amount='15.00')]),ACTOR)

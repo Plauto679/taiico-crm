@@ -22,11 +22,13 @@ export function middleware(request: NextRequest) {
     const isPublicPath = path === '/login'
         || path === '/olvide-password'
         || path === '/restablecer-password'
+        || path.startsWith('/encuesta/')
         || path.startsWith('/solicitud-datos')
         || path.startsWith('/_next')
         || path.startsWith('/static')
         || path === '/manifest.webmanifest'
-        || path === '/logo.png';
+        || path === '/logo.png'
+        || path === '/plauto/plauto.png';
 
     const token = request.cookies.get('taiico_session')?.value;
 

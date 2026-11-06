@@ -158,6 +158,7 @@ class GenerateInput(BaseModel):
 
 
 class Adjustment(BaseModel):
+    reference_key: str | None = Field(default=None, max_length=150)
     concept: str = Field(min_length=1, max_length=250)
     amount: Decimal = Field(max_digits=14, decimal_places=2)
 
@@ -346,7 +347,11 @@ def edit(statement_id: str, payload: EditInput, profile: AccessProfile = Depends
         event(row, profile.username, 'editado', previous_adjustments=row.adjustments, previous_notes=row.notes,
               previous_recipient=row.recipient, previous_lines=row.lines)
         row.recipient, row.notes = payload.recipient, payload.notes
-        row.adjustments = [{'concept': x.concept, 'amount': str(x.amount), 'vat': str(money(x.amount * VAT_RATE))} for x in payload.adjustments]
+        existing_adjustments = {x['reference_key']: x for x in row.adjustments if x.get('reference_key')}
+        references = [x.reference_key for x in payload.adjustments if x.reference_key]
+        if len(references) != len(set(references)) or any(key not in existing_adjustments for key in references):
+            raise HTTPException(409, 'La referencia del ajuste no corresponde a este estado o está duplicada.')
+        row.adjustments = [{**existing_adjustments.get(x.reference_key, {}), 'concept': x.concept, 'amount': str(x.amount), 'vat': str(money(x.amount * VAT_RATE))} for x in payload.adjustments]
         if payload.manual_commissions is not None:
             existing_ids = {x.get('id') for x in row.lines if x.get('manual')}
             used_ids = set()
@@ -565,6 +570,9 @@ def send(statement_id: str, payload: SendInput, profile: AccessProfile = Depends
         row.recipient = statement_recipient(row, person)
         EditInput(revision=row.revision,recipient=row.recipient)  # validate resolved email too
         if not row.recipient: raise HTTPException(409,'Agrega el correo del prospectador antes de enviar.')
+        from services.agent_communications import filter_recipients
+        if not filter_recipients([row.recipient]):
+            raise HTTPException(409, 'El agente solicitó no recibir comunicaciones.')
         data=serialize(row,db.get(Prospector,row.prospector_id),True)
         # Render before claiming: failures here have no ambiguous delivery outcome.
         pdf=pdf_bytes(data);xlsx=excel_bytes(data)

@@ -2,45 +2,20 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, DollarSign, Calendar, CakeSlice, PartyPopper, ClipboardList, Users, BarChart3, Briefcase, Mail, MailCheck, UserRoundSearch, PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, DatabaseZap, UserCog, FilePenLine, ScrollText, ContactRound, Megaphone, Menu, X, Landmark, UserRoundCog, ChartNoAxesCombined, ArchiveRestore, HandCoins } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, Menu, X } from 'lucide-react';
+import { MODULE_CATALOG, canShowModule } from '@/lib/module-catalog';
 import { SmartLink } from '@/components/navigation/SmartLink';
 import { IdleModulePrefetch } from '@/components/navigation/IdleModulePrefetch';
 
 const SESSION_CACHE_KEY = 'taiico_session_profile';
 
-const NAV_ITEMS = [
-    { name: 'Inicio', href: '/', icon: Home, module: 'inicio' },
-    { name: 'Cobranza', href: '/cobranza', icon: DollarSign, module: 'cobranza' },
-    { name: 'Renovaciones', href: '/renovaciones', icon: Calendar, module: 'renovaciones' },
-    { name: 'Cumpleaños de clientes', href: '/cumpleanos', icon: CakeSlice, module: 'cumpleanos' },
-    { name: 'Cumpleaños de agentes', href: '/cumpleanos-agentes', icon: PartyPopper, module: 'cumpleanos_agentes' },
-    { name: 'Agentes', href: '/agentes', icon: UserRoundCog, module: 'agentes' },
-    { name: 'Pendientes', href: '/pendientes', icon: ClipboardList, module: 'pendientes' },
-    { name: 'Cartera de Prospectadores', href: '/cartera', icon: Briefcase, module: 'cartera' },
-    { name: 'Prospectadores', href: '/prospectadores', icon: UserRoundSearch, module: 'prospectadores' },
-    { name: 'Cobranza para prospectadores', href: '/cobranza-prospectadores', icon: HandCoins, module: 'cobranza_prospectadores' },
-    { name: 'Estados de Prospectadores', href: '/estados-prospectadores', icon: ScrollText, module: 'estados_agentes' },
-    { name: 'Clientes', href: '/clientes', icon: Users, module: 'clientes' },
-    { name: 'Recluta', href: '/recluta', icon: UserRoundSearch, module: 'recluta' },
-    { name: 'Dashboards', href: '/dashboards', icon: BarChart3, module: 'dashboards' },
-    { name: 'Configuración de Mail', href: '/configuracion-mail', icon: Mail, module: 'configuracion_mail' },
-    { name: 'Mails automáticos', href: '/mails-automaticos', icon: MailCheck, module: 'mails_automaticos' },
-    { name: 'Carga de bases', href: '/carga-bases', icon: DatabaseZap, module: 'carga_bases' },
-    { name: 'Time Machine', href: '/time-machine', icon: ArchiveRestore, module: 'time_machine' },
-    { name: 'Accesos', href: '/accesos', icon: UserCog, module: 'accesos' },
-    { name: 'Cotizaciones', href: '/cotizaciones', icon: FilePenLine, module: 'cotizaciones' },
-    { name: 'Gestión Comercial', href: '/gestion-comercial', icon: ChartNoAxesCombined, module: 'gestion_comercial' },
-    { name: 'Logs', href: '/logs', icon: ScrollText, module: 'logs' },
-    { name: 'RRHH', href: '/rrhh', icon: ContactRound, module: 'rrhh' },
-    { name: 'Campañas', href: '/campanas', icon: Megaphone, module: 'campanas' },
-    { name: 'Finanzas', href: '/finanzas', icon: Landmark, module: 'finanzas' },
-];
+const NAV_ITEMS = MODULE_CATALOG.map(([module, name, href, , icon]) => ({ module, name, href, icon }));
 
 function isPublicPath(pathname: string): boolean {
     return pathname === '/login'
         || pathname === '/olvide-password'
         || pathname === '/restablecer-password'
-        || pathname.startsWith('/solicitud-datos/');
+        || pathname.startsWith('/solicitud-datos/') || pathname.startsWith('/encuesta/');
 }
 
 export function Sidebar() {
@@ -68,23 +43,37 @@ export function Sidebar() {
         } catch {
             window.sessionStorage.removeItem(SESSION_CACHE_KEY);
         }
-        fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' })
-            .then((response) => response.ok ? response.json() : Promise.reject())
-            .then((data) => {
-                if (active) {
-                    setPermissions(data.module_permissions || {});
-                    setUsername(data.username || '');
-                    window.sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({
-                        module_permissions: data.module_permissions || {},
-                        username: data.username || '',
-                    }));
-                }
-            })
-            .catch(() => {
-                if (active) setPermissions({});
-            });
-        return () => { active = false; };
-    }, [publicPath]);
+        let latestRequest = 0;
+        const refreshPermissions = () => {
+            const request = ++latestRequest;
+            return fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' })
+                .then((response) => response.ok ? response.json() : Promise.reject())
+                .then((data) => {
+                    if (active && request === latestRequest) {
+                        setPermissions(data.module_permissions || {});
+                        setUsername(data.username || '');
+                        window.sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({
+                            module_permissions: data.module_permissions || {},
+                            username: data.username || '',
+                        }));
+                    }
+                })
+                .catch(() => {
+                    if (active && request === latestRequest) setPermissions({});
+                });
+        };
+        const refreshWhenVisible = () => {
+            if (document.visibilityState === 'visible') void refreshPermissions();
+        };
+        void refreshPermissions();
+        window.addEventListener('focus', refreshWhenVisible);
+        document.addEventListener('visibilitychange', refreshWhenVisible);
+        return () => {
+            active = false;
+            window.removeEventListener('focus', refreshWhenVisible);
+            document.removeEventListener('visibilitychange', refreshWhenVisible);
+        };
+    }, [publicPath, pathname]);
 
     if (publicPath) return null;
 
@@ -157,11 +146,7 @@ export function Sidebar() {
                 <button type="button" onClick={() => setMobileOpen(false)} className="absolute right-3 top-3 rounded-full p-2 text-slate-500 hover:bg-slate-100 md:hidden" aria-label="Cerrar menú"><X className="h-5 w-5" /></button>
             </div>
             <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-2 py-4 [scrollbar-gutter:stable]">
-                {NAV_ITEMS.filter((item) => (
-                    item.module === 'inicio'
-                    || permissions?.[item.module] === 'lectura'
-                    || permissions?.[item.module] === 'operacion'
-                )).map((item) => (
+                {NAV_ITEMS.filter((item) => canShowModule(item.module, permissions)).map((item) => (
                     <SmartLink
                         key={item.name}
                         href={item.href}

@@ -64,6 +64,7 @@ def send_reset_email(username: str, token: str) -> None:
         cc_recipients=[],
         settings=smtp_settings_for(username),
         html_body=html_body,
+        respect_agent_preferences=False,
     )
 
 

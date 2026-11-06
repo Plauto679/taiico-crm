@@ -12,7 +12,7 @@ function isPublicPath(pathname: string): boolean {
     return pathname === '/login'
         || pathname === '/olvide-password'
         || pathname === '/restablecer-password'
-        || pathname.startsWith('/solicitud-datos/');
+        || pathname.startsWith('/solicitud-datos/') || pathname.startsWith('/encuesta/');
 }
 
 export function SessionActivityGuard() {

@@ -14,6 +14,7 @@ from openpyxl import load_workbook
 from openpyxl.utils.datetime import from_excel
 from pydantic import BaseModel, Field
 
+from services.agent_communications import apply_preferences, set_preference, sync_identity
 from services.auth import AccessProfile
 from services.authorization import (
     profile_allows_promotoria,
@@ -213,7 +214,7 @@ def build_agent_directory(workbook_bytes: bytes, *, can_operate: bool = False) -
 
 
 def scope_agent_directory(result: dict, profile: AccessProfile) -> dict:
-    scoped = copy.deepcopy(result)
+    scoped = apply_preferences(copy.deepcopy(result))
     if profile.is_agent:
         scope = resolve_agent_scope(profile)
         scoped["agents"] = [
@@ -240,10 +241,10 @@ def scope_agent_directory(result: dict, profile: AccessProfile) -> dict:
 
 def load_agents_directory(*, can_operate: bool = False) -> dict:
     """Load the canonical shared Agents workbook without using the web cache."""
-    return build_agent_directory(
+    return apply_preferences(build_agent_directory(
         _download_workbook(_file_id()),
         can_operate=can_operate,
-    )
+    ))
 
 
 def _normalized_payload(payload: AgentFields) -> dict[str, object]:
@@ -405,6 +406,8 @@ def _save_mutation(
             raise HTTPException(status_code=502, detail=f"No se pudo actualizar la base en Drive: {exc}") from exc
         data_cache.invalidate("cumpleanos:agentes")
         clear_agent_directory_cache()
+        if row_number is not None:
+            sync_identity(_agent_from_row(_workbook_context(current), row_number), _agent_from_row(_workbook_context(updated), row_number))
         return updated
 
 
@@ -453,3 +456,22 @@ def update_agent(
         build_agent_directory(updated, can_operate=profile.can_operate("agentes")),
         profile,
     )
+
+
+class CommunicationPreferenceInput(BaseModel):
+    enabled: bool
+    fingerprint: str = Field(min_length=64, max_length=64)
+
+
+@router.patch("/{row_number}/communications")
+def update_communication_preference(row_number: int, payload: CommunicationPreferenceInput,
+    profile: AccessProfile = Depends(require_module_access("agentes", operation=True))):
+    directory = load_agents_directory(can_operate=True)
+    scoped = scope_agent_directory(directory, profile)
+    agent = next((a for a in scoped['agents'] if a['row_number'] == row_number), None)
+    if not agent:
+        raise HTTPException(404, 'Agente no encontrado en tu alcance')
+    if agent['fingerprint'] != payload.fingerprint:
+        raise HTTPException(409, 'El registro cambió; actualiza antes de guardar la preferencia.')
+    set_preference(agent, payload.enabled, profile.username)
+    return scope_agent_directory(directory, profile)

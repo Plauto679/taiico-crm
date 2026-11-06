@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 from sqlalchemy import (
     create_engine, Column, String, Integer, Numeric, Boolean,
-    DateTime, Date, ForeignKey, Text, JSON, UniqueConstraint
+    DateTime, Date, ForeignKey, Text, JSON, UniqueConstraint, Index, func
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
@@ -21,7 +21,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BACKEND_DIR / 'taiico_loca
 engine = create_engine(
     DATABASE_URL, 
     # Only use connect_args for sqlite to avoid thread safety errors during local dev
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+    connect_args={"check_same_thread": False, "timeout": 30} if DATABASE_URL.startswith("sqlite") else {}
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -178,6 +178,7 @@ class Client(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     full_name = Column(String(255), nullable=False)
     rfc = Column(String(50), nullable=True, index=True)
+    __table_args__ = (Index("ix_clients_rfc_lookup", func.upper(func.trim(rfc))),)
     email = Column(String(255), unique=False, nullable=True) # Changed from unique=True to allow corporate and family shared emails
     phone = Column(String(50), nullable=True)
     identity_status = Column(String(30), default="prospect", nullable=False, index=True)
@@ -304,6 +305,7 @@ class Payment(Base):
 # 8. Renewal Model
 class Renewal(Base):
     __tablename__ = "renewals"
+    __table_args__ = (Index("ix_renewals_policy_deadline", "original_policy_id", "renewal_deadline"),)
     
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     original_policy_id = Column(String(36), ForeignKey("policies.id"), nullable=False)
@@ -1248,4 +1250,40 @@ class AgentStatement(Base):
     paid_at = Column(DateTime, nullable=True)
     created_by = Column(String(320), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class PlautoAction(Base):
+    __tablename__ = 'plauto_actions'
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    username = Column(String(320), nullable=False, index=True)
+    client_id = Column(String(36), ForeignKey('clients.id'), nullable=False)
+    payload = Column(JSON, nullable=False)
+    status = Column(String(30), nullable=False, default='pending')
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+
+
+class CampaignSurveyResponse(Base):
+    __tablename__ = "campaign_survey_responses"
+    __table_args__ = (UniqueConstraint("campaign_id", "recipient_key", name="uq_survey_recipient"),)
+    id = Column(String(64), primary_key=True)
+    campaign_id = Column(String(36), ForeignKey("campaigns.id"), nullable=False, index=True)
+    recipient_key = Column(String(500), nullable=False)
+    recipient_name = Column(String(500), nullable=False)
+    is_test = Column(Boolean, nullable=False, default=False)
+    questionnaire = Column(JSON, nullable=False)
+    answers = Column(JSON, nullable=True)
+    expires_at = Column(DateTime, nullable=False)
+    submitted_at = Column(DateTime, nullable=True)
+
+
+class AgentCommunicationPreference(Base):
+    __tablename__ = 'agent_communication_preferences'
+    agent_key = Column(String(160), primary_key=True)
+    agent_name = Column(String(500), nullable=False)
+    emails = Column(JSON, nullable=False, default=list)
+    enabled = Column(Boolean, nullable=False, default=True)
+    history = Column(JSON, nullable=False, default=list)
     updated_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)

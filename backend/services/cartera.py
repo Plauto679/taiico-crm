@@ -93,6 +93,29 @@ def effective_prospector_percentage(policy: Policy, on_date: date | None = None)
     return _percentage_for_ui(policy.commission_percentage)
 
 
+def _contractor_name(client: Client | None) -> str:
+    if not client or (client.metadata_json or {}).get("cartera_placeholder"):
+        return ""
+    return client.full_name
+
+
+def _placeholder_name(insurer: str, policy_number: str) -> str:
+    return f"Contratante pendiente · {insurer.upper()} · {policy_number}"
+
+
+def _set_contractor(client: Client, name: str) -> None:
+    name = name.strip()
+    if not name:
+        return
+    metadata = dict(client.metadata_json or {})
+    if metadata.pop("cartera_placeholder", False):
+        # Respect an explicit archive made by the user before the repair.
+        if not metadata.get("cartera_preserve_archive"):
+            client.status = "active"
+    client.full_name = name
+    client.metadata_json = metadata
+
+
 def _serialize(policy: Policy) -> dict:
     metadata = dict(policy.metadata_json or {})
     client_metadata = dict(policy.client.metadata_json or {}) if policy.client else {}
@@ -100,7 +123,7 @@ def _serialize(policy: Policy) -> dict:
         "id": policy.id,
         "policy_number": policy.policy_number,
         "current_policy_number": metadata.get("current_policy_number") or policy.policy_number,
-        "contractor": policy.client.full_name if policy.client else "",
+        "contractor": _contractor_name(policy.client),
         "prospector": metadata.get("prospector") or client_metadata.get("prospectador", ""),
         "percentage": effective_prospector_percentage(policy),
         "payment_start_date": metadata.get("payment_start_date"),
@@ -377,7 +400,7 @@ def sync_cartera_source(insurer: str, *, contents: bytes | None = None, db=None)
                     "cartera_source": "google_drive",
                 }
                 if contractor:
-                    policy.client.full_name = contractor
+                    _set_contractor(policy.client, contractor)
                 client_metadata = dict(policy.client.metadata_json or {})
                 policy.client.metadata_json = {**client_metadata, "prospectador": row["prospector"]}
                 reassign_policy_to_named_prospector(session, policy, row["prospector"])
@@ -387,10 +410,10 @@ def sync_cartera_source(insurer: str, *, contents: bytes | None = None, db=None)
                 conflicts += 1
                 continue
             client = Client(
-                full_name=contractor or f"{row_insurer.upper()} CLIENT P-{row['policy_number']}",
+                full_name=contractor or _placeholder_name(row_insurer, row["policy_number"]),
                 responsible_user_id=owner.id,
-                status="active",
-                metadata_json={"prospectador": row["prospector"]},
+                status="active" if contractor else "inactive",
+                metadata_json={"prospectador": row["prospector"], "cartera_placeholder": not bool(contractor)},
             )
             session.add(client)
             session.flush()
@@ -489,7 +512,7 @@ def sync_cartera_sql_to_canonical(insurer: str, *, db=None) -> dict:
                     assign("Aseguradora", carrier)
                 assign("Póliza", policy.policy_number)
                 assign("Póliza actual", metadata.get("current_policy_number") or policy.policy_number)
-                assign("Contratante", policy.client.full_name if policy.client else "")
+                assign("Contratante", _contractor_name(policy.client))
                 assign("Prospectador", metadata.get("prospector") or "")
                 percentage = float(policy.commission_percentage or 0)
                 assign("Porcentaje", percentage / 100 if abs(percentage) > 1 else percentage)
@@ -602,12 +625,13 @@ def create_cartera_record(
                 Client.status != "inactive",
             ).first()
         elif client:
-            payload = payload.model_copy(update={"contractor": client.full_name})
+            payload = payload.model_copy(update={"contractor": _contractor_name(client)})
         if not client:
             client = Client(
-                full_name=contractor,
+                full_name=contractor or _placeholder_name(insurer_id, policy_number),
                 responsible_user_id=owner.id,
-                metadata_json={"prospectador": payload.prospector.strip()},
+                status="active" if contractor else "inactive",
+                metadata_json={"prospectador": payload.prospector.strip(), "cartera_placeholder": not bool(contractor)},
             )
             db.add(client)
             db.flush()
@@ -720,10 +744,10 @@ def update_cartera_record(
             "carrier": str(payload.carrier or "").strip(),
         }
         if payload.contractor.strip():
-            policy.client.full_name = payload.contractor.strip()
+            _set_contractor(policy.client, payload.contractor)
         else:
             # An omitted optional name must not erase an existing client identity.
-            payload = payload.model_copy(update={"contractor": policy.client.full_name})
+            payload = payload.model_copy(update={"contractor": _contractor_name(policy.client)})
         try:
             reassign_policy_to_named_prospector(db, policy, payload.prospector)
         except ValueError as exc:
@@ -765,7 +789,7 @@ def search_cartera(
         ][:50]
         return [{
             "poliza": policy.policy_number,
-            "contratante": policy.client.full_name if policy.client else "",
+            "contratante": _contractor_name(policy.client),
             "aseguradora": str((policy.metadata_json or {}).get("carrier") or policy.insurer_id).upper(),
             "estatus": policy.status,
             "ramo": policy.product.branch if policy.product else "",

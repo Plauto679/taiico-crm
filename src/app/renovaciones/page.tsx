@@ -56,13 +56,13 @@ export default async function RenovacionesPage({
     }
 
     return (
-        <div className="flex flex-col h-full">
-            <div className="flex-none p-4 pt-16 sm:p-8 sm:pb-4 space-y-4">
+        <div className="flex flex-col h-full min-h-0">
+            <div className="flex-none px-4 pb-2 pt-2 sm:p-8 sm:pb-4 space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <h1 className="text-2xl font-bold text-white">Renovaciones</h1>
 
                     {/* Insurer Selector */}
-                    <div className="flex max-w-full overflow-x-auto rounded-md shadow-sm" role="group">
+                    <div className="hidden sm:flex max-w-full overflow-x-auto rounded-md shadow-sm" role="group">
                         {['Metlife', 'SURA', 'AARCO_AXA', 'Promotoria SURA'].map((ins) => (
                             <Link
                                 key={ins}

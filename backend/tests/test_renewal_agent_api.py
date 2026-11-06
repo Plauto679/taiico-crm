@@ -105,6 +105,17 @@ class RenewalAgentApiTests(unittest.TestCase):
             {"TAIICO-1", "OTHER-1", "FUTURE-1"},
         )
 
+    def test_isis_karina_is_direct_to_client_without_changing_other_agents(self):
+        self.add_task(agent_code="16190", policy_number="KARINA-1")
+        self.add_task(agent_code="99999", policy_number="OTHER-1")
+        response = self.client.get("/renewal-agent/candidates", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(response.json()["direct_to_client_agent_codes"]), {"16200", "18412", "73640", "16190"})
+        self.assertEqual({task["policy_number"] for task in response.json()["tasks"]}, {"KARINA-1", "OTHER-1"})
+        from jobs.run_renewal_agent import TAIICO_AGENT_CODES as worker_codes
+        self.assertIn("16190", worker_codes)
+        self.assertNotIn("99999", worker_codes)
+
     def test_non_taiico_gmm_task_can_be_claimed_by_id(self):
         task_id = self.add_task(agent_code="99999", policy_number="OTHER-1")
         response = self.client.post(

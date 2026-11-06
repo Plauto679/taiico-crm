@@ -77,6 +77,10 @@ class CarteraModuleTests(unittest.TestCase):
             policies = db.query(Policy).order_by(Policy.policy_number).all()
             self.assertEqual(len(policies), 2)
             self.assertNotEqual(policies[0].client_id, policies[1].client_id)
+            for policy in policies:
+                self.assertTrue(policy.client.full_name.strip())
+                self.assertEqual(policy.client.status, "inactive")
+                self.assertTrue(policy.client.metadata_json["cartera_placeholder"])
             record_id = policies[0].id
             db.close()
             payload = cartera.CarteraRecordPayload(
@@ -88,6 +92,16 @@ class CarteraModuleTests(unittest.TestCase):
                 record_id, payload.model_copy(update={"contractor": ""}), profile,
             )
             self.assertEqual(result["contractor"], "Nombre conocido")
+            with self.Session() as db:
+                self.assertEqual(db.get(Policy, record_id).client.status, "active")
+
+    def test_placeholder_promotion_preserves_user_archive(self):
+        client = Client(full_name="Contratante pendiente", status="inactive",
+                        metadata_json={"cartera_placeholder": True, "cartera_preserve_archive": True})
+        cartera._set_contractor(client, "Nombre real")
+        self.assertEqual(client.full_name, "Nombre real")
+        self.assertEqual(client.status, "inactive")
+        self.assertNotIn("cartera_placeholder", client.metadata_json)
 
     def test_parser_uses_last_repeated_policy_and_normalizes_columns(self):
         rows = cartera.parse_cartera_workbook(sura_workbook(
@@ -125,7 +139,9 @@ class CarteraModuleTests(unittest.TestCase):
         policies = {item.policy_number: item for item in db.query(Policy).filter_by(insurer_id="sura").all()}
         self.assertEqual(policies["37"].client.full_name, "Nombre existente")
         self.assertEqual(policies["37"].metadata_json["prospector"], "ANA")
-        self.assertEqual(policies["38"].client.full_name, "SURA CLIENT P-38")
+        self.assertEqual(policies["38"].client.status, "inactive")
+        self.assertTrue(policies["38"].client.full_name)
+        self.assertEqual(cartera._serialize(policies["38"])["contractor"], "")
         db.close()
 
     def test_combined_parser_treats_aarco_as_broker_and_accepts_any_carrier(self):

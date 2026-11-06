@@ -1,6 +1,7 @@
 import { fetchFromApi } from '@/lib/api';
 
 export type Agent = {
+  recibir_comunicaciones: boolean;
   row_number: number;
   fingerprint: string;
   nombre: string;
@@ -19,7 +20,7 @@ export type Agent = {
   estatus_met: string;
 };
 
-export type AgentInput = Omit<Agent, 'row_number' | 'fingerprint' | 'nombre'>;
+export type AgentInput = Omit<Agent, 'row_number' | 'fingerprint' | 'nombre' | 'recibir_comunicaciones'>;
 
 export type AgentDirectory = {
   version: string;
@@ -50,5 +51,12 @@ export async function updateAgent(agent: Agent, payload: AgentInput, version: st
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...payload, version, fingerprint: agent.fingerprint }),
+  });
+}
+
+export async function updateAgentCommunications(agent: Agent, enabled: boolean): Promise<AgentDirectory> {
+  return fetchFromApi<AgentDirectory>(`/agentes/${agent.row_number}/communications`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled, fingerprint: agent.fingerprint }),
   });
 }
