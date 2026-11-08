@@ -46,7 +46,7 @@ export function Plauto() {
     const pathname = usePathname();
     const isPublic = ['/login', '/olvide-password', '/restablecer-password', '/cambiar-password', '/sin-acceso'].includes(pathname)
         || pathname.startsWith('/solicitud-datos/') || pathname.startsWith('/encuesta/');
-    return isPublic ? null : <PlautoSession pathname={pathname} />;
+    return isPublic || pathname === '/mesa-control' ? null : <PlautoSession pathname={pathname} />;
 }
 
 function PlautoSession({ pathname }: { pathname: string }) {

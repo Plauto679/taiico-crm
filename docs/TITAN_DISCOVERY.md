@@ -87,7 +87,7 @@ Vida y GMM ya tienen buena parte de sus documentos en `pending_document_requirem
 
 La hoja FUERZA DE VENTAS incluye préstamos, alta de agentes MetLife/KC, mantenimiento de datos y aclaraciones de bonos/comisiones. No trasladar automáticamente los requisitos internos de KC a Taiico. Revisar cuáles corresponden a la nueva operación y cuáles se conectan con Recluta y Agentes.
 
-El archivo no incluye los formatos en blanco. Para ofrecer descargas faltan los documentos oficiales, su versión, vigencia y asociación a cada requisito. La mesa podrá guiar con reglas explícitas y Plauto podrá explicar faltantes; cualquier evaluación no determinada por esas reglas debe quedar identificada para revisión.
+El archivo no incluye los formatos en blanco. El usuario confirmó que se obtendrán de las publicaciones oficiales de MetLife; falta verificar su versión, vigencia y asociación a cada requisito. La mesa podrá guiar con reglas explícitas y Plauto podrá explicar faltantes; cualquier evaluación no determinada por esas reglas debe quedar identificada para revisión.
 
 ## Acceso del administrativo del agente
 
@@ -105,14 +105,52 @@ Puntos de integración identificados: `update_pending` y `create_pending_follow_
 
 Para la bandeja hacen falta mensajes entrantes/salientes, estado de envío, responsable, contexto del trámite y asociación al agente. Reutilizar el conector de prueba solo tras separar configuración de prueba y producción. Revisar la configuración y documentación vigente del proveedor al implementar. Este análisis no habilita ni realiza envíos.
 
-## Orden de ejecución propuesto
+## Orden de ejecución acordado con el usuario (2026-11-08)
 
-1. Observar Titan con la cuenta autorizada: menú, detalle y alta de trámite, formatos, campañas y reportes. Registrar evidencia y separar observaciones de hipótesis.
-2. Definir permisos del auxiliar y cerrar las vías de exposición de ingresos antes de crear cuentas reales.
-3. Incorporar avisos de Pendientes y una bandeja mínima sobre eventos persistidos.
-4. Extender Carga de bases con los primeros reportes reales y su trazabilidad, reutilizando preview y publicación controlada.
-5. Añadir avance comercial con reglas y fuentes confirmadas; después, avisos de actualización de campañas.
-6. Ampliar la mesa de control con formatos verificados y asistencia de Plauto sobre los requisitos existentes.
+1. Pendientes y mesa de control del agente: preparación asistida de solicitudes y documentos desde la carpeta única del movimiento, requisitos condicionales y revisión del expediente.
+2. Bandeja WhatsApp: recepción de documentos, seguimiento y notificaciones; consultas autorizadas de renovaciones y avance conforme existan fuentes verificadas.
+3. Reportes e indicadores: importaciones trazables y métricas; módulo separado **Campañas comerciales** para metas e incentivos. El módulo actual de campañas conserva su enfoque de comunicación a agentes/clientes.
+4. Usuarios asistentes: prioridad posterior. La experiencia del agente debe permitir resolver las tareas habituales desde WhatsApp, sin depender de una cuenta administrativa adicional.
+
+Este orden reemplaza la propuesta inicial. La autorización y el aislamiento por agente siguen siendo requisitos desde el primer módulo, aunque las cuentas de asistentes se implementen al final.
+
+## Encuesta de agentes y alcance de la primera entrega
+
+Fuente: respuestas suministradas por el usuario el 2026-11-08. Se conservan aquí resultados agregados, sin nombres ni respuestas identificables. Hay 6 respuestas frente a 301 invitaciones **preparadas**; no consta cuántas fueron entregadas y no corresponde calcular una tasa de respuesta sobre entregas.
+
+- Preparar/comparar cotizaciones: 5 de 6.
+- Llenar solicitudes y formatos: 3 de 6; una persona adicional lo menciona en el texto abierto.
+- Revisar requisitos, consultar productos y prospectar/preparar propuestas: 2 de 6 cada opción.
+- Renovaciones, cobranza, trámites/siniestros y mensajes a clientes: 1 de 6 cada opción.
+- Cuatro personas aceptan participar en pruebas y dos quieren conocer más. Esto no autoriza envíos desde esta tarea.
+
+Las opciones admitían hasta tres selecciones. Los resultados orientan un piloto, no demuestran preferencias representativas de toda la fuerza de ventas. Cotizaciones es la primera demanda observada; integrarlas como documentos de entrada y prever su comparación posterior sin inventar tarifas ni sustituir cotizadores oficiales.
+
+Primera entrega propuesta: emisión persona física de GMM, sujeta a comprobar el formato oficial aplicable; después ampliar a un producto concreto de Vida. Recorrido: elegir trámite/producto → reutilizar o crear carpeta del movimiento → aportar documentos/cotización → extraer datos con referencia al archivo de origen → preguntar solo por faltantes o contradicciones → generar borrador del formato oficial → revisión del agente → preparar expediente para ingreso. La preparación no equivale a envío a MetLife ni a aprobación de la aseguradora.
+
+Cada carpeta se vinculará a una identidad estable de trámite y a su agente; no mezclar movimientos del mismo cliente. Mostrar procedencia y grado de verificación de datos; no inferir respuestas médicas, firmas, consentimientos ni datos faltantes. Reutilizar datos confirmados sin exigir que el agente vuelva a capturarlos. Conservar documento original, borrador y versión revisada por separado.
+
+Criterios de aceptación: acceso limitado al agente, expediente existente reutilizado sin duplicados, faltantes visibles, campos generados rastreables a evidencia/confirmación, PDF legible sin desbordes, versión exacta del formato registrada e historial del movimiento preservado. Medir tiempo hasta expediente listo, correcciones del agente y devoluciones por documentación con una línea base del piloto.
+
+## Formatos oficiales de MetLife y actualización
+
+El usuario indica que los formatos se vincularán a los publicados por MetLife. Fuente pública verificada el 2026-11-08: https://www.metlife.com.mx/tramites-y-servicios/documentacion-y-solicitudes/ . El catálogo separa productos y contiene documentación de Vida y Gastos Médicos. No se ha validado aún la correspondencia de cada archivo con cada trámite/producto ni su estructura de campos.
+
+Diseño propuesto: comprobación diaria configurable, con descarga solo cuando cambie el contenido. Registrar URL oficial, producto/trámite, fecha de consulta, hash y versión/fecha declarada cuando exista. No confundir fecha de descarga con vigencia. Mantener las versiones anteriores y fijar en cada expediente la utilizada.
+
+Detectar cambios aunque MetLife conserve la misma URL. Un archivo nuevo se registra automáticamente como candidato; si cambian campos, páginas o requisitos, validar el mapeo y la generación antes de activarlo para llenado automático. Un enlace roto o una respuesta HTML no reemplaza el PDF válido. Alertar ante cambios o fallos que requieren intervención; conservar la última versión verificada con su estado visible. No migrar silenciosamente expedientes en curso.
+
+Este documento define el proceso; no se ha instalado ni programado todavía un trabajo recurrente. La implementación debe ejecutarse en el backend desplegado, con historial de ejecuciones, y no depender de que un chat esté abierto.
+
+## Archivos a solicitar por etapas
+
+Para mesa de control no hacen falta los 24 reportes. Primero conviene contar con 2–3 expedientes de ejemplo desidentificados: uno aceptado y otro devuelto/corregido, incluyendo motivo, documentos aportados y formato final, manteniendo coherencia entre los datos de ejemplo. Sirven para comprobar el flujo y los errores que debemos prevenir. Los formatos en blanco se obtendrán de MetLife.
+
+Primer paquete de reportes propuesto: **Producción GMM, Recibos pendientes de pago GMM y Recibos aplicados GMM**, junto con la base de renovaciones GMM que ya utilice la operación. Permiten estudiar renovaciones, recibos abiertos y pagos, sin asumir que Producción contiene por sí sola la agenda completa de renovaciones. Solicitar dos cortes consecutivos del mismo alcance y, si existen, ejemplos de pago aplicado, despago/cancelación y renovación con cambio de prima.
+
+Para cada archivo: formato original Excel/CSV sin alterar encabezados/hojas, fecha de corte, alcance (cartera completa o movimientos), clave de agente, diccionario disponible y explicación de qué sustituye la siguiente entrega. Pueden desidentificarse los datos personales conservando claves consistentes entre archivos y cortes.
+
+Segundo paquete: Detalle pagado, Pendiente de pago y Quién es Quién GMM/Vida para avance comercial; confirmar granularidad y solapamiento antes de sumar. Después: Integral de Comisiones, Persistencia 24 meses, Siniestralidad GMM y bases oficiales de bonos/campañas con vigencia, metas, exclusiones y moneda. Priorizar la equivalencia Vida una vez validado el primer flujo GMM.
 
 ## Guion para la exploración autenticada
 
@@ -192,3 +230,35 @@ Se abrió el detalle de un ticket en la ruta de bitácora. Muestra secciones Pri
 Implicación propuesta: distinguir eventos de estado, devolución y documentos al diseñar comunicaciones, manteniendo las referencias de aseguradora separadas del identificador interno del trámite.
 
 Pendientes: contenido de Bonos tras resolver el aviso, campañas concretas, contenido del historial de un ticket, formatos descargables, Expedientes y capacidades del perfil para auxiliares. El inicio de sesión ya no bloquea la exploración.
+
+## Ajuste de experiencia y operación acordado (2026-11-09)
+
+La entrada principal será una página **Mesa de control** con Plauto, accesible mediante identificación del agente y sin exigir navegar por los módulos del CRM. Plauto guiará la solicitud, recabará documentos y utilizará operaciones autorizadas del backend para crear o recuperar el registro y la carpeta del movimiento. La interfaz combinará conversación con selección de trámite, carga de archivos, resumen del expediente y estado visible; las acciones estructuradas no necesitan una respuesta del modelo para cada clic.
+
+La revisión de los administrativos internos de Taiico es obligatoria antes de declarar el expediente listo para ingreso. No confundir estos revisores con los futuros usuarios asistentes particulares de cada agente, que mantienen la última prioridad. Estados propuestos: borrador, faltan datos/documentos, listo para revisión, en revisión, requiere corrección, validado por mesa; ingreso a aseguradora y resultado se registran aparte con evidencia. La validación de mesa no significa aceptación de MetLife.
+
+Los revisores registrarán resultado, motivo estructurado, explicación, documento/campo afectado, corrección solicitada, responsable, fecha y versión revisada. Distinguir error de captura, documento faltante, ilegibilidad, vigencia, inconsistencia y otros. Una modificación relevante tras la revisión debe reabrirla. Conservar la extracción original y la corrección humana para medir errores y preparar evaluaciones; las etiquetas no entrenan ni modifican automáticamente el modelo. Los casos del día a día construirán el conjunto de ejemplos, por lo que no se condiciona el diseño a recibir expedientes históricos.
+
+Primera entrega vertical propuesta: agente inicia una emisión GMM, Plauto registra el borrador y vincula su carpeta, el agente aporta archivos y datos, envía a revisión, un administrativo valida o solicita corrección con motivo, y el agente puede retomar el mismo expediente. Integrar generación del formato oficial verificado en ese recorrido, con revisión previa del agente; no exponer una interfaz que prometa generación o ingreso aún no implementados.
+
+### Cotizaciones y rapidez
+
+La revisión del código confirma que `cotizaciones.py` ya prepara la carpeta, crea una tarea `MetLifeQuotationTask` y permite abrir/contestar una sesión con `MetLifeQuotationPortalAdapter`. Reutilizar este flujo y sus identificadores. La reserva actual de sesión activa utiliza una variable global del proceso y admite una cotización activa por proceso; revisar concurrencia y aislamiento antes de ofrecer acceso simultáneo a varios agentes.
+
+Plauto dispone de herramientas acotadas en `plauto.py`; su conexión al backend no significa que hoy pueda crear expedientes de mesa. Será necesario añadir operaciones explícitas con autorización, validación, identidad estable y protección contra duplicados/reintentos.
+
+Propuesta de rapidez: acciones directas al backend para pasos conocidos y validaciones; modelo para interpretar mensajes/documentos y explicar faltantes; ejecución del cotizador como trabajo con estado recuperable. Medir por separado latencia del modelo, cola y portal antes de escoger modelo/proveedor. «JEV» está pendiente de identificación por el usuario; no asumir qué producto es ni prometer respuesta instantánea del portal.
+
+### Renovaciones y actualidad de cobranza
+
+El usuario confirma que renovaciones ya funciona bien y requiere solo cambios menores. El problema señalado en cobranza es la falta de carga de reportes recientes; no rediseñar renovaciones como requisito de mesa ni atribuir una fecha real de desactualización sin consultar las cargas.
+
+Prioridad operativa propuesta: mostrar fecha de corte de cada fuente, fecha de carga, responsable y antigüedad; distinguir ambas fechas y señalar fuentes vencidas según su frecuencia esperada. Evitar presentar un recibo como impagado al día de hoy cuando solo existe evidencia de un corte anterior. Preparar recepción de archivos, validación y publicación trazable. Identificar primero dónde llegan actualmente los reportes (correo, carpeta o descarga de portal) para automatizar su adquisición sin asumir acceso disponible.
+
+Pedido ajustado: último **Recibos pendientes de pago GMM** y **Recibos aplicados GMM**, con fechas de corte compatibles y, si es posible, el corte anterior para reconciliación. Si la operación de cobranza incluye Vida, solicitar sus equivalentes. Pedir **Pendiente de pago** aparte si también se quiere cubrir primeras primas pendientes, sin confundirlo con recibos pendientes. Producción y la base de renovaciones dejan de ser prerrequisitos del primer desarrollo. Los reportes de indicadores/comisiones se mantienen para la tercera etapa.
+
+Estas decisiones actualizan el diseño; no implican que la página, las herramientas de Plauto, la cola de revisión o las cargas automáticas estén implementadas.
+
+## Primera implementación (2026-11-09)
+
+Se implementó la entrada `/mesa-control`, borradores por movimiento, documentos privados, propuestas de datos con Plauto y revisión administrativa obligatoria. Ver `docs/MESA_CONTROL.md` para alcance, configuración, validaciones y límites. La extracción documental y generación de PDFs oficiales siguen pendientes; Jev queda separado como experimento.

@@ -9,7 +9,9 @@ import { IdleModulePrefetch } from '@/components/navigation/IdleModulePrefetch';
 
 const SESSION_CACHE_KEY = 'taiico_session_profile';
 
-const NAV_ITEMS = MODULE_CATALOG.map(([module, name, href, , icon]) => ({ module, name, href, icon }));
+const NAV_ITEMS = MODULE_CATALOG.flatMap<{ module: string; name: string; href: string; icon: (typeof MODULE_CATALOG)[number][4] }>(([module, name, href, , icon]) => module === 'pendientes'
+    ? [{ module, name, href, icon }, { module, name: 'Mesa de control', href: '/mesa-control', icon }]
+    : [{ module, name, href, icon }]);
 
 function isPublicPath(pathname: string): boolean {
     return pathname === '/login'
@@ -75,7 +77,7 @@ export function Sidebar() {
         };
     }, [publicPath, pathname]);
 
-    if (publicPath) return null;
+    if (publicPath || pathname === '/mesa-control') return null;
 
     async function handleLogout() {
         if (loggingOut) return;

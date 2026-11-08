@@ -1287,3 +1287,20 @@ class AgentCommunicationPreference(Base):
     enabled = Column(Boolean, nullable=False, default=True)
     history = Column(JSON, nullable=False, default=list)
     updated_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class MesaCase(Base):
+    """Preparatory movement; review is independent of insurer acceptance."""
+    __tablename__ = 'mesa_cases'
+    id = Column(String(36), primary_key=True)
+    created_by = Column(String(320), nullable=False)
+    agent_rfc = Column(String(20), nullable=False, index=True)
+    promotoria = Column(String(100), nullable=False, index=True)
+    status = Column(String(30), nullable=False, default='draft')
+    revision = Column(Integer, nullable=False, default=1)
+    data = Column(JSON, nullable=False, default=dict)
+    documents = Column(JSON, nullable=False, default=list)
+    history = Column(JSON, nullable=False, default=list)
+    folder_id = Column(String(200), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)

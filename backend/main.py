@@ -270,6 +270,8 @@ app.include_router(time_machine.router)
 # Plauto uses the same session and authorization layer as the CRM modules.
 from services import plauto
 app.include_router(plauto.router)
+from services import mesa_control
+app.include_router(mesa_control.router)
 
 if __name__ == "__main__":
     import uvicorn

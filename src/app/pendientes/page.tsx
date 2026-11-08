@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { PendientesView } from '@/components/pendientes/PendientesView';
 import type { CommercialPendingData, PendingAccess, PendingSourceData } from '@/lib/types/pendientes';
 import { getCommercialPending, getPendingSource } from '@/modules/pendientes/service';
@@ -32,7 +33,7 @@ export default async function PendientesPage() {
 
     return (
         <div className="flex h-full flex-col p-8">
-            <h1 className="mb-4 text-2xl font-bold text-white">Pendientes</h1>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-bold text-white">Pendientes</h1><Link href="/mesa-control" className="rounded-lg bg-white px-4 py-2 font-semibold text-slate-800">Mesa de control con Plauto</Link></div>
             <div className="min-h-0 flex-1">
                 <PendientesView emisionServicios={emisionServicios} siniestros={siniestros} commercial={commercial} />
             </div>
