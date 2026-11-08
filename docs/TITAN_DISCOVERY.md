@@ -13,7 +13,7 @@ Esta primera revisión distingue evidencia del repositorio, documentación sumin
 - `CATALOGOS TITAN 2.xlsx`, proporcionado por el usuario: hojas GMM, VIDA y FUERZA DE VENTAS. Revisado completo, sin modificarlo.
 - `Tabla 24 reportes titan.pdf`, proporcionado por el usuario: 24 reportes en páginas 1 y 2; página 3 sin contenido de reportes. Texto y páginas renderizadas revisados.
 - Repositorio Taiico en la base indicada arriba.
-- Titan: `https://titan.grupokc.com.mx/auth`. Pantalla pública observada: versión 3.1.20. Exploración autenticada pendiente de sesión de Verónica.
+- Titan: `https://titan.grupokc.com.mx/auth`. Versión 3.1.20. Primera exploración autenticada realizada el 2026-11-08 con la cuenta autorizada de Verónica; alcance detallado al final.
 - REA confirmado por el usuario: https://github.com/morluto/rea. Documentación consultada: https://raw.githubusercontent.com/morluto/rea/main/docs/cli.md y https://raw.githubusercontent.com/morluto/rea/main/docs/installation.md.
 
 Los adjuntos son material de referencia. Sus notas operativas no autorizan por sí mismas cambios, envíos ni modificaciones de documentos o expedientes.
@@ -138,3 +138,57 @@ Resultado acotado: 1 archivo analizado de 25 inventariados, 142.603 bytes, sin f
 Evidencia principal: `ev_1be2fa248eb8c60cefef32465c9fc0493d694947418d1a95735bb6715686bec1`. El manifiesto, resumen y evidencia completos se conservan localmente en `tmp/titan-discovery/rea/`, excluido de Git. El código descargado no forma parte de la implementación de Taiico.
 
 El siguiente análisis útil requiere observar un recorrido autenticado concreto y seleccionar sus archivos o evidencia. La página de acceso por sí sola no permite estudiar las campañas de Verónica ni su mesa de control.
+
+## Exploración autenticada: 2026-11-08
+
+Acceso verificado mediante la interfaz de Chrome. No se guardaron credenciales en el repositorio ni en el gestor de contraseñas. No se enviaron solicitudes, documentos ni mensajes. Esta sección registra capacidades y etiquetas de interfaz; omite datos personales de asegurados, importes de cartera e identificadores de expedientes.
+
+### Inicio e indicadores
+
+Ruta observada: `/inbox/agentes`. Menú: Inicio, Reportes, Persistencia, Estado de Cuenta, Emisión y Servicios, Siniestros, Bonos de MetLife, Expedientes IP / MetLife, Perfil y Cotizador Autos. También aparece Chat AI. No se observó un módulo independiente llamado Campañas en este menú; esto no demuestra que no exista en otras pantallas o perfiles.
+
+Los indicadores separan cierre QEQ, cálculo KC del período posterior, pendiente de pago y total. Cada columna muestra período o fecha de corte. Las métricas distinguen Vida, Meta, Primordial y Gastos Médicos; incluyen PCA, PNA, primas ponderadas, conservación y siniestralidad. Algunos valores tienen enlace al detalle.
+
+La interfaz identifica el Integral de Comisiones como fuente del cálculo provisional KC y advierte que coberturas y otros factores pueden modificarlo. Los rankings de Vida indican PCA QEQ más PCA KC; los de GMM indican prima ponderada QEQ más prima ponderada KC. Se segmentan por promotoría y por agentes nuevos, en crecimiento y consolidados.
+
+«Ver Archivos» abre un listado con reporte, período, fecha/hora de carga y usuario cargador. En la consulta aparecieron 12 fuentes, entre ellas Quién es Quién Primordial, además de Vida/GMM. Ese listado describe archivos cargados para los indicadores; no sustituye al catálogo general de 24 reportes.
+
+Implicación para Taiico: separar cifras de cierre y estimaciones, mostrar su procedencia y fecha de corte y permitir desglose. No deducir reglas completas de bonos a partir de la suma mostrada en un ranking.
+
+### Reportes
+
+Ruta observada: `/reportes`. Catálogo con 24 registros, búsqueda, paginación y botón Export to Excel. La tabla muestra Nombre y Nombre_Tabla_BI. Se observaron, entre otros, Camino a la Excelencia, Pendiente de Pago, Detalle Pagado, Integral de Comisiones, Siniestralidad y Recibos Pendientes de Pago Vida/GMM.
+
+En la primera página, Pendiente de Pago y Recibos Pendientes de Pago GMM muestran el mismo nombre de tabla BI. Es una etiqueta visible, no evidencia suficiente para afirmar que comparten esquema o datos. No se descargaron muestras de reportes en este recorrido.
+
+### Mesa de control y formulario
+
+Ruta de Titan: `/tickets`. La pestaña Mesa integra una aplicación de `tts.grupokc.com.mx`. Hay otra pestaña Reporte del año. Los filtros de navegación incluyen Bandeja de entrada, Asignado, En Met, Devuelto, Terminado y Cancelado. La tabla muestra ticket, agente, asunto, estado, fecha de movimiento, asegurado, DCN y detalle. Los estados visibles en filas pueden ser más específicos que los filtros, como Póliza emitida, Servicio emitido y Cerrado validado.
+
+Se abrió Agregar Ticket, se seleccionó GMM y Emisión persona física y se canceló el formulario; se verificó el regreso al listado. No se creó ningún ticket.
+
+El formulario solicita ramo, subramo, tipo de trámite, asunto, asegurado, prima neta, forma de pago, descripción y archivos. La prima neta pasa a ser obligatoria al seleccionar la emisión observada. Aparece un checklist dinámico de siete requisitos: solicitud digital/tradicional, identificación cotejada, cotización, carta SUD firmada, constancia fiscal reciente, comprobante de domicilio reciente cotejado y adicionales.
+
+El selector GMM incluye variantes más específicas que las del Excel adjunto, como emisión con antigüedad/conversión, pago anticipado, cambio a CLABE, impresión de tarjetas y renovación. También se observaron dos etiquetas de Reembolso con distinta capitalización. No se verificaron sus equivalencias funcionales.
+
+En este formulario se observaron nombres de documentos requeridos y controles de carga; no se verificaron enlaces a formatos en blanco. Mantener pendiente esa parte de la mesa de control.
+
+### Persistencia
+
+Ruta observada: `/persistencia`. Resumen por período con cosechas, prima necesaria, prima pagada y porcentaje; el período más reciente ofrece Ver Detalle. El detalle separa encabezados de importes USD y MXN y muestra por póliza: producto, asegurado, moneda, primas, persistencia, frecuencia de pago, estatus, rehabilitación y tiempo de vida.
+
+La muestra observada no resuelve la fórmula pendiente del PDF: las cifras necesarias y pagadas son iguales o casi iguales y el porcentaje redondeado es 100. Tampoco permite establecer una política de conversión monetaria. Mantener estas reglas sin implementar hasta disponer de evidencia que las determine.
+
+### Bonos y siguientes recorridos
+
+`/bonos/metlife` muestra antes del contenido un aviso de estimaciones y exclusión de responsabilidad con botones SI ACEPTO y NO ACEPTO. Se cerró sin aceptar y la aplicación regresó a Inicio. Se solicitó autorización específica al usuario para continuar con esa aceptación.
+
+### Siniestros
+
+Ruta observada: `/siniestros`, con mesa integrada de `tts.grupokc.com.mx`. Reutiliza filtros operativos y añade Aceptado parcial. La tabla distingue tipo de reclamación inicial/complemento, póliza, folio de reingreso, DCN, número de siniestro y reclamación, cobertura, monto reclamado, fecha de movimiento, dictamen y número de trámite. En filas se observaron estados Asignado, En proceso / Ingresado en Met y Suspendido KC.
+
+Se abrió el detalle de un ticket en la ruta de bitácora. Muestra secciones Principales, Estado y Detalles adicionales, controles de Movimientos, descarga y archivos adjuntos, y un área para responder. No se enviaron respuestas ni se descargaron expedientes. La existencia del botón Movimientos no acredita todavía el contenido del historial.
+
+Implicación propuesta: distinguir eventos de estado, devolución y documentos al diseñar comunicaciones, manteniendo las referencias de aseguradora separadas del identificador interno del trámite.
+
+Pendientes: contenido de Bonos tras resolver el aviso, campañas concretas, contenido del historial de un ticket, formatos descargables, Expedientes y capacidades del perfil para auxiliares. El inicio de sesión ya no bloquea la exploración.
