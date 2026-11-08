@@ -5,6 +5,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Depends, Request, R
 from fastapi.middleware.cors import CORSMiddleware
 from services import cobranza, renovaciones, cumpleanos, cumpleanos_agentes, agentes, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, renewal_agent_api, client_email_directory, whatsapp, pendientes, mail_configuration, automatic_mails, recluta, password_management, base_loads, accesos, cotizaciones, audit_logs, rrhh, campanas, finanzas, gestion_comercial, time_machine, prospectadores, cobranza_prospectadores, home_widgets
 from services import agent_statements
+from services.mesa_access import mesa_available
 from services.login_security import login_rate_limiter, secure_cookie_for
 from services.authorization import current_access_profile, require_module_access
 from services.session_auth import (
@@ -193,6 +194,7 @@ async def session(profile=Depends(current_access_profile)):
         "promotorias": profile.promotorias,
         "rfc": profile.rfc,
         "module_permissions": profile.module_permissions,
+        "mesa_access": mesa_available(profile),
         "central_admin": profile.is_central_admin,
     }
 

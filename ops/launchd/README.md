@@ -192,3 +192,11 @@ reiniciar únicamente backend/frontend. Para desactivar, `PLAUTO_ENABLED=false`
 y reiniciar backend; la migración es aditiva y no requiere eliminar datos.
 
 Validación: `PYTHONPATH=backend .venv/bin/python -m pytest backend/tests/test_plauto.py -q`.
+
+## Formato oficial de Mesa de control
+
+`com.taiico.crm.mesa-forms` comprueba diariamente a las 10:15 (hora del servidor)
+el catálogo y la solicitud oficial de MédicaLife Familiar. No envía mensajes ni
+activa versiones desconocidas: un cambio bloquea el llenado hasta revisar el mapeo.
+Se instala como los demás LaunchAgents y registra únicamente el estado de la fuente.
+El piloto de Mesa requiere `MESA_OWNER_USERNAME`; ver `docs/MESA_CONTROL.md`.

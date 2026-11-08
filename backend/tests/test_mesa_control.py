@@ -27,6 +27,7 @@ def app(monkeypatch):
     MesaCase.__table__.create(engine)
     factory = sessionmaker(bind=engine)
     monkeypatch.setattr(mesa, 'SessionLocal', factory)
+    monkeypatch.setattr(mesa, 'mesa_available', lambda p: True)
     monkeypatch.setattr(mesa.pendientes, 'resolve_agent_scope', lambda p: SimpleNamespace(keys=('key1',)))
     monkeypatch.setattr(mesa.pendientes, '_agent_options_for_profile', lambda p, service=None: [
         {'rfc': 'AGENTE1', 'name': 'Agente Uno', 'promotoria': 'TAIICO'},
@@ -41,7 +42,7 @@ def app(monkeypatch):
 
 def create(client, **overrides):
     body = {'request_id': str(uuid4()), 'agent_rfc': 'AGENTE1', 'promotoria': 'TAIICO',
-            'data': {'client_name': 'Cliente de Prueba', 'rfc': 'XAXX010101000', 'product': 'Producto de prueba'}}
+            'data': {'client_name': 'Cliente de Prueba', 'rfc': 'AAAA901001AB1', 'product': 'Producto de prueba'}}
     body.update(overrides)
     response = client.post('/mesa-control/cases', json=body)
     return response, body
@@ -146,6 +147,9 @@ class Drive:
     def list(self, **kw):
         self.result = {'files': self.folders}
         return self
+    def get(self, **kw):
+        self.result = {'id': 'folder', 'parents': ['rfc-parent']}
+        return self
     def create(self, body, **kw):
         if body.get('mimeType') == 'application/vnd.google-apps.folder':
             self.folders.append({'id': 'folder'})
@@ -161,7 +165,7 @@ class Drive:
 def test_upload_versions_reuse_folder_and_reject_wrong_type(app, monkeypatch):
     _, client, _ = app
     drive = Drive()
-    monkeypatch.setenv('MESA_DRIVE_ROOT_ID', 'private-root')
+    monkeypatch.setattr(mesa.pendientes, '_client_folder_for_row', lambda service, row, create: {'id': 'rfc-parent'})
     monkeypatch.setattr(mesa.pendientes, 'build_pending_drive_service', lambda: drive)
     item = create(client)[0].json()
     path = f"/mesa-control/cases/{item['id']}/documents"
@@ -219,3 +223,65 @@ def test_plauto_proposal_requires_explicit_save_and_preserves_revision(app, monk
     assert saved.status_code == 200
     assert saved.json()['data'] == proposed
     assert client.patch(f"/mesa-control/cases/{item['id']}", json=proposal).status_code == 409
+
+
+def test_private_pilot_denies_all_routes_to_other_admins(app, monkeypatch):
+    api, client, _ = app
+    from services.mesa_access import mesa_available
+    monkeypatch.setattr(mesa, 'mesa_available', mesa_available)
+    monkeypatch.setenv('MESA_OWNER_USERNAME', 'owner@example.test')
+    api.dependency_overrides[current_access_profile] = lambda: profile(role='admin', username='other@example.test')
+    assert client.get('/mesa-control/config').status_code == 403
+    assert client.get('/mesa-control/cases').status_code == 403
+    assert create(client)[0].status_code == 403
+    assert client.get('/mesa-control/cases/nonexistent').status_code == 403
+    assert client.post('/mesa-control/cases/nonexistent/generate-form', json={'revision': 1}).status_code == 403
+    api.dependency_overrides[current_access_profile] = lambda: profile(role='admin', username='OWNER@example.test')
+    assert client.get('/mesa-control/config').status_code == 200
+    monkeypatch.delenv('MESA_OWNER_USERNAME')
+    assert client.get('/mesa-control/config').status_code == 403
+
+
+def test_folder_parent_uses_existing_rfc_resolver_and_identity_is_immutable(app, monkeypatch):
+    _, client, _ = app
+    calls = []
+    def parent(service, row, create):
+        calls.append(row['summary'])
+        assert create is True
+        return {'id': 'rfc-parent'}
+    monkeypatch.setattr(mesa.pendientes, '_client_folder_for_row', parent)
+    drive = Drive()
+    monkeypatch.setattr(mesa.pendientes, 'build_pending_drive_service', lambda: drive)
+    item = create(client)[0].json()
+    item = client.post(f"/mesa-control/cases/{item['id']}/documents", data={'revision': item['revision'], 'kind': mesa.BASE_DOCS[0]}, files={'document': ('solicitud.pdf', b'%PDF-1.4 test', 'application/pdf')}).json()
+    assert calls == [{'RFC': 'AAAA901001AB1', 'Contratante': 'Cliente de Prueba'}]
+    assert drive.files_saved[0]['parents'] == ['folder']
+    response = client.patch(f"/mesa-control/cases/{item['id']}", json={'revision': item['revision'], 'data': {**item['data'], 'rfc': 'BBBB900101AB1'}})
+    assert response.status_code == 409
+
+
+def test_extracted_value_must_match_document_and_is_audited(app, monkeypatch):
+    _, client, factory = app
+    from reportlab.pdfgen.canvas import Canvas
+    import hashlib
+    stream = io.BytesIO(); canvas = Canvas(stream)
+    canvas.drawString(40, 700, 'Correo del contratante: prueba@example.com')
+    canvas.save(); content = stream.getvalue()
+    item = create(client)[0].json()
+    doc_id = str(uuid4())
+    doc = {'id': doc_id, 'sha256': hashlib.sha256(content).hexdigest(), 'name': 'contacto.pdf', 'kind': 'Documentos adicionales'}
+    monkeypatch.setattr(mesa, 'read_case_document', lambda item, key: (doc, content))
+    path = f"/mesa-control/cases/{item['id']}/documents/{doc_id}"
+    extracted = client.post(path + '/extract').json()
+    assert extracted['candidates'][0]['page'] == 1
+    payload = {'revision': item['revision'], 'field': 'email', 'value': 'inventado@example.com', 'page': 1}
+    assert client.post(path + '/confirm-extraction', json=payload).status_code == 422
+    payload['value'] = 'prueba@example.com'
+    confirmed = client.post(path + '/confirm-extraction', json=payload)
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()['data']['email'] == payload['value']
+    with factory() as db:
+        event = db.get(MesaCase, item['id']).history[-1]
+        assert event['action'] == 'extraction_confirmed'
+        assert event['evidence']['page'] == 1 and event['sha256'] == doc['sha256']
+    assert client.post(path + '/confirm-extraction', json=payload).status_code == 409

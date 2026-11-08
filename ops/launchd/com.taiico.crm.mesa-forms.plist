@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.taiico.crm.mesa-forms</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/albertoalfaromendoza/Desktop/Taiico Antigravity AI OS/Taiico Local - Antigravity CRM/taiico-crm/.venv/bin/python</string>
+		<string>/Users/albertoalfaromendoza/Desktop/Taiico Antigravity AI OS/Taiico Local - Antigravity CRM/taiico-crm/backend/jobs/check_mesa_forms.py</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/albertoalfaromendoza/Desktop/Taiico Antigravity AI OS/Taiico Local - Antigravity CRM/taiico-crm/.runtime/logs/mesa-forms-error.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/albertoalfaromendoza/Desktop/Taiico Antigravity AI OS/Taiico Local - Antigravity CRM/taiico-crm/.runtime/logs/mesa-forms.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>10</integer>
+		<key>Minute</key>
+		<integer>15</integer>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/albertoalfaromendoza/Desktop/Taiico Antigravity AI OS/Taiico Local - Antigravity CRM/taiico-crm</string>
+</dict>
+</plist>

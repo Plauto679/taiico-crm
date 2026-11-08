@@ -21,6 +21,7 @@ function isPublicPath(pathname: string): boolean {
 }
 
 export function Sidebar() {
+    const [mesaAccess, setMesaAccess] = useState(false);
     const [collapsed, setCollapsed] = useState(false);
     const [mobileOpen, setMobileOpen] = useState(false);
     const [loggingOut, setLoggingOut] = useState(false);
@@ -41,6 +42,7 @@ export function Sidebar() {
                 const data = JSON.parse(cached);
                 setPermissions(data.module_permissions || {});
                 setUsername(data.username || '');
+                setMesaAccess(data.mesa_access === true);
             }
         } catch {
             window.sessionStorage.removeItem(SESSION_CACHE_KEY);
@@ -54,9 +56,11 @@ export function Sidebar() {
                     if (active && request === latestRequest) {
                         setPermissions(data.module_permissions || {});
                         setUsername(data.username || '');
+                setMesaAccess(data.mesa_access === true);
                         window.sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({
                             module_permissions: data.module_permissions || {},
                             username: data.username || '',
+                            mesa_access: data.mesa_access === true,
                         }));
                     }
                 })
@@ -148,7 +152,7 @@ export function Sidebar() {
                 <button type="button" onClick={() => setMobileOpen(false)} className="absolute right-3 top-3 rounded-full p-2 text-slate-500 hover:bg-slate-100 md:hidden" aria-label="Cerrar menú"><X className="h-5 w-5" /></button>
             </div>
             <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-2 py-4 [scrollbar-gutter:stable]">
-                {NAV_ITEMS.filter((item) => canShowModule(item.module, permissions)).map((item) => (
+                {NAV_ITEMS.filter((item) => canShowModule(item.module, permissions) && (item.href !== '/mesa-control' || mesaAccess)).map((item) => (
                     <SmartLink
                         key={item.name}
                         href={item.href}

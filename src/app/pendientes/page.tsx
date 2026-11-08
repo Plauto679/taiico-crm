@@ -1,3 +1,4 @@
+import { fetchFromApi } from '@/lib/api';
 import Link from 'next/link';
 import { PendientesView } from '@/components/pendientes/PendientesView';
 import type { CommercialPendingData, PendingAccess, PendingSourceData } from '@/lib/types/pendientes';
@@ -6,6 +7,7 @@ import { getCommercialPending, getPendingSource } from '@/modules/pendientes/ser
 export const dynamic = 'force-dynamic';
 
 export default async function PendientesPage() {
+    const session = await fetchFromApi<{ mesa_access?: boolean }>('/session');
     const [emisionResult, siniestrosResult, commercialResult] = await Promise.allSettled([
         getPendingSource('emision-servicios'),
         getPendingSource('siniestros'),
@@ -33,7 +35,7 @@ export default async function PendientesPage() {
 
     return (
         <div className="flex h-full flex-col p-8">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-bold text-white">Pendientes</h1><Link href="/mesa-control" className="rounded-lg bg-white px-4 py-2 font-semibold text-slate-800">Mesa de control con Plauto</Link></div>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-bold text-white">Pendientes</h1>{session.mesa_access && <Link href="/mesa-control" className="rounded-lg bg-white px-4 py-2 font-semibold text-slate-800">Mesa de control con Plauto</Link>}</div>
             <div className="min-h-0 flex-1">
                 <PendientesView emisionServicios={emisionServicios} siniestros={siniestros} commercial={commercial} />
             </div>

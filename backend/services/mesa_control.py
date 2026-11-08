@@ -20,7 +20,8 @@ from database import MesaCase, SessionLocal
 from services.auth import AccessProfile
 from services.authorization import current_access_profile
 from services.agent_scope import profile_allows_insurer
-from services import pendientes, plauto
+from services import pendientes, plauto, mesa_documents
+from services.mesa_access import mesa_available
 
 router = APIRouter(prefix='/mesa-control', tags=['mesa-control'])
 MAX_BYTES = 25 * 1024 * 1024
@@ -37,6 +38,12 @@ class CaseData(BaseModel):
     product: str = Field(default='', max_length=150)
     recognition: bool = False
     notes: str = Field(default='', max_length=4000)
+    paternal_surname: str = Field(default='', max_length=60)
+    maternal_surname: str = Field(default='', max_length=60)
+    given_names: str = Field(default='', max_length=80)
+    curp: str = Field(default='', max_length=18)
+    email: str = Field(default='', max_length=100)
+    phone: str = Field(default='', max_length=25)
 
     @field_validator('client_name', 'product', 'notes')
     @classmethod
@@ -44,6 +51,21 @@ class CaseData(BaseModel):
         value = value.strip()
         if info.field_name == 'client_name' and len(value) < 2:
             raise ValueError('Indica el nombre del contratante.')
+        return value
+
+    @field_validator('paternal_surname', 'maternal_surname', 'given_names', 'curp', 'email', 'phone')
+    @classmethod
+    def validate_identity(cls, value, info):
+        import re
+        value = value.strip()
+        if info.field_name == 'curp':
+            value = value.upper()
+            if value and not re.fullmatch(r'[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d', value):
+                raise ValueError('Verifica la CURP.')
+        if info.field_name == 'email' and value and not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', value):
+            raise ValueError('Verifica el correo electrónico.')
+        if info.field_name == 'phone' and value and not re.fullmatch(r'[+0-9() -]{7,25}', value):
+            raise ValueError('Verifica el teléfono.')
         return value
 
     @field_validator('rfc')
@@ -81,6 +103,8 @@ class GuideRequest(BaseModel):
 
 
 def access(profile, *, write=False):
+    if not mesa_available(profile):
+        raise HTTPException(403, 'Mesa de control está disponible únicamente para la cuenta autorizada del piloto.')
     if profile.role not in {'admin', 'agente'} or not profile.can_read('pendientes'):
         raise HTTPException(403, 'Necesitas acceso a Pendientes.')
     if write and not profile.can_operate('pendientes'):
@@ -155,7 +179,8 @@ def config(profile: AccessProfile = Depends(current_access_profile)):
             'can_review': profile.is_admin and profile.can_operate('pendientes'),
             'agents': pendientes._agent_options_for_profile(profile),
             'reasons': REASONS, 'chat_ready': plauto.enabled() and plauto.configured(),
-            'uploads_ready': bool(os.getenv('MESA_DRIVE_ROOT_ID', '').strip())}
+            'uploads_ready': bool(pendientes._documents_root_id()),
+            'official_form': mesa_documents.form_status()}
 
 
 @router.get('/cases')
@@ -207,6 +232,8 @@ def edit_case(case_id: str, request: EditCase, profile: AccessProfile = Depends(
         item = find_case(db, case_id, profile)
         reserve(db, item, request.revision)
         before = item.data
+        if item.folder_id and request.data.rfc != before.get('rfc'):
+            raise HTTPException(409, 'El expediente ya tiene carpeta por RFC. No se puede cambiar su identidad; crea otro movimiento para otro cliente.')
         item.data = request.data.model_dump()
         reopen(item)
         event(item, profile, 'edited', before=before, after=item.data)
@@ -245,16 +272,26 @@ def transition(case_id: str, request: Transition, profile: AccessProfile = Depen
 
 
 def ensure_folder(service, item):
+    rfc = item.data.get('rfc', '')
+    if not rfc or rfc in {'XAXX010101000', 'XEXX010101000'}:
+        raise HTTPException(422, 'Completa el RFC propio del contratante antes de crear su carpeta; no uses un RFC genérico.')
+    row = {'summary': {'RFC': rfc, 'Contratante': item.data['client_name']}}
+    # Same resolver, root and per-RFC creation lock as the current Pendientes flow.
+    parent = pendientes._client_folder_for_row(service, row, create=True)
+    if not parent:
+        raise HTTPException(502, 'No se pudo resolver la carpeta del cliente.')
+    parent_id = parent['id']
     if item.folder_id:
+        metadata = service.files().get(fileId=item.folder_id, fields='id,parents,trashed', supportsAllDrives=True).execute()
+        if metadata.get('trashed') or parent_id not in metadata.get('parents', []):
+            raise HTTPException(409, 'La carpeta del movimiento no coincide con la carpeta de este RFC. Requiere revisión administrativa.')
         return item.folder_id
-    root = os.getenv('MESA_DRIVE_ROOT_ID', '').strip()
-    if not root:
-        raise HTTPException(503, 'Falta configurar la carpeta privada de Mesa de control.')
-    # Stable marker recovers a folder if Drive succeeded but the SQL commit failed.
-    found = service.files().list(q="trashed=false and appProperties has { key='taiico_mesa_id' and value='" + item.id + "' }",
+    found = service.files().list(q="'" + parent_id + "' in parents and trashed=false and appProperties has { key='taiico_mesa_id' and value='" + item.id + "' }",
         fields='files(id)', supportsAllDrives=True, includeItemsFromAllDrives=True).execute().get('files', [])
+    if len(found) > 1:
+        raise HTTPException(409, 'Hay más de una carpeta para este movimiento. Requiere conciliación.')
     folder = found[0] if found else service.files().create(body={
-        'name': 'Mesa GMM ' + item.id, 'parents': [root], 'mimeType': 'application/vnd.google-apps.folder',
+        'name': 'Emisión GMM - Mesa - ' + item.id, 'parents': [parent_id], 'mimeType': 'application/vnd.google-apps.folder',
         'appProperties': {'taiico_mesa_id': item.id}}, fields='id', supportsAllDrives=True).execute()
     item.folder_id = folder['id']
     return item.folder_id
@@ -346,13 +383,15 @@ def guide(case_id: str, request: GuideRequest, profile: AccessProfile = Depends(
                 'No afirmes revisar firmas, extraer datos de archivos, generar formatos, guardar cambios ni ingresar solicitudes. '
                 'Si el usuario aporta o corrige datos explícitamente, usa propose_case_data para proponer el registro completo; '
                 'conserva los valores actuales no modificados, no inventes datos y explica que falta confirmar. '
+                'Nunca separes un nombre completo en apellidos y nombres por suposición; pide que el usuario los identifique. '
                 'Explica el siguiente paso usando los controles de la página. La revisión administrativa es obligatoria. '
                 'No inventes condiciones de seguros ni requisitos oficiales. Distingue archivo aportado de documento validado.',
                 'tools': [{'type': 'function', 'name': 'propose_case_data', 'description': 'Propone datos del expediente para revisión y confirmación del usuario. No guarda.', 'strict': True,
                     'parameters': {'type': 'object', 'additionalProperties': False, 'properties': {
                         'client_name': {'type': 'string'}, 'rfc': {'type': 'string'}, 'product': {'type': 'string'},
-                        'recognition': {'type': 'boolean'}, 'notes': {'type': 'string'}},
-                        'required': ['client_name', 'rfc', 'product', 'recognition', 'notes']}}] if profile.can_operate('pendientes') else [],
+                        'recognition': {'type': 'boolean'}, 'notes': {'type': 'string'},
+                        **{name: {'type': 'string'} for name in mesa_documents.FORM_FIELDS}},
+                        'required': ['client_name', 'rfc', 'product', 'recognition', 'notes', *mesa_documents.FORM_FIELDS]}}] if profile.can_operate('pendientes') else [],
                 'parallel_tool_calls': False,
                 'input': [{'role': 'user', 'content': json.dumps({'expediente': snapshot, 'pregunta': request.message}, ensure_ascii=False)}]})
             response.raise_for_status()
@@ -373,3 +412,95 @@ def guide(case_id: str, request: GuideRequest, profile: AccessProfile = Depends(
         raise HTTPException(502, 'Plauto no pudo responder. Tu expediente sigue guardado; puedes continuar con los controles.') from None
     finally:
         plauto._slots.release()
+
+
+class RevisionRequest(BaseModel):
+    revision: int = Field(ge=1)
+
+
+class ExtractionConfirm(RevisionRequest):
+    field: Literal['rfc', 'curp', 'email', 'phone']
+    value: str = Field(min_length=1, max_length=100)
+    page: int = Field(ge=1, le=30)
+
+
+def read_case_document(item, document_id):
+    doc = next((d for d in item.documents if d['id'] == document_id), None)
+    if not doc:
+        raise HTTPException(404, 'Documento no encontrado en este movimiento.')
+    if doc.get('size', 0) > mesa_documents.MAX_READ:
+        raise HTTPException(413, 'La extracción admite hasta 4 MB.')
+    try:
+        content = pendientes.build_pending_drive_service().files().get_media(
+            fileId=doc['drive_id'], supportsAllDrives=True).execute()
+    except Exception:
+        raise HTTPException(502, 'No se pudo leer el documento de Drive.') from None
+    if hashlib.sha256(content).hexdigest() != doc['sha256']:
+        raise HTTPException(409, 'El archivo de Drive cambió fuera de Mesa. Vuelve a aportarlo para registrar su nueva versión.')
+    return doc, content
+
+
+@router.post('/cases/{case_id}/documents/{document_id}/extract')
+def extract_document(case_id: str, document_id: str, profile: AccessProfile = Depends(current_access_profile)):
+    access(profile)
+    with SessionLocal() as db:
+        item = find_case(db, case_id, profile)
+        doc, content = read_case_document(item, document_id)
+        return {**mesa_documents.extract_candidates(content), 'revision': item.revision,
+                'document_id': doc['id'], 'sha256': doc['sha256'], 'document_name': doc['name']}
+
+
+@router.post('/cases/{case_id}/documents/{document_id}/confirm-extraction')
+def confirm_extraction(case_id: str, document_id: str, request: ExtractionConfirm,
+                       profile: AccessProfile = Depends(current_access_profile)):
+    access(profile, write=True)
+    with SessionLocal() as db:
+        item = find_case(db, case_id, profile)
+        doc, content = read_case_document(item, document_id)
+        candidates = mesa_documents.extract_candidates(content)['candidates']
+        evidence = next((c for c in candidates if c['field'] == request.field and c['value'] == request.value and c['page'] == request.page), None)
+        if not evidence:
+            raise HTTPException(422, 'El valor no coincide con la evidencia extraída del documento.')
+        new_data = CaseData.model_validate({**item.data, request.field: request.value}).model_dump()
+        if item.folder_id and new_data['rfc'] != item.data.get('rfc'):
+            raise HTTPException(409, 'No se puede cambiar el RFC de un movimiento que ya tiene carpeta.')
+        reserve(db, item, request.revision)
+        before = item.data
+        item.data = new_data
+        reopen(item)
+        event(item, profile, 'extraction_confirmed', document_id=doc['id'], sha256=doc['sha256'],
+              evidence=evidence, before=before, after=new_data)
+        db.commit()
+        return serialize(item)
+
+
+@router.post('/cases/{case_id}/generate-form')
+def generate_official_form(case_id: str, request: RevisionRequest, profile: AccessProfile = Depends(current_access_profile)):
+    access(profile, write=True)
+    with SessionLocal() as db:
+        item = find_case(db, case_id, profile)
+        if item.revision != request.revision:
+            raise HTTPException(409, 'El expediente cambió. Recárgalo antes de generar.')
+        content, metadata = mesa_documents.generate_form(item.data, item.id, item.revision)
+        reserve(db, item, request.revision)
+        doc_id = str(uuid4())
+        name = f'BORRADOR-MedicaLife-{item.id[:8]}-v{request.revision}.pdf'
+        try:
+            service = pendientes.build_pending_drive_service()
+            folder = ensure_folder(service, item)
+            saved = service.files().create(body={'name': name, 'parents': [folder]},
+                media_body=MediaIoBaseUpload(io.BytesIO(content), mimetype='application/pdf', resumable=False),
+                fields='id', supportsAllDrives=True).execute()
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(502, 'No se pudo guardar el borrador en la carpeta del movimiento.') from None
+        item.documents = item.documents + [{'id': doc_id, 'drive_id': saved['id'], 'name': name,
+            'kind': 'Borrador parcial de solicitud MédicaLife Familiar', 'sha256': hashlib.sha256(content).hexdigest(),
+            'size': len(content), 'mime': 'application/pdf', 'uploaded_by': profile.username,
+            'at': datetime.utcnow().isoformat() + 'Z', 'form_provenance': metadata}]
+        reopen(item)
+        event(item, profile, 'form_generated', document_id=doc_id, template_sha256=metadata['template_sha256'],
+              source_revision=request.revision, comment='Borrador parcial. No satisface el requisito de solicitud completa y firmada.')
+        db.commit()
+        return serialize(item)

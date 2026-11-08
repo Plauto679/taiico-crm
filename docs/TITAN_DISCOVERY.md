@@ -262,3 +262,7 @@ Estas decisiones actualizan el diseño; no implican que la página, las herramie
 ## Primera implementación (2026-11-09)
 
 Se implementó la entrada `/mesa-control`, borradores por movimiento, documentos privados, propuestas de datos con Plauto y revisión administrativa obligatoria. Ver `docs/MESA_CONTROL.md` para alcance, configuración, validaciones y límites. La extracción documental y generación de PDFs oficiales siguen pendientes; Jev queda separado como experimento.
+
+## Piloto privado en producción (2026-11-09)
+
+Mesa habilitada solo para Alberto mediante una identidad configurada en servidor. Se integró la subcarpeta por movimiento bajo la carpeta actual RFC - Nombre, extracción de coincidencias con evidencia/confirmación, borrador parcial editable de la solicitud oficial de MédicaLife Familiar y comprobación diaria de catálogo/huella. Se mantiene revisión humana y Jev separado. Ver `MESA_CONTROL.md` para límites y comprobaciones de despliegue.
