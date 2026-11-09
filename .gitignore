@@ -80,3 +80,5 @@ node_modules_viejo/
 
 # Isolated Mesa release builds
 /.next-mesa-ocr-*/
+
+/.next-mesa-claims-*/

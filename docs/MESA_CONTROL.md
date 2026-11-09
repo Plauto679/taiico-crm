@@ -80,3 +80,37 @@ Pendiente para ampliar: más campos y productos, conexión automática al regist
 Despliegue sin migración adicional ni cambio de propietario. Respaldo previo y manifiesto: `.runtime/deploy-backups/mesa-ocr-20261109-011834/`. El control diario volvió a verificar la fuente oficial. Se comprobaron por HTTPS acceso del propietario, OCR disponible, bloqueo de otra cuenta administrativa y de solicitudes anónimas.
 
 Validación: suite completa con 504 pruebas y 117 subtests; pruebas focalizadas adicionales para selección de páginas posteriores. OCR real probado con imagen y PDF escaneado ficticios, confirmación con evidencia, límites, limpieza de temporales, PDF mixto, nombres sin inferencia, guía progresiva y acceso exclusivo. Interfaz de escritorio/móvil probada con fixtures para lectura, confirmación, orientación desde documento y continuación al siguiente campo. Compilación, TypeScript y lint correctos. No se crearon expedientes ni subieron documentos reales de prueba a producción.
+
+
+## Reembolso inicial y complemento: entrega del 9 de noviembre
+
+El selector de nueva solicitud admite emisión y reembolso GMM. El tipo de movimiento queda fijo después de crear el expediente. Los expedientes anteriores conservan emisión por defecto; los nuevos campos viven en el JSON existente, sin migración SQL. En reembolso, `client_name`/`rfc` y los datos de identidad sin prefijo corresponden al **asegurado titular**; `contractor_name` identifica a quien contrató la póliza y `patient_*` al paciente. Nunca se copian datos de una persona a otra por suposición. La confirmación de extracción permite elegir titular o paciente para nombres/CURP y registra esa atribución.
+
+Se conserva el mismo acceso exclusivo, alcance, historial, reserva de revisión y resolución de carpetas por RFC. La carpeta del movimiento se llama `Reembolso GMM - Mesa - UUID` dentro de la carpeta actual del RFC del titular. No se crean permisos públicos, se habilitan otros usuarios ni se envían solicitudes a MetLife.
+
+### Reglas y documentos
+
+`mesa_claims.py` distingue inicial/complemento, paciente menor de edad/CURP, cambio de cuenta bancaria, medicamentos, estudios, histopatología, desglose de facturas, firma digital y respuesta a requerimiento. Las condiciones empiezan en `null`: no responder no equivale a «No». Complemento requiere número de siniestro; respuesta a requerimiento requiere DCN. Se solicitan documentos según las respuestas y se comprueban fechas confirmadas contra límites de calendario; mesa debe contrastarlas con los originales.
+
+Fuente contrastada: [reembolso MetLife](https://www.metlife.com.mx/tramites-y-servicios/tramites-de-seguros-de-gastos-medicos/reembolso/). Se detectó una discrepancia real: el portal señala estado de cuenta de hasta seis meses; el checklist del PDF vigente, página 5, señala tres meses. **El piloto aplica tres meses, lo informa en la interfaz y exige revisión administrativa del criterio**. No se presenta como un requisito unificado de ambas fuentes. Domicilio: tres meses; informe médico de complemento: seis meses. Los casos especiales no resueltos por estas reglas requieren revisión de mesa y condiciones de póliza.
+
+Se admiten facturas XML CFDI 3/4 de hasta 1 MB únicamente en su categoría: sin DTD, entidades, NUL ni recursos externos. Se conservan como originales privados; no se mandan al OCR. Las facturas PDF se aportan en categoría separada. La presencia de un PDF y un XML **no comprueba** que coincidan todas las facturas: el administrativo debe revisar cada pareja, RFC, conceptos, importes y total. La validación exige cinco comprobaciones explícitas (identidad, informes médicos, facturas, condiciones/vigencias y solicitud firmada) y comentario, registrados en el historial. Editar datos/documentos invalida esa revisión.
+
+### Formatos oficiales y generación
+
+- Solicitud de reclamación GMM **VG-2-068 VER. 12**, seis páginas. Fuente enlazada desde el portal: `https://www.metlife.com.mx/content/dam/metlifecom/mx/pdfs/common-files/reclamacion-gmm/solicitud-de-reclamacion-gastos-medicos-mayores-vg-2-068-ver-12-pdf-editable.pdf`. SHA-256 `f7d41d38c376b80376c872f74c024f83221c68d1e85511b75659572fb15056b2`.
+- Informe médico **CC-1-020 VER. 7**, cuatro páginas. Fuente: `https://www.metlife.com.mx/content/dam/metlifecom/mx/pdfs/internas/Soy-Cliente/Tramites-y-Servicios/Programar-Cirugia/Informe-medico.pdf`. SHA-256 `7f5efd22a6b8c6fc5b2779e885caa49622f9469fe3fce72f211d135022d7b792`. Se ofrece el formato oficial y lectura de documentos recibidos. Lo llena y firma cada médico; no se generan diagnósticos ni firmas.
+
+El job diario existente comprueba además la presencia de ambos enlaces en el portal y sus hashes. Guarda estado independiente en `.runtime/mesa-form-status-claims.json`. Cambios, errores o comprobación vencida bloquean la generación. No activa nuevas plantillas automáticamente. Esta comprobación no sustituye una revisión de cambios en requisitos redactados en las páginas web.
+
+La solicitud se conserva editable, con sus seis páginas y aviso de borrador parcial. Se llenan datos confirmados de titular/paciente, contratante, póliza, contacto, tipo de reembolso y siniestro/DCN cuando aplican. No se llenan importes, CLABE, información clínica, declaraciones, consentimientos ni firmas. Se borran valores precargados del original, incluida una fecha de ejemplo; se normalizan rectángulos invertidos y propiedades heredadas de celdas, manteniendo el árbol canónico y las apariencias coincidentes. El borrador nunca satisface el requisito de solicitud firmada.
+
+Plauto recibe datos y condiciones del reembolso y, solo al elegir un documento, sus páginas seleccionadas. Propone cambios para confirmación, orienta a un faltante a la vez y distingue titular/paciente. El informe médico continúa siendo documentación externa: la lectura orienta sobre omisiones, sin certificación clínica.
+
+### Validación de esta entrega
+
+Suite completa: 514 pruebas y 117 subtests; comprobación posterior focalizada de propuestas Plauto con condiciones nulas y conservación del tipo de movimiento. Compilación de producción, TypeScript y lint correctos. PDF ficticio renderizado en sus seis páginas y validación de valores canónicos/widgets/apariencias, sin fecha precargada ni consentimientos marcados. Prueba de navegador con datos ficticios: creación, inicial/complemento, cuenta bancaria condicional, XML, propuesta Plauto, borrador que no satisface firma y revisión administrativa obligatoria; escritorio y móvil sin desbordamiento horizontal ni errores JS. No se crean expedientes reales de prueba en producción.
+
+Frontend de esta entrega: `.next-mesa-claims-20261109-final`. Pago directo y cirugía programada continúan pendientes; comparten documentos, pero requieren sus propias reglas antes de habilitarse.
+
+Activación verificada en localhost y `https://taiico-crm.com`: propietario permitido, otra cuenta administrativa bloqueada en API/generación/página, anónimo bloqueado; emisión y reembolso con fuentes verificadas y OCR disponible. Respaldo SQLite consistente y manifiesto en `.runtime/deploy-backups/mesa-claims-20261109-015940/`. Se reiniciaron solo backend y frontend; no hubo migración ni cambio del propietario. Comprobación focalizada final: 23 pruebas, incluido el esquema de propuestas de Plauto.

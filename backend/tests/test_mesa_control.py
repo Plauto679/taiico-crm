@@ -334,3 +334,92 @@ def test_plauto_can_read_later_pages_without_unbounded_context(app, monkeypatch)
     result = client.post(endpoint, json={'message': 'Ayúdame con estas páginas', 'document_id': 'doc', 'page_start': 6})
     assert result.status_code == 200, result.text
     assert client.post(endpoint, json={'message': 'Ayúdame', 'document_id': 'doc', 'page_start': 30}).status_code == 422
+
+
+def test_reimbursement_requires_conditions_and_explicit_admin_checks(app):
+    from test_mesa_claims import claim_data
+    from services import mesa_claims
+    api, client, factory = app
+    item = create(client, data=claim_data(claim_stage='complement', bank_changed=False, claim_number='SIN123'))[0].json()
+    assert item['form_progress']['form_id'] == 'reclamacion_gmm'
+    assert 'Cotización' not in item['requirements']
+    assert call(client, item, 'submit').status_code == 422
+    complete(factory, item)
+    item = call(client, item, 'submit').json()
+    api.dependency_overrides[current_access_profile] = lambda: profile(role='admin', username='reviewer')
+    item = call(client, item, 'claim').json()
+    assert call(client, item, 'validate', comment='Revisado').status_code == 422
+    item = call(client, item, 'validate', comment='Cada factura y documento revisado', review_checks=list(mesa_claims.REVIEW_CHECKS)).json()
+    assert item['status'] == 'validated'
+    assert item['history'][-1]['review_checks'] == list(mesa_claims.REVIEW_CHECKS)
+    changed = {**item['data'], 'bank_changed': True, 'bank_statement_date': ''}
+    response = client.patch(f"/mesa-control/cases/{item['id']}", json={'revision': item['revision'], 'data': changed})
+    assert response.status_code == 200
+    item = response.json()
+    assert item['status'] == 'draft' and 'Estado de cuenta bancario' in item['missing']
+    assert call(client, item, 'submit').status_code == 422
+    assert client.patch(f"/mesa-control/cases/{item['id']}", json={'revision': item['revision'], 'data': {**item['data'], 'workflow':'emision_gmm'}}).status_code == 409
+
+
+def test_cfdi_xml_stored_only_in_claim_category_and_dtd_rejected(app, monkeypatch):
+    from test_mesa_claims import claim_data
+    _, client, _ = app
+    drive = Drive()
+    monkeypatch.setattr(mesa.pendientes, '_client_folder_for_row', lambda service, row, create: {'id':'rfc-parent'})
+    monkeypatch.setattr(mesa.pendientes, 'build_pending_drive_service', lambda: drive)
+    item = create(client, data=claim_data())[0].json()
+    path = f"/mesa-control/cases/{item['id']}/documents"
+    def upload(content, kind='Facturas XML'):
+        return client.post(path, data={'revision':item['revision'],'kind':kind},files={'document':('factura.xml',content,'application/xml')})
+    assert upload(b'<!DOCTYPE a [<!ENTITY x SYSTEM "file:///etc/passwd">]><a>&x;</a>').status_code == 422
+    assert upload(b'<not-a-cfdi/>').status_code == 422
+    xml=b'<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" Version="4.0"/>'
+    assert upload(xml, 'Facturas PDF').status_code == 422
+    response=upload(xml)
+    assert response.status_code == 200
+    assert response.json()['documents'][0]['mime'] == 'application/xml'
+    assert len(drive.files_saved) == 1
+
+
+def test_extraction_can_assign_patient_without_overwriting_holder(app, monkeypatch):
+    from test_mesa_claims import claim_data
+    _, client, factory = app
+    item = create(client, data=claim_data())[0].json()
+    monkeypatch.setattr(mesa, 'read_case_document', lambda *args: ({'id':'scan', 'sha256':'fake'}, b'scan'))
+    monkeypatch.setattr(mesa.mesa_documents, 'extract_candidates', lambda _: {'candidates':[{'field':'given_names','value':'LUIS ENRIQUE','page':1,'method':'ocr'}]})
+    result=client.post(f"/mesa-control/cases/{item['id']}/documents/scan/confirm-extraction",json={
+        'revision':item['revision'],'field':'given_names','target':'patient','value':'LUIS ENRIQUE','page':1})
+    assert result.status_code == 200
+    data=result.json()['data']
+    assert data['given_names'] == 'ANA' and data['patient_given_names'] == 'LUIS ENRIQUE'
+    assert result.json()['history'][-1]['evidence']['target_field'] == 'patient_given_names'
+
+
+def test_claim_plauto_proposal_preserves_workflow_and_conditions(app, monkeypatch):
+    from test_mesa_claims import claim_data
+    import json
+    _, client, factory = app
+    item = create(client, data=claim_data(claim_stage='complement', bank_changed=None, claim_number='SIN123'))[0].json()
+    proposed = {**item['data'], 'patient_given_names':'LUIS ENRIQUE', 'bank_changed':False}
+    proposed.pop('workflow')  # Workflow is deliberately not a tool argument.
+    class Model:
+        def __init__(self, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def post(self, url, **kwargs):
+            payload = kwargs['json']
+            schema = payload['tools'][0]['parameters']
+            assert set(schema['required']) == set(schema['properties'])
+            assert schema['properties']['bank_changed']['type'] == ['boolean', 'null']
+            assert payload['max_output_tokens'] >= 1600 and payload['store'] is False
+            assert 'workflow' not in schema['properties']
+            return self
+        def raise_for_status(self): pass
+        def json(self):return {'output':[{'type':'function_call','name':'propose_case_data','arguments':json.dumps(proposed)}]}
+    monkeypatch.setattr(mesa, 'httpx', SimpleNamespace(Client=Model, HTTPError=Exception))
+    monkeypatch.setenv('PLAUTO_ENABLED','true');monkeypatch.setenv('PLAUTO_MODEL','test');monkeypatch.setenv('OPENAI_API_KEY','fake')
+    result=client.post(f"/mesa-control/cases/{item['id']}/guide",json={'message':'El paciente se llama LUIS ENRIQUE y no cambió la cuenta.'})
+    assert result.status_code == 200
+    assert result.json()['proposal']['data']['workflow']=='reembolso_gmm'
+    assert result.json()['proposal']['data']['bank_changed'] is False
+    with factory() as db:assert db.get(MesaCase,item['id']).data['bank_changed'] is None

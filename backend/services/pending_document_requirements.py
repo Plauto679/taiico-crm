@@ -55,7 +55,7 @@ GMM_DOCUMENT_REQUIREMENTS: dict[str, list[str]] = {
     "Cancelación de pólizas GMM": ["Solicitud de Cambios", "Identificación Oficial Vigente", "Caratula de Póliza", "Validacion INE", "Estado de cuenta"],
     "Aclaración de pagos GMM": ["Solicitud de Cambios", "Identificación Oficial Vigente", "Comprobante de Pago"],
     "Aplicación de pagos GMM": ["Recibo", "Escrito de aplicación de pago"],
-    "Reembolso GMM": ["Formato de cambios", "Informe medico", "Facturas", "Resultados de auxiliares del Dr.", "Identificación oficial", "Comprobante de domicilio", "Edo de cuenta bancario", "Otro"],
+    "Reembolso GMM": ["Solicitud de reclamación GMM", "Informe medico", "Facturas", "Resultados de auxiliares del Dr.", "Identificación oficial", "Comprobante de domicilio", "Edo de cuenta bancario", "Otro"],
 }
 
 

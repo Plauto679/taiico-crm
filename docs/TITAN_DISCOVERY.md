@@ -270,3 +270,10 @@ Mesa habilitada solo para Alberto mediante una identidad configurada en servidor
 ## OCR y guía progresiva (2026-11-09)
 
 Se habilitó lectura local de PDF escaneado/JPG/PNG y guía por campos faltantes, con confirmación y evidencia, conservando el piloto exclusivo de Alberto. La plantilla habilitada sigue siendo MédicaLife Familiar: los demás formatos se incorporarán posteriormente, siempre verificando su fuente y versión actual antes de activar su mapeo. El catálogo de preguntas y secciones queda separado del código. Ver `MESA_CONTROL.md`.
+
+
+## Reembolso GMM: piloto inicial/complemento (2026-11-09)
+
+Se incorporan ambos recorridos a Mesa, con titular/paciente separados, siniestro obligatorio en complemento, requisitos condicionales, XML CFDI y revisión administrativa explícita. Solicitud oficial VG-2-068 VER. 12 con llenado parcial; informe médico CC-1-020 VER. 7 para lectura y completado por cada médico. Ambas fuentes se incorporan al control diario. El piloto sigue exclusivo para el propietario. Se corrige «Formato de cambios» por «Solicitud de reclamación GMM» en el catálogo de Reembolso GMM; las reglas detalladas viven en Mesa.
+
+Discrepancia detectada: estado de cuenta de hasta seis meses en portal y tres en el PDF. El piloto aplica tres meses y muestra la diferencia para revisión de mesa. Ver `MESA_CONTROL.md` para fuentes, límites, pruebas y despliegue. Pago directo/cirugía programada aún no habilitados.

@@ -16,7 +16,7 @@ from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.lib.colors import black, white
 from reportlab.pdfbase.pdfmetrics import stringWidth
-from services import mesa_ocr
+from services import mesa_ocr, mesa_claims
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / 'assets/metlife_forms/medicalife-familiar-ig-1-002-v27.pdf'
@@ -90,6 +90,8 @@ def check_official_form():
 
 
 def form_progress(data):
+    if mesa_claims.is_claim(data):
+        return mesa_claims.progress(data)
     catalog = json.loads((ROOT / 'assets/metlife_forms/catalog.json').read_text())
     product = data.get('product', '').strip().casefold()
     entry = next((form for form in catalog['forms'] if form['enabled'] and product in form['product_aliases']), None)
@@ -210,6 +212,8 @@ def extract_candidates(content):
 
 
 def generate_form(data, case_id, revision):
+    if mesa_claims.is_claim(data):
+        return mesa_claims.generate(data, case_id, revision)
     state = form_status()
     if not state['can_generate']:
         raise HTTPException(409, state['notice'] + (' La comprobación está vencida.' if state['stale'] else ''))
