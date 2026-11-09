@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "forms": [
+    {
+      "id": "medicalife_familiar_solicitud",
+      "product_aliases": [
+        "medicalife familiar",
+        "médicalife familiar"
+      ],
+      "version": "IG-1-002 VER. 27",
+      "sha256": "efc99565e1b842a1c7d77890e30c9a0d590b53107d476a087920d03d239e4eab",
+      "enabled": true,
+      "mapped_fields": [
+        {
+          "key": "paternal_surname",
+          "label": "Apellido paterno",
+          "question": "¿Cuál es el apellido paterno del contratante, tal como aparece en su identificación?",
+          "required_for_draft": true,
+          "page": 1
+        },
+        {
+          "key": "maternal_surname",
+          "label": "Apellido materno",
+          "question": "¿Cuál es su apellido materno? Si no tiene, confírmalo para marcar que no aplica.",
+          "required_for_draft": false,
+          "page": 1
+        },
+        {
+          "key": "given_names",
+          "label": "Nombre(s)",
+          "question": "¿Cuáles son los nombres del contratante, sin apellidos?",
+          "required_for_draft": true,
+          "page": 1
+        },
+        {
+          "key": "rfc",
+          "label": "RFC",
+          "question": "¿Cuál es el RFC propio del contratante? Puedes leerlo de su constancia fiscal.",
+          "required_for_draft": true,
+          "page": 1
+        },
+        {
+          "key": "curp",
+          "label": "CURP",
+          "question": "¿Cuál es la CURP del contratante? Confírmala contra su documento.",
+          "required_for_draft": false,
+          "page": 1
+        },
+        {
+          "key": "email",
+          "label": "Correo electrónico",
+          "question": "¿Qué correo electrónico confirmó el contratante?",
+          "required_for_draft": false,
+          "page": 1
+        },
+        {
+          "key": "phone",
+          "label": "Teléfono",
+          "question": "¿Qué teléfono de contacto confirmó el contratante?",
+          "required_for_draft": false,
+          "page": 1
+        }
+      ],
+      "manual_sections": [
+        {
+          "id": "domicilio_identidad",
+          "title": "Domicilio e identificación",
+          "pages": "1",
+          "question": "Completa domicilio, lugar y fecha de nacimiento, nacionalidad e identificación con los documentos del contratante. Revisa las autorizaciones con él."
+        },
+        {
+          "id": "laboral",
+          "title": "Información laboral y financiera",
+          "pages": "2",
+          "question": "Solicita ocupación, actividad, ingresos y origen de recursos al contratante. Las secciones de persona moral solo aplican cuando corresponda."
+        },
+        {
+          "id": "producto",
+          "title": "Producto y coberturas",
+          "pages": "3",
+          "question": "Transcribe de la cotización elegida el plan, suma asegurada, deducible, coaseguro y coberturas; no los deduzcas."
+        },
+        {
+          "id": "pago_familia",
+          "title": "Pago y personas aseguradas",
+          "pages": "4–5",
+          "question": "Recaba del contratante forma de pago, datos de las personas a asegurar y actividades. Los datos bancarios deben aportarse por el canal autorizado."
+        },
+        {
+          "id": "salud",
+          "title": "Hábitos y declaración de salud",
+          "pages": "6–9",
+          "question": "Cada solicitante debe responder las preguntas que le correspondan. No respondas «No» por ausencia de documentos; deriva dudas a la mesa."
+        },
+        {
+          "id": "privacidad_firmas",
+          "title": "Privacidad, declaraciones y firmas",
+          "pages": "10–11",
+          "question": "Pide que el contratante y solicitantes lean y completen las declaraciones aplicables. Las firmas y consentimientos nunca se generan automáticamente."
+        },
+        {
+          "id": "beneficiarios",
+          "title": "Beneficiarios",
+          "pages": "12–13",
+          "question": "Solicita beneficiarios, parentesco y porcentajes para las coberturas que correspondan; revisa la distribución con el solicitante."
+        }
+      ]
+    }
+  ]
+}

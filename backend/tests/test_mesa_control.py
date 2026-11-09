@@ -285,3 +285,52 @@ def test_extracted_value_must_match_document_and_is_audited(app, monkeypatch):
         assert event['action'] == 'extraction_confirmed'
         assert event['evidence']['page'] == 1 and event['sha256'] == doc['sha256']
     assert client.post(path + '/confirm-extraction', json=payload).status_code == 409
+
+
+def test_scanned_document_access_stays_owner_only(app, monkeypatch):
+    api, client, _ = app
+    item = create(client)[0].json()
+    from services.mesa_access import mesa_available
+    monkeypatch.setattr(mesa, 'mesa_available', mesa_available)
+    monkeypatch.setenv('MESA_OWNER_USERNAME', 'AGENTE1')
+    api.dependency_overrides[current_access_profile] = lambda: profile(role='admin', username='other')
+    assert client.post(f"/mesa-control/cases/{item['id']}/documents/fake/extract").status_code == 403
+    assert client.post(f"/mesa-control/cases/{item['id']}/guide", json={'message': 'Lee el documento', 'document_id': 'fake'}).status_code == 403
+
+
+def test_guidance_progress_and_explicit_no_maternal_surname(app):
+    _, client, _ = app
+    item = create(client, data={'client_name': 'Ana Prueba', 'product': 'MédicaLife Familiar'})[0].json()
+    assert item['form_progress']['next_field'] == 'paternal_surname'
+    response = client.patch(f"/mesa-control/cases/{item['id']}", json={'revision': item['revision'], 'data': {**item['data'], 'paternal_surname': 'Prueba', 'maternal_surname_not_applicable': True}})
+    assert response.status_code == 200
+    assert response.json()['form_progress']['next_field'] == 'given_names'
+
+
+def test_plauto_can_read_later_pages_without_unbounded_context(app, monkeypatch):
+    _, client, _ = app
+    item = create(client)[0].json()
+    monkeypatch.setattr(mesa, 'read_case_document', lambda item, key: ({'id': key, 'name': 'scan.pdf', 'sha256': 'verified'}, b'scan'))
+    monkeypatch.setattr(mesa.mesa_documents, 'extract_candidates', lambda content: {'pages': [
+        {'page': n, 'text': f'CONTENIDO-PAGINA-{n}', 'partial': False, 'method': 'ocr'} for n in range(1, 9)]})
+    monkeypatch.setattr(mesa.plauto, 'enabled', lambda: True)
+    monkeypatch.setattr(mesa.plauto, 'configured', lambda: True)
+    monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
+    monkeypatch.setenv('PLAUTO_MODEL', 'test-model')
+    import json
+    class Model:
+        def __init__(self, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def post(self, url, **kwargs):
+            snapshot = json.loads(kwargs['json']['input'][0]['content'])['expediente']['selected_document']
+            assert [p['page'] for p in snapshot['pages']] == [6, 7, 8]
+            assert snapshot['partial'] is True
+            return self
+        def raise_for_status(self): pass
+        def json(self): return {'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': 'Revisemos estas páginas.'}]}]}
+    monkeypatch.setattr(mesa, 'httpx', SimpleNamespace(Client=Model, HTTPError=Exception))
+    endpoint = f"/mesa-control/cases/{item['id']}/guide"
+    result = client.post(endpoint, json={'message': 'Ayúdame con estas páginas', 'document_id': 'doc', 'page_start': 6})
+    assert result.status_code == 200, result.text
+    assert client.post(endpoint, json={'message': 'Ayúdame', 'document_id': 'doc', 'page_start': 30}).status_code == 422

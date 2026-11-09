@@ -16,6 +16,7 @@ from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.lib.colors import black, white
 from reportlab.pdfbase.pdfmetrics import stringWidth
+from services import mesa_ocr
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / 'assets/metlife_forms/medicalife-familiar-ig-1-002-v27.pdf'
@@ -88,17 +89,78 @@ def check_official_form():
     return state
 
 
+def form_progress(data):
+    catalog = json.loads((ROOT / 'assets/metlife_forms/catalog.json').read_text())
+    product = data.get('product', '').strip().casefold()
+    entry = next((form for form in catalog['forms'] if form['enabled'] and product in form['product_aliases']), None)
+    if not entry or entry['sha256'] != TEMPLATE_SHA:
+        return {'supported': False, 'pending_fields': [], 'filled_count': 0, 'mapped_count': 0,
+                'next_question': 'Confirma el producto de la cotización. El llenado disponible por ahora corresponde a MédicaLife Familiar.',
+                'next_field': 'product', 'manual_sections': [], 'ready_for_partial_draft': False}
+    pending = [field for field in entry['mapped_fields'] if not str(data.get(field['key'], '')).strip()
+               and not (field['key'] == 'maternal_surname' and data.get('maternal_surname_not_applicable'))]
+    prioritized = sorted(pending, key=lambda field: not field['required_for_draft'])
+    return {'supported': True, 'form_id': entry['id'], 'version': entry['version'],
+            'pending_fields': pending, 'filled_count': len(entry['mapped_fields']) - len(pending),
+            'mapped_count': len(entry['mapped_fields']), 'manual_sections': entry['manual_sections'],
+            'next_question': prioritized[0]['question'] if prioritized else 'Los campos mapeados están capturados. Revisa el borrador y completa las demás secciones antes de enviarlo a mesa.',
+            'next_field': prioritized[0]['key'] if prioritized else None,
+            'ready_for_partial_draft': not any(field['required_for_draft'] for field in pending)}
+
+
+def _has_images(page):
+    def walk(resources, depth=0):
+        if not resources or depth > 4:
+            return False
+        resources = resources.get_object()
+        objects = resources.get('/XObject', {})
+        for reference in objects.get_object().values() if hasattr(objects, 'get_object') else objects.values():
+            obj = reference.get_object()
+            if obj.get('/Subtype') == '/Image':
+                return True
+            if obj.get('/Subtype') == '/Form' and walk(obj.get('/Resources'), depth+1):
+                return True
+        return False
+    return walk(page.get('/Resources'))
+
+
 def extract_candidates(content):
     if len(content) > MAX_READ:
-        raise HTTPException(413, 'La lectura admite PDF de hasta 4 MB.')
-    if not content.startswith(b'%PDF-'):
-        raise HTTPException(422, 'La extracción actual requiere un PDF con texto. Las imágenes o escaneos necesitan captura manual.')
+        raise HTTPException(413, 'La lectura admite PDF, JPG o PNG de hasta 4 MB.')
     try:
-        reader = PdfReader(io.BytesIO(content))
-        if reader.is_encrypted:
-            raise ValueError('encrypted')
-        if len(reader.pages) > 30:
-            raise HTTPException(422, 'La lectura admite hasta 30 páginas. Divide el documento.')
+        native = []
+        needs_ocr = []
+        if content.startswith(b'%PDF-'):
+            reader = PdfReader(io.BytesIO(content))
+            if reader.is_encrypted:
+                raise ValueError('encrypted')
+            if not 0 < len(reader.pages) <= 30:
+                raise HTTPException(422, 'La lectura admite hasta 30 páginas. Divide el documento.')
+            for number, page in enumerate(reader.pages, 1):
+                text = page.extract_text() or ''
+                native.append({'page': number, 'text': text, 'method': 'text', 'lines': []})
+                if not text.strip() or _has_images(page):
+                    needs_ocr.append(number)
+        elif content.startswith(b'\x89PNG\r\n\x1a\n') or content.startswith(b'\xff\xd8\xff'):
+            needs_ocr = [1]
+        else:
+            raise HTTPException(422, 'Solo se pueden leer PDF, JPG y PNG.')
+        pages = native
+        if needs_ocr:
+            recognized = mesa_ocr.read_pages(content)
+            if native and len(recognized) != len(native):
+                raise HTTPException(422, 'La lectura del escaneo no cubrió todas las páginas.')
+            pages = []
+            for item in recognized:
+                original = native[item['page']-1] if native else None
+                if original and item['page'] not in needs_ocr:
+                    pages.append(original)
+                elif original and original['text'].strip():
+                    pages.append({**item, 'text': original['text'] + '\n' + item['text'], 'method': 'text+ocr'})
+                else:
+                    pages.append(item)
+        if sum(len(page['text']) for page in pages) > 100000:
+            raise HTTPException(422, 'El documento contiene demasiado texto. Divide el archivo.')
         patterns = {
             'rfc': r'(?<![A-Z0-9Ñ&])[A-ZÑ&]{4}\d{6}[A-Z0-9]{3}(?![A-Z0-9])',
             'curp': r'(?<![A-Z0-9])[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d(?![A-Z0-9])',
@@ -106,12 +168,8 @@ def extract_candidates(content):
             'phone': r'(?<!\d)(?:\+52[ -]?)?(?:\d{2,3}[ -])?\d{3,4}[ -]\d{4}(?!\d)',
         }
         candidates, seen = [], set()
-        total = 0
-        for number, page in enumerate(reader.pages, start=1):
-            text = page.extract_text() or ''
-            total += len(text)
-            if total > 100000:
-                raise HTTPException(422, 'El documento contiene demasiado texto para esta lectura. Divide el archivo.')
+        for page in pages:
+            text = page['text']
             for field, pattern in patterns.items():
                 for match in re.finditer(pattern, text, flags=re.I):
                     value = match.group().strip()
@@ -119,20 +177,36 @@ def extract_candidates(content):
                         value = value.upper()
                     if field == 'rfc' and value in {'XAXX010101000', 'XEXX010101000'}:
                         continue
-                    key = (field, value)
+                    key = (field, value, page['page'])
                     if key in seen:
                         continue
                     seen.add(key)
-                    candidates.append({'field': field, 'value': value, 'page': number,
+                    candidates.append({'field': field, 'value': value, 'page': page['page'], 'method': page['method'],
                         'excerpt': text[max(0, match.start()-65):match.end()+65].strip()})
-                    if len(candidates) >= 40:
-                        return {'candidates': candidates, 'partial': True, 'notice': 'Mostrando hasta 40 coincidencias. Confirma a quién corresponde cada dato.'}
-        return {'candidates': candidates, 'partial': False,
-                'notice': 'Coincidencias del documento, no atribuidas automáticamente al contratante. Revisa la evidencia antes de confirmar.' if candidates else 'No se encontraron datos reconocibles en el texto. Puede requerir OCR o captura manual; no se leyó visualmente.'}
+        # Only labeled names are extracted; never split an unlabeled full name.
+        name_labels = {'paternal_surname': 'apellido paterno', 'maternal_surname': 'apellido materno', 'given_names': r'nombre(?:\(s\)|s)'}
+        for page in pages:
+            for field, label in name_labels.items():
+                for match in re.finditer(r'(?im)^\s*' + label + r'\s*[:：]\s*([^\n:：]{2,80})$', page['text']):
+                    value = match.group(1).strip()
+                    if not re.fullmatch(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ '-]+", value):
+                        continue
+                    if any(word in value.casefold() for word in ('apellido', 'nombre', 'contratante', 'firma')):
+                        continue
+                    key = (field, value, page['page'])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    candidates.append({'field': field, 'value': value, 'page': page['page'], 'method': page['method'], 'excerpt': match.group().strip()})
+        return {'candidates': candidates[:40], 'partial': len(candidates) > 40,
+                'used_ocr': bool(needs_ocr),
+                'pages': [{'page': p['page'], 'text': p['text'][:6000], 'method': p['method'],
+                           'partial': len(p['text']) > 6000} for p in pages],
+                'notice': 'Lectura local de escaneo. Revisa letras, números y a quién corresponde cada dato antes de confirmar.' if needs_ocr else 'Coincidencias del documento, no atribuidas automáticamente al contratante. Revisa la evidencia antes de confirmar.'}
     except HTTPException:
         raise
     except Exception:
-        raise HTTPException(422, 'No se pudo leer el PDF. Puede estar protegido o dañado.') from None
+        raise HTTPException(422, 'No se pudo leer el archivo. Puede estar protegido o dañado.') from None
 
 
 def generate_form(data, case_id, revision):

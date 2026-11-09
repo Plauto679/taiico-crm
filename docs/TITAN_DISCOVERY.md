@@ -266,3 +266,7 @@ Se implementó la entrada `/mesa-control`, borradores por movimiento, documentos
 ## Piloto privado en producción (2026-11-09)
 
 Mesa habilitada solo para Alberto mediante una identidad configurada en servidor. Se integró la subcarpeta por movimiento bajo la carpeta actual RFC - Nombre, extracción de coincidencias con evidencia/confirmación, borrador parcial editable de la solicitud oficial de MédicaLife Familiar y comprobación diaria de catálogo/huella. Se mantiene revisión humana y Jev separado. Ver `MESA_CONTROL.md` para límites y comprobaciones de despliegue.
+
+## OCR y guía progresiva (2026-11-09)
+
+Se habilitó lectura local de PDF escaneado/JPG/PNG y guía por campos faltantes, con confirmación y evidencia, conservando el piloto exclusivo de Alberto. La plantilla habilitada sigue siendo MédicaLife Familiar: los demás formatos se incorporarán posteriormente, siempre verificando su fuente y versión actual antes de activar su mapeo. El catálogo de preguntas y secciones queda separado del código. Ver `MESA_CONTROL.md`.

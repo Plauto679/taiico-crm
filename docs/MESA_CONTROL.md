@@ -32,9 +32,9 @@ Los registros preparatorios no se insertan automáticamente en el Excel canónic
 
 ## Extracción con evidencia
 
-La lectura de documentos del movimiento admite PDF con texto, hasta 4 MB y 30 páginas. Reconoce posibles RFC, CURP, correos y teléfonos; muestra valor, página y fragmento. No atribuye automáticamente una coincidencia al contratante: puede ser un dato de otra persona del documento.
+La lectura de documentos del movimiento admite PDF con texto, PDF escaneado, JPG y PNG, hasta 4 MB y 30 páginas. Usa OCR local de Apple Vision para imágenes y páginas rasterizadas; muestra el texto por página y marca la procedencia OCR. Reconoce posibles RFC, CURP, correos y teléfonos, además de nombres/apellidos que estén explícitamente etiquetados. No divide un nombre completo sin etiquetas ni atribuye automáticamente una coincidencia al contratante: puede ser un dato de otra persona del documento.
 
-Al confirmar, el backend vuelve a comprobar el valor y su página contra el contenido original, verifica la huella del archivo y registra evidencia, documento, actor y versión. No guarda valores que no coincidan con la evidencia. Los escaneos e imágenes aún requieren captura manual: no hay OCR visual en esta entrega.
+Al confirmar, el backend vuelve a comprobar el valor y su página contra el contenido original, verifica la huella del archivo y registra evidencia, documento, actor y versión. No guarda valores que no coincidan con la evidencia. No se corrigen por suposición letras confundidas con números. El OCR puede equivocarse o no leer una imagen; se conserva la alternativa de captura manual y la confirmación humana sigue siendo obligatoria.
 
 ## Borrador de solicitud oficial
 
@@ -56,11 +56,27 @@ Si cambia el enlace del catálogo o el contenido del PDF, bloquea la generación
 
 - Respaldo consistente SQLite y copia restringida de configuración en `.runtime/deploy-backups/mesa-20261109-004828/`.
 - Migración aplicada desde `20261029_0023` a `20261109_0024`.
-- Frontend activo en `.runtime/releases/mesa-control-20261109`, a través de `.next`; destino previo conservado en el manifiesto de respaldo.
+- Frontend inicial en `.runtime/releases/mesa-control-20261109`, sustituido por `.next-mesa-ocr-20261109-final` a través de `.next`; destino previo conservado en el manifiesto de respaldo.
 - Backend y frontend reiniciados mediante sus LaunchAgents existentes. No se reiniciaron los jobs de renovaciones ni se enviaron mensajes.
 - Suite completa: 488 pruebas y 117 subtests; compilación de producción y TypeScript correctos. Se añadieron comprobaciones posteriores focalizadas de confirmación de extracción.
 - Pruebas de API aisladas cubren acceso exclusivo, permisos, carpeta por RFC, rechazo de cambio de identidad, flujo de revisión, conflictos de versión, procedencia de extracción y propuestas sin escritura automática.
 - PDF con datos ficticios: campos canónicos y apariencias verificados, 15 páginas renderizadas e inspeccionadas, conservación del original y bloqueos por cambio de plantilla/producto/desbordamiento.
 - Interfaz real de producción comprobada en escritorio/móvil sin errores JS. Se abrió el formulario sin crear expedientes de prueba. Se verificó lectura de la raíz existente de Drive y capacidad de crear subcarpetas; no se subieron documentos reales durante estas comprobaciones.
 
-Pendiente para ampliar: OCR de escaneos, más campos y productos, conexión automática al registro operativo de Pendientes e ingreso a aseguradora. No habilitar usuarios adicionales sin instrucción del titular del piloto.
+Pendiente para ampliar: más campos y productos, conexión automática al registro operativo de Pendientes e ingreso a aseguradora. No habilitar usuarios adicionales sin instrucción del titular del piloto.
+
+
+## OCR y guía de campos: actualización del 9 de noviembre
+
+- `backend/ocr/recognize.swift` usa Vision/PDFKit localmente; `backend/ocr/build.sh` genera `.runtime/mesa-ocr/recognize` en el Mac servidor. No se distribuye un binario compilado en Git. Para otro servidor se debe instalar un lector compatible explícitamente; si falta el ejecutable, se devuelve un error claro, sin enviar imágenes a otro proveedor.
+- Worker con dos lecturas simultáneas, timeout de 90 segundos, límite de 4 MB/30 páginas y 100.000 caracteres. Usa un directorio temporal privado que se elimina al terminar, incluso ante error o timeout. No ejecuta comandos provenientes del documento ni registra texto en logs.
+- Los PDFs mixtos conservan texto nativo y lectura OCR de las páginas con imágenes. Se muestran hasta 40 coincidencias y hasta 6.000 caracteres por página en la vista; los recortes se indican. El número de página se mantiene en la evidencia confirmada.
+- «Usar esta lectura con Plauto» permite orientar con el documento seleccionado del mismo movimiento. El OCR es local; únicamente al solicitar esta orientación se envía el texto seleccionado al proveedor de Plauto ya configurado, con `store=false`. No se envían las imágenes. El usuario puede elegir cualquier página inicial; el contexto contiene hasta cinco páginas por consulta, con indicación de lectura parcial. No se consultan otros expedientes ni carpetas completas.
+- Plauto recibe los campos faltantes y formula una pregunta a la vez. Los valores propuestos desde la lectura deben aparecer en las páginas seleccionadas o en el mensaje del usuario, y requieren confirmación antes de guardarse.
+- El panel muestra cuántos campos del **llenado parcial** están resueltos y las secciones que todavía deben completarse en el formato: domicilio/identificación, información laboral, producto/coberturas, pago/familia, salud, privacidad/firmas y beneficiarios. Un indicador completo de campos mapeados nunca declara completa la solicitud.
+- «No tiene apellido materno» requiere confirmación explícita. Se almacena separado del texto y no puede coexistir con un apellido capturado.
+- `backend/assets/metlife_forms/catalog.json` separa producto, versión, huella, campos mapeados, preguntas y guía por sección. Actualmente solo está habilitado el formato ya verificado. Los demás formatos se incorporarán posteriormente con su propia fuente oficial, comprobación de actualidad, mapeo, prueba de llenado y revisión; no se reutilizará un PDF de otro producto.
+
+Despliegue sin migración adicional ni cambio de propietario. Respaldo previo y manifiesto: `.runtime/deploy-backups/mesa-ocr-20261109-011834/`. El control diario volvió a verificar la fuente oficial. Se comprobaron por HTTPS acceso del propietario, OCR disponible, bloqueo de otra cuenta administrativa y de solicitudes anónimas.
+
+Validación: suite completa con 504 pruebas y 117 subtests; pruebas focalizadas adicionales para selección de páginas posteriores. OCR real probado con imagen y PDF escaneado ficticios, confirmación con evidencia, límites, limpieza de temporales, PDF mixto, nombres sin inferencia, guía progresiva y acceso exclusivo. Interfaz de escritorio/móvil probada con fixtures para lectura, confirmación, orientación desde documento y continuación al siguiente campo. Compilación, TypeScript y lint correctos. No se crearon expedientes ni subieron documentos reales de prueba a producción.

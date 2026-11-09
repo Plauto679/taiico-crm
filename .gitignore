@@ -77,3 +77,6 @@ node_modules_viejo/
 
 # build outputs
 /dist/
+
+# Isolated Mesa release builds
+/.next-mesa-ocr-*/
