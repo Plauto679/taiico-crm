@@ -114,3 +114,14 @@ Suite completa: 514 pruebas y 117 subtests; comprobación posterior focalizada d
 Frontend de esta entrega: `.next-mesa-claims-20261109-final`. Pago directo y cirugía programada continúan pendientes; comparten documentos, pero requieren sus propias reglas antes de habilitarse.
 
 Activación verificada en localhost y `https://taiico-crm.com`: propietario permitido, otra cuenta administrativa bloqueada en API/generación/página, anónimo bloqueado; emisión y reembolso con fuentes verificadas y OCR disponible. Respaldo SQLite consistente y manifiesto en `.runtime/deploy-backups/mesa-claims-20261109-015940/`. Se reiniciaron solo backend y frontend; no hubo migración ni cambio del propietario. Comprobación focalizada final: 23 pruebas, incluido el esquema de propuestas de Plauto.
+
+
+## Ampliación autorizada del piloto: Pamela (2026-11-09)
+
+Por instrucción explícita del propietario se habilitó `pamela.alfaro@taiico.com`, única cuenta de Pamela localizada en el directorio del CRM. Se conserva `MESA_OWNER_USERNAME` y se agrega `MESA_OPERATOR_USERNAMES` como lista de usuarios exactos separados por coma. Una invitación solo funciona con permiso de operación existente en Pendientes y rol admitido; sin propietario configurado todo el piloto permanece cerrado. No se concede acceso al resto de administradores ni se amplían roles, promotorías o permisos de Pamela.
+
+Pamela ya tenía rol administrativo y permiso de operación en Pendientes, por lo que puede preparar expedientes, tomar revisión, solicitar correcciones y validar dentro de su alcance actual. Se mantiene la reserva de revisión por administrativo y el historial. Esta autorización reemplaza la limitación previa de propietario único; el resto del flujo permanece igual.
+
+Se respaldó la configuración en `.runtime/deploy-backups/mesa-pamela-20261109-091444/` y se reinició solo el backend. Sin migración ni nuevo build frontend. Verificación pública HTTPS: propietario y Pamela con operación/revisión; otra cuenta administrativa bloqueada; anónimo bloqueado. Dieciocho pruebas focalizadas aprobadas, incluyendo invitación explícita, permiso de operación obligatorio y cierre sin propietario. No se crearon expedientes para probar producción.
+
+Se envió desde el correo de Alberto la explicación del alcance actual, flujo, límites, etapas futuras y solicitud de recomendaciones y visto bueno de Pamela. El envío fue autorizado por el propietario y confirmado como enviado.

@@ -115,7 +115,7 @@ class GuideRequest(BaseModel):
 
 def access(profile, *, write=False):
     if not mesa_available(profile):
-        raise HTTPException(403, 'Mesa de control está disponible únicamente para la cuenta autorizada del piloto.')
+        raise HTTPException(403, 'Mesa de control está disponible únicamente para las cuentas autorizadas del piloto.')
     if profile.role not in {'admin', 'agente'} or not profile.can_read('pendientes'):
         raise HTTPException(403, 'Necesitas acceso a Pendientes.')
     if write and not profile.can_operate('pendientes'):

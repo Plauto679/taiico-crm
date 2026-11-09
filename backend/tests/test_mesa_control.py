@@ -423,3 +423,26 @@ def test_claim_plauto_proposal_preserves_workflow_and_conditions(app, monkeypatc
     assert result.json()['proposal']['data']['workflow']=='reembolso_gmm'
     assert result.json()['proposal']['data']['bank_changed'] is False
     with factory() as db:assert db.get(MesaCase,item['id']).data['bank_changed'] is None
+
+
+def test_invited_operator_access_requires_explicit_account_and_existing_permission(app, monkeypatch):
+    api, client, _ = app
+    from services.mesa_access import mesa_available
+    monkeypatch.setattr(mesa, 'mesa_available', mesa_available)
+    monkeypatch.setenv('MESA_OWNER_USERNAME', 'owner@example.test')
+    monkeypatch.setenv('MESA_OPERATOR_USERNAMES', ' Pamela@example.test ')
+    api.dependency_overrides[current_access_profile] = lambda: profile(role='admin', username='pamela@example.test')
+    config = client.get('/mesa-control/config')
+    assert config.status_code == 200
+    assert config.json()['can_operate'] and config.json()['can_review']
+    assert create(client)[0].status_code == 200
+    api.dependency_overrides[current_access_profile] = lambda: profile(role='admin', username='other@example.test')
+    assert client.get('/mesa-control/cases').status_code == 403
+    assert create(client)[0].status_code == 403
+    api.dependency_overrides[current_access_profile] = lambda: profile(role='admin', username='pamela@example.test', permission='lectura')
+    assert client.get('/mesa-control/config').status_code == 403
+    api.dependency_overrides[current_access_profile] = lambda: profile(role='admin', username='owner@example.test')
+    assert client.get('/mesa-control/config').status_code == 200
+    monkeypatch.delenv('MESA_OWNER_USERNAME')
+    api.dependency_overrides[current_access_profile] = lambda: profile(role='admin', username='pamela@example.test')
+    assert client.get('/mesa-control/config').status_code == 403
