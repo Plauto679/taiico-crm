@@ -4,6 +4,9 @@ export interface PendingHistoryEntry {
 }
 
 export interface PendingRow {
+    mesa_case_id?: string;
+    mesa_folder_id?: string;
+    mesa_revision?: string;
     id: string;
     source_row: number;
     summary: Record<string, string>;
@@ -92,7 +95,7 @@ export interface SiniestrosPendingInput {
     rfc: string;
     poliza: string;
     tipo_tramite: 'Cirugía Progamada' | 'Reembolso' | 'Programación de Medicamentos' | 'Programación de estudios/terapias';
-    tramite: 'Complemento' | 'Reconsideración' | 'Garantías';
+    tramite: 'Inicial' | 'Complemento' | 'Reconsideración' | 'Garantías';
     estatus: 'En Proceso' | 'Pagado' | 'Rechazado' | 'Suspendido';
     promotoria: string;
     rfc_agente: string;
@@ -128,6 +131,7 @@ export interface PendingDeleteResponse {
 }
 
 export interface PendingDocument {
+    kind?: string;
     id: string;
     name: string;
     mimeType?: string;

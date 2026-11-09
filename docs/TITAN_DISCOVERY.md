@@ -277,3 +277,8 @@ Se habilitó lectura local de PDF escaneado/JPG/PNG y guía por campos faltantes
 Se incorporan ambos recorridos a Mesa, con titular/paciente separados, siniestro obligatorio en complemento, requisitos condicionales, XML CFDI y revisión administrativa explícita. Solicitud oficial VG-2-068 VER. 12 con llenado parcial; informe médico CC-1-020 VER. 7 para lectura y completado por cada médico. Ambas fuentes se incorporan al control diario. El piloto sigue exclusivo para el propietario. Se corrige «Formato de cambios» por «Solicitud de reclamación GMM» en el catálogo de Reembolso GMM; las reglas detalladas viven en Mesa.
 
 Discrepancia detectada: estado de cuenta de hasta seis meses en portal y tres en el PDF. El piloto aplica tres meses y muestra la diferencia para revisión de mesa. Ver `MESA_CONTROL.md` para fuentes, límites, pruebas y despliegue. Pago directo/cirugía programada aún no habilitados.
+
+
+### Conexión Mesa → Pendientes (2026-11-09)
+
+Implementada la creación del registro operativo al validar: emisión GMM → Emisión y Servicios; reembolso inicial/complemento → Siniestros. Reutiliza carpeta por RFC y movimiento, conserva revisión administrativa y responsable, ofrece recuperación por UUID ante fallos y acceso directo al registro. Los documentos conservan requisitos y categorías de Mesa con descarga privada desde el CRM. Se mantiene el piloto Alberto/Pamela. No incluye envío a MetLife ni sincronización bidireccional; cambios posteriores requieren seguimiento en Pendientes. Detalle y verificación en `MESA_CONTROL.md`.

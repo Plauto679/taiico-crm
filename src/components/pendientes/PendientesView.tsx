@@ -15,16 +15,19 @@ interface PendientesViewProps {
     emisionServicios: PendingSourceData;
     siniestros: PendingSourceData;
     commercial: CommercialPendingData;
+    initialSource?: 'emision-servicios' | 'siniestros';
+    initialMesaId?: string;
 }
 
-export function PendientesView({ emisionServicios, siniestros, commercial }: PendientesViewProps) {
-    const initialTab = !emisionServicios.load_error
+export function PendientesView({ emisionServicios, siniestros, commercial, initialSource, initialMesaId }: PendientesViewProps) {
+    const initialTab = initialSource || (!emisionServicios.load_error
         ? 'emision-servicios'
         : !siniestros.load_error
             ? 'siniestros'
-            : 'commercial';
+            : 'commercial');
     const [activeTab, setActiveTab] = useState<'emision-servicios' | 'siniestros' | 'commercial'>(initialTab);
-    const [selectedRow, setSelectedRow] = useState<PendingRow | null>(null);
+    const linkedRow = (initialTab === 'siniestros' ? siniestros.rows : emisionServicios.rows).find(row => initialMesaId && row.mesa_case_id === initialMesaId);
+    const [selectedRow, setSelectedRow] = useState<PendingRow | null>(linkedRow || null);
     const [emisionData, setEmisionData] = useState(emisionServicios);
     const [siniestrosData, setSiniestrosData] = useState(siniestros);
     const [showRegisterModal, setShowRegisterModal] = useState(false);
@@ -32,7 +35,7 @@ export function PendientesView({ emisionServicios, siniestros, commercial }: Pen
     const [visibleRows, setVisibleRows] = useState<PendingRow[]>(
         initialTab === 'siniestros' ? siniestros.rows : emisionServicios.rows,
     );
-    const [notice, setNotice] = useState<string | null>(null);
+    const [notice, setNotice] = useState<string | null>(initialMesaId && !linkedRow ? 'El registro vinculado no está disponible en esta vista. Revisa tu alcance o recarga la base.' : null);
     const tabularSource = activeTab === 'commercial' ? 'emision-servicios' : activeTab;
     const activeData = tabularSource === 'emision-servicios' ? emisionData : siniestrosData;
     const canOperate = activeData.access.can_operate;

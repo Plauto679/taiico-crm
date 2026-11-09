@@ -20,7 +20,7 @@ from database import MesaCase, SessionLocal
 from services.auth import AccessProfile
 from services.authorization import current_access_profile
 from services.agent_scope import profile_allows_insurer
-from services import pendientes, plauto, mesa_documents, mesa_ocr, mesa_claims
+from services import pendientes, plauto, mesa_documents, mesa_ocr, mesa_claims, mesa_pending
 from services.mesa_access import mesa_available
 
 router = APIRouter(prefix='/mesa-control', tags=['mesa-control'])
@@ -166,6 +166,7 @@ def serialize(item):
             'history': item.history, 'requirements': requirements(item), 'missing': missing(item),
             'form_progress': mesa_documents.form_progress(item.data),
             'review_checks': mesa_claims.REVIEW_CHECKS if mesa_claims.is_claim(item.data) else {},
+            'pending_registration': mesa_pending.registration(item),
             'created_at': item.created_at.isoformat() + 'Z', 'updated_at': item.updated_at.isoformat() + 'Z'}
 
 
@@ -187,6 +188,31 @@ def reserve(db, item, revision):
 def reopen(item):
     # Any edit invalidates prior validation, even when made by an administrator.
     item.status = 'draft'
+
+
+def register_validated_case(case_id, revision, profile):
+    access(profile, write=True)
+    if not profile.is_admin:
+        raise HTTPException(403, 'El registro operativo corresponde a mesa administrativa.')
+    with SessionLocal() as db:
+        item = find_case(db, case_id, profile)
+        if item.status != 'validated':
+            raise HTTPException(409, 'Valida el expediente antes de registrarlo en Pendientes.')
+        if missing(item):
+            raise HTTPException(422, 'Revisa los requisitos antes de registrar: ' + ', '.join(missing(item)))
+        reserve(db, item, revision)
+        try:
+            result = mesa_pending.register(item, profile)
+        except Exception as exc:
+            # Keep the completed human review, and expose a retryable handoff failure.
+            message = str(exc.detail) if isinstance(exc, HTTPException) else 'No se pudo confirmar el registro en Pendientes. Reintenta; no se pierde la validación de mesa.'
+            event(item, profile, 'pending_registration_failed', comment=message)
+        else:
+            event(item, profile, 'pending_registered', pending=result,
+                  requirements=requirements(item), document_ids=[d['id'] for d in item.documents],
+                  comment='Registro operativo vinculado. No se envió el trámite a MetLife.')
+        db.commit()
+        return serialize(item)
 
 
 @router.get('/config')
@@ -290,7 +316,10 @@ def transition(case_id: str, request: Transition, profile: AccessProfile = Depen
               review_checks=request.review_checks if request.action == 'validate' else [],
               document_ids=[d['id'] for d in item.documents])
         db.commit()
-        return serialize(item)
+        result = serialize(item)
+    if request.action == 'validate':
+        return register_validated_case(case_id, result['revision'], profile)
+    return result
 
 
 def ensure_folder(service, item):
@@ -427,7 +456,7 @@ def guide(case_id: str, request: GuideRequest, profile: AccessProfile = Depends(
         raise HTTPException(429, 'Plauto está ocupado. Inténtalo de nuevo en un momento.')
     try:
         # Read only the explicitly selected document of this case; never full folders or other cases.
-        snapshot = {k: context[k] for k in ('status', 'data', 'requirements', 'missing', 'form_progress')}
+        snapshot = {k: context[k] for k in ('status', 'data', 'requirements', 'missing', 'form_progress', 'pending_registration')}
         snapshot['selected_document'] = selected_document
         allowed_fields = {field['key'] for field in context['form_progress']['pending_fields']} | {'product'}
         snapshot['answering_field'] = request.field_key if request.field_key in allowed_fields else None
@@ -455,6 +484,7 @@ def guide(case_id: str, request: GuideRequest, profile: AccessProfile = Depends(
                 'El informe médico lo completa y firma el médico; ayuda a localizar omisiones en las páginas leídas, sin completar diagnósticos ni validar clínicamente. '
                 'Nunca separes un nombre completo en apellidos y nombres por suposición; pide que el usuario los identifique. '
                 'Explica el siguiente paso usando los controles de la página. La revisión administrativa es obligatoria. '
+                'Validar en Mesa intenta crear el registro operativo en Pendientes; consulta pending_registration para distinguir confirmado de pendiente de reintento. Nunca equivale a envío a MetLife. '
                 'No inventes condiciones de seguros ni requisitos oficiales. Distingue archivo aportado de documento validado.',
                 'tools': [{'type': 'function', 'name': 'propose_case_data', 'description': 'Propone datos del expediente para revisión y confirmación del usuario. No guarda.', 'strict': True,
                     'parameters': {'type': 'object', 'additionalProperties': False, 'properties': {
@@ -502,6 +532,12 @@ def guide(case_id: str, request: GuideRequest, profile: AccessProfile = Depends(
 
 class RevisionRequest(BaseModel):
     revision: int = Field(ge=1)
+
+
+@router.post('/cases/{case_id}/register-pending')
+def retry_pending_registration(case_id: str, request: RevisionRequest,
+                               profile: AccessProfile = Depends(current_access_profile)):
+    return register_validated_case(case_id, request.revision, profile)
 
 
 class ExtractionConfirm(RevisionRequest):

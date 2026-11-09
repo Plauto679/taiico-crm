@@ -28,7 +28,7 @@ Los permisos heredados de Drive siguen siendo los del proceso existente. El acce
 - Plauto orienta y propone datos desde mensajes. La propuesta completa se confirma antes de guardarla. No separa automáticamente nombres y apellidos ni acepta declaraciones médicas por inferencia.
 - Crear el mismo UUID con la misma cuenta es idempotente. Un agente, cuando se habilite, seguirá restringido por RFC, promotoría y permisos.
 
-Los registros preparatorios no se insertan automáticamente en el Excel canónico de Pendientes ni se ingresan a MetLife. Las renovaciones y demás módulos conservan su funcionamiento. Jev no es dependencia ni recibe datos.
+Los borradores no se insertan en Pendientes. La validación administrativa crea o recupera su registro en el Excel canónico, según la entrega de conexión descrita abajo. No se ingresan a MetLife. Las renovaciones y demás módulos conservan su funcionamiento. Jev no es dependencia ni recibe datos.
 
 ## Extracción con evidencia
 
@@ -63,7 +63,7 @@ Si cambia el enlace del catálogo o el contenido del PDF, bloquea la generación
 - PDF con datos ficticios: campos canónicos y apariencias verificados, 15 páginas renderizadas e inspeccionadas, conservación del original y bloqueos por cambio de plantilla/producto/desbordamiento.
 - Interfaz real de producción comprobada en escritorio/móvil sin errores JS. Se abrió el formulario sin crear expedientes de prueba. Se verificó lectura de la raíz existente de Drive y capacidad de crear subcarpetas; no se subieron documentos reales durante estas comprobaciones.
 
-Pendiente para ampliar: más campos y productos, conexión automática al registro operativo de Pendientes e ingreso a aseguradora. No habilitar usuarios adicionales sin instrucción del titular del piloto.
+Pendiente para ampliar: más campos y productos e ingreso a aseguradora. No habilitar usuarios adicionales sin instrucción del titular del piloto.
 
 
 ## OCR y guía de campos: actualización del 9 de noviembre
@@ -125,3 +125,22 @@ Pamela ya tenía rol administrativo y permiso de operación en Pendientes, por l
 Se respaldó la configuración en `.runtime/deploy-backups/mesa-pamela-20261109-091444/` y se reinició solo el backend. Sin migración ni nuevo build frontend. Verificación pública HTTPS: propietario y Pamela con operación/revisión; otra cuenta administrativa bloqueada; anónimo bloqueado. Dieciocho pruebas focalizadas aprobadas, incluyendo invitación explícita, permiso de operación obligatorio y cierre sin propietario. No se crearon expedientes para probar producción.
 
 Se envió desde el correo de Alberto la explicación del alcance actual, flujo, límites, etapas futuras y solicitud de recomendaciones y visto bueno de Pamela. El envío fue autorizado por el propietario y confirmado como enviado.
+
+
+## Conexión operativa con Pendientes (2026-11-09)
+
+«Validar y registrar en Pendientes» conserva primero la revisión humana y después registra emisión GMM en Emisión y Servicios, o reembolso inicial/complemento en Siniestros. Los expedientes ya validados ofrecen «Registrar en Pendientes». Se conserva el piloto de Alberto y Pamela, los permisos actuales de Pendientes y el alcance por promotoría/agente. El responsable inicial es quien validó, incluso si otra persona reintenta el registro.
+
+El enlace conserva la carpeta del movimiento dentro del RFC actual; se comprueban padre, identificador y propiedad privada de Drive. No se crea otra carpeta. Pendientes reconoce los requisitos publicados y tipos documentales de Mesa; las descargas de esos documentos pasan por el CRM con comprobación de permiso, alcance y pertenencia a la carpeta. No se comparten archivos públicamente.
+
+El UUID del expediente se guarda en tres columnas internas del XLSX: ID Mesa, Carpeta Mesa y Revisión Mesa. Se ocultan del resumen y se bloquean en la edición normal. El enlace `/pendientes?source=...&mesa=UUID` resuelve el registro actual por UUID aunque cambie de fila. Si el UUID está duplicado, desapareció después de confirmarse o no coincide su identidad/carpeta, se exige conciliación en vez de recrearlo.
+
+La revisión SQL y la escritura en Drive no son una transacción única. Una falla mantiene la validación y muestra el reintento; una escritura aceptada cuya respuesta se perdió se recupera por UUID. Se utiliza el bloqueo común de escrituras del CRM y se vuelve a leer el XLSX antes de subirlo para detectar cambios externos. Esto no elimina la pequeña ventana de carrera con una edición externa posterior a esa segunda lectura. Antes de cada escritura se guarda un respaldo privado en `.runtime/mesa-pending-backups/` (configurable con `MESA_PENDING_BACKUP_DIR`). El escritor modifica el paquete XML sin regenerar el libro con pandas/openpyxl.
+
+El vínculo es de creación y recuperación: no sobrescribe responsable, estatus ni seguimiento ya modificados en Pendientes. Si después se cambia el expediente, se vuelve a exigir revisión y se informa que los cambios operativos deben revisarse en Pendientes. No hay sincronización bidireccional, envío a MetLife, correos automáticos ni migración masiva de expedientes anteriores.
+
+Pruebas: suite completa de 527 pruebas y 117 subtests, seguida de 29 pruebas focalizadas con tres casos adicionales para responsable original, descargas privadas y requisitos publicados. TypeScript, lint y build de producción aprobados. Navegador con fixtures: revisión obligatoria, fallo y reintento, enlace confirmado, selección por UUID en fila desplazada, documentos por categoría, escritorio y móvil. No se insertaron registros ficticios en producción.
+
+Activación: frontend `.next-mesa-pending-20261109`, sin migración SQL ni cambio de permisos. Respaldo consistente previo y manifiesto en `.runtime/deploy-backups/mesa-pending-20261109-212646/`. Comprobación final focalizada: 79 pruebas aprobadas.
+
+Verificación posterior por localhost y HTTPS público: Alberto y Pamela con operación/revisión, otro administrador bloqueado y anónimo rechazado; ambas fuentes canónicas de Pendientes disponibles. No se modificaron sus filas para verificar el despliegue.

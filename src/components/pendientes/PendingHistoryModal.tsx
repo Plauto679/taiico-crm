@@ -77,7 +77,7 @@ export function PendingHistoryModal({ row, source, onUpdated, onDeleted, onClose
     };
 
     const completedRequirements = useMemo(() => {
-        const names = new Set((documents?.documents || []).map((document) => normalizeDocumentName(document.name)));
+        const names = new Set((documents?.documents || []).map((document) => normalizeDocumentName(document.kind || document.name)));
         return new Set((documents?.required_documents || []).filter((requirement) => names.has(normalizeDocumentName(requirement))));
     }, [documents]);
 

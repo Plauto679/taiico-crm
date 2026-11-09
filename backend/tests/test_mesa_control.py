@@ -117,7 +117,8 @@ def test_required_human_review_and_revision_conflicts(app):
     previous = item
     item = call(client, item, 'validate', comment='Firma y contenido revisados').json()
     assert item['status'] == 'validated'
-    assert item['history'][-1]['reviewed_revision'] == previous['revision']
+    assert next(e for e in reversed(item['history']) if e['action'] == 'validate')['reviewed_revision'] == previous['revision']
+    assert item['pending_registration']['status'] == 'failed'  # Fixture has no Drive folder.
     api.dependency_overrides[current_access_profile] = lambda: profile()
     assert client.patch(f"/mesa-control/cases/{item['id']}", json={'revision': previous['revision'], 'data': item['data']}).status_code == 409
     updated = {**item['data'], 'product': 'Otro producto'}
@@ -351,7 +352,7 @@ def test_reimbursement_requires_conditions_and_explicit_admin_checks(app):
     assert call(client, item, 'validate', comment='Revisado').status_code == 422
     item = call(client, item, 'validate', comment='Cada factura y documento revisado', review_checks=list(mesa_claims.REVIEW_CHECKS)).json()
     assert item['status'] == 'validated'
-    assert item['history'][-1]['review_checks'] == list(mesa_claims.REVIEW_CHECKS)
+    assert next(e for e in reversed(item['history']) if e['action'] == 'validate')['review_checks'] == list(mesa_claims.REVIEW_CHECKS)
     changed = {**item['data'], 'bank_changed': True, 'bank_statement_date': ''}
     response = client.patch(f"/mesa-control/cases/{item['id']}", json={'revision': item['revision'], 'data': changed})
     assert response.status_code == 200
@@ -446,3 +447,36 @@ def test_invited_operator_access_requires_explicit_account_and_existing_permissi
     monkeypatch.delenv('MESA_OWNER_USERNAME')
     api.dependency_overrides[current_access_profile] = lambda: profile(role='admin', username='pamela@example.test')
     assert client.get('/mesa-control/config').status_code == 403
+
+
+def test_validation_keeps_review_when_handoff_fails_then_retries_with_revision_check(app, monkeypatch):
+    api, client, factory = app
+    item = create(client)[0].json()
+    path=f"/mesa-control/cases/{item['id']}/register-pending"
+    assert client.post(path,json={'revision':item['revision']}).status_code==403
+    complete(factory,item)
+    item=call(client,item,'submit').json()
+    api.dependency_overrides[current_access_profile]=lambda:profile(role='admin',username='reviewer')
+    assert client.post(path,json={'revision':item['revision']}).status_code==409
+    item=call(client,item,'claim').json()
+    calls=[]
+    def register(case, actor):
+        assert case.status=='validated' and actor.username=='reviewer'
+        calls.append(case.id)
+        if len(calls)==1:raise TimeoutError('uncertain upload')
+        return {'source':'emision-servicios','source_row':8,'case_id':case.id,'source_revision':'5','url':f'/pendientes?source=emision-servicios&mesa={case.id}'}
+    monkeypatch.setattr(mesa.mesa_pending,'register',register)
+    item=call(client,item,'validate',comment='Revisado').json()
+    assert item['status']=='validated' and item['pending_registration']['status']=='failed'
+    assert any(e['action']=='validate' for e in item['history'])
+    old_revision=item['revision']
+    response=client.post(path,json={'revision':old_revision})
+    assert response.status_code==200
+    item=response.json()
+    assert item['pending_registration']['status']=='registered' and len(calls)==2
+    assert client.post(path,json={'revision':old_revision}).status_code==409
+    assert len(calls)==2
+    changed=client.patch(f"/mesa-control/cases/{item['id']}",json={'revision':item['revision'],'data':{**item['data'],'notes':'Corrección posterior'}}).json()
+    assert changed['status']=='draft' and changed['pending_registration']['changed_after_registration']
+    assert client.post(path,json={'revision':changed['revision']}).status_code==409
+    assert len(calls)==2

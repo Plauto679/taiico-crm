@@ -22,13 +22,14 @@ from services.performance import timed
 from services.data_cache import data_cache
 from dotenv import load_dotenv
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import Response
 from google.auth import default
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func
 
-from database import Client, SessionLocal
+from database import Client, MesaCase, SessionLocal
 from services.auth import AccessProfile, PROMOTORIAS, list_access_profiles
 from services.authorization import current_access_profile, require_module_access
 from services.clientes import _assert_unique_rfc, _ensure_default_owner
@@ -183,7 +184,7 @@ class SiniestrosCreateRequest(BaseModel):
         "Programación de Medicamentos",
         "Programación de estudios/terapias",
     ]
-    tramite: Literal["Complemento", "Reconsideración", "Garantías"]
+    tramite: Literal["Inicial", "Complemento", "Reconsideración", "Garantías"]
     estatus: Literal["En Proceso", "Pagado", "Rechazado", "Suspendido"] = "En Proceso"
     promotoria: str = Field(min_length=1)
     rfc_agente: str = Field(min_length=1)
@@ -214,6 +215,9 @@ class PendingSource:
     sheet_name: str
     core_column_count: int
     extra_core_headers: tuple[str, ...] = ()
+
+
+MESA_HEADERS = {"ID Mesa": "mesa_case_id", "Carpeta Mesa": "mesa_folder_id", "Revisión Mesa": "mesa_revision"}
 
 
 SOURCES = {
@@ -316,7 +320,7 @@ def _core_header_layout(source: PendingSource, headers: list[str]) -> list[tuple
     core_column_count = _core_count_for_headers(source, headers)
     layout = list(enumerate(headers[:core_column_count]))
     included_indexes = {index for index, _ in layout}
-    for configured_header in source.extra_core_headers:
+    for configured_header in (*source.extra_core_headers, *MESA_HEADERS):
         normalized = _normalized_header(configured_header)
         match = next(
             (
@@ -755,8 +759,14 @@ def parse_pending_workbook(
         ]
         latest_update = history[-1] if history else {"date": "", "update": ""}
         summary = dict(zip(core_headers, core_values))
+        mesa_metadata = {}
+        for header in tuple(summary):
+            canonical = next((key for key in MESA_HEADERS if _normalized_header(key) == _normalized_header(header)), None)
+            if canonical:
+                mesa_metadata[MESA_HEADERS[canonical]] = summary.pop(header)
         summary.update(_derived_day_values(summary, today))
         rows.append({
+            **mesa_metadata,
             "id": f"{source.key}:{index}",
             "source_row": index,
             "summary": summary,
@@ -768,7 +778,7 @@ def parse_pending_workbook(
         "source": source.key,
         "title": source.title,
         "sheet_name": source.sheet_name,
-        "core_headers": core_headers,
+        "core_headers": [header for header in core_headers if _normalized_header(header) not in {_normalized_header(h) for h in MESA_HEADERS}],
         "_core_header_columns": {
             header: index + 1 for index, header in core_layout
         },
@@ -1282,7 +1292,7 @@ def _list_child_folders(service, parent_id: str) -> list[dict]:
                 f"'{parent_id}' in parents and "
                 f"mimeType = '{FOLDER_MIME_TYPE}' and trashed = false"
             ),
-            fields="nextPageToken,files(id,name,webViewLink,createdTime,modifiedTime)",
+            fields="nextPageToken,files(id,name,webViewLink,createdTime,modifiedTime,appProperties)",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
             pageSize=1000,
@@ -1342,6 +1352,15 @@ def _decorate_rows_with_folders(result: dict, service) -> dict:
                 folders.sort(key=lambda folder: clean_cell(folder.get("createdTime")))
             pending_folders_by_client[rfc] = grouped
         folders = pending_folders_by_client.get(rfc, {})
+        if row.get('mesa_case_id'):
+            matches = [folder for group in folders.values() for folder in group
+                       if folder.get('id') == row.get('mesa_folder_id')
+                       and folder.get('appProperties', {}).get('taiico_mesa_id') == row['mesa_case_id']]
+            folder = matches[0] if len(matches) == 1 else None
+            row['folder_name'] = clean_cell(folder.get('name')) if folder else ''
+            row['folder_id'] = folder.get('id') if folder else None
+            row['folder_url'] = (folder.get('webViewLink') or f"https://drive.google.com/drive/folders/{folder['id']}") if folder else None
+            continue
         matches = folders.get(folder_name.casefold(), []) if folder_name else []
         folder = matches.pop(0) if matches else None
         # Before timestamps were added, identical pending types shared one folder.
@@ -1359,6 +1378,11 @@ def _decorate_rows_with_folders(result: dict, service) -> dict:
 
 
 def _create_folder_for_row(service, row: dict) -> dict:
+    if row.get('mesa_case_id'):
+        _decorate_rows_with_folders({'rows': [row]}, service)
+        if not row.get('folder_id'):
+            raise HTTPException(409, 'La carpeta vinculada desde Mesa no está disponible. Revisa el vínculo; no se creará otra carpeta.')
+        return row
     folder_name = _folder_name_for_row(row)
     client_folder = _client_folder_for_row(service, row, create=True)
     assert client_folder is not None
@@ -1377,7 +1401,22 @@ def _create_folder_for_row(service, row: dict) -> dict:
     return row
 
 
+def _mesa_document_context(row):
+    if not row.get('mesa_case_id'):
+        return None
+    with SessionLocal() as db:
+        case = db.get(MesaCase, row['mesa_case_id'])
+        if not case or case.folder_id != row.get('mesa_folder_id') or case.data.get('rfc') != _rfc_from_row(row):
+            return None
+        published = next((event for event in case.history if event['action'] == 'pending_registered'), None)
+        return {'requirements': published.get('requirements', []) if published else [],
+                'kinds': {document['drive_id']: document['kind'] for document in case.documents}}
+
+
 def _requirements_for_row(row: dict, source_key: str = "") -> list[str]:
+    mesa = _mesa_document_context(row)
+    if mesa is not None:
+        return mesa['requirements']
     if source_key == "siniestros":
         return list(SINIESTROS_DOCUMENT_REQUIREMENTS)
     summary = row.get("summary", {})
@@ -1476,6 +1515,8 @@ def update_pending_record(
     history_values: dict[str, str] | None = None,
     history_date: date | None = None,
 ) -> bytes:
+    if any(_normalized_header(key) in {_normalized_header(h) for h in MESA_HEADERS} for key in values):
+        raise ValueError('Los vínculos de Mesa son internos y no se pueden editar.')
     parsed = parse_pending_workbook(workbook, source)
     current_row = next(
         (row for row in parsed["rows"] if row["source_row"] == source_row),
@@ -2677,6 +2718,8 @@ def update_pending(
     if not source:
         raise HTTPException(status_code=404, detail="Fuente de pendientes no encontrada")
     values = {clean_cell(key): clean_cell(value) for key, value in request.values.items()}
+    if any(_normalized_header(key) in {_normalized_header(h) for h in MESA_HEADERS} for key in values):
+        raise HTTPException(422, 'Los vínculos de Mesa no se pueden editar desde Pendientes.')
     if "RFC" in values:
         values["RFC"] = values["RFC"].upper()
     if source.key == "emision-servicios":
@@ -2688,6 +2731,8 @@ def update_pending(
             service = build_pending_drive_service()
             _, original_row = _get_pending_row(source_key, source_row, service)
             _ensure_row_access(original_row, profile, operation=True)
+            if original_row.get('mesa_case_id') and 'RFC' in values and values['RFC'] != _rfc_from_row(original_row):
+                raise HTTPException(409, 'El RFC está vinculado a un movimiento de Mesa. Crea otro movimiento para otra identidad.')
             merged_summary = {**original_row["summary"], **values}
             if "Promotoria" in values or "RFC Agente" in values:
                 assigned_promotoria = _assigned_promotoria(
@@ -2905,16 +2950,52 @@ def get_pending_documents(
             orderBy="folder,name",
             pageSize=1000,
         ).execute()
+        mesa = _mesa_document_context(row)
+        documents = response.get('files', [])
+        if mesa:
+            for document in documents:
+                if document['id'] in mesa['kinds']:
+                    document['kind'] = mesa['kinds'][document['id']]
+                    document['webViewLink'] = f"/api/pendientes/{source_key}/{source_row}/documents/{document['id']}"
         return {
             "row": row,
             "folder_missing": False,
             "required_documents": _requirements_for_row(row, source_key),
-            "documents": response.get("files", []),
+            "documents": documents,
         }
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"No fue posible consultar el expediente: {exc}") from exc
+
+
+@router.get('/{source_key}/{source_row}/documents/{document_id}')
+def download_pending_document(source_key: str, source_row: int, document_id: str,
+                              profile: AccessProfile = Depends(current_access_profile)):
+    from urllib.parse import quote
+    if not profile.can_read('pendientes'):
+        raise HTTPException(403, 'Tu usuario no tiene acceso a Pendientes.')
+    service = build_pending_drive_service()
+    _, row = _get_pending_row(source_key, source_row, service)
+    _ensure_row_access(row, profile)
+    if not row.get('folder_id'):
+        raise HTTPException(404, 'La carpeta no está disponible.')
+    try:
+        metadata = service.files().get(fileId=document_id, fields='id,name,parents,trashed,size', supportsAllDrives=True).execute()
+        if metadata.get('trashed') or row['folder_id'] not in metadata.get('parents', []):
+            raise HTTPException(404, 'El documento no pertenece a este movimiento.')
+        if int(metadata.get('size', 0)) > MAX_DOCUMENT_BYTES:
+            raise HTTPException(413, 'El documento supera el límite de descarga.')
+        content = service.files().get_media(fileId=document_id, supportsAllDrives=True).execute()
+        if len(content) > MAX_DOCUMENT_BYTES:
+            raise HTTPException(413, 'El documento supera el límite de descarga.')
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, 'No fue posible descargar el documento. Intenta nuevamente.') from exc
+    return Response(content, media_type='application/octet-stream', headers={
+        'Content-Disposition': "attachment; filename*=UTF-8''" + quote(metadata.get('name', 'documento'), safe=''),
+        'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
 @router.post("/{source_key}/{source_row}/folder")
