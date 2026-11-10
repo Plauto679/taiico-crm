@@ -144,3 +144,11 @@ Pruebas: suite completa de 527 pruebas y 117 subtests, seguida de 29 pruebas foc
 Activación: frontend `.next-mesa-pending-20261109`, sin migración SQL ni cambio de permisos. Respaldo consistente previo y manifiesto en `.runtime/deploy-backups/mesa-pending-20261109-212646/`. Comprobación final focalizada: 79 pruebas aprobadas.
 
 Verificación posterior por localhost y HTTPS público: Alberto y Pamela con operación/revisión, otro administrador bloqueado y anónimo rechazado; ambas fuentes canónicas de Pendientes disponibles. No se modificaron sus filas para verificar el despliegue.
+
+## Ampliación autorizada del piloto: Flor (2026-11-10)
+
+Por instrucción del propietario se agregó `florgabriela.flores@taiico.com` a `MESA_OPERATOR_USERNAMES`, conservando a Pamela y al propietario. Es la única cuenta de Flor localizada en el directorio y ya tenía rol administrativo y operación en Pendientes. No se modificaron sus promotorías, roles ni permisos de otros módulos.
+
+Respaldo privado previo y manifiesto: `.runtime/deploy-backups/mesa-flor-20261110-104435/`. Solo se reinició backend; sin cambios de código, migración ni build frontend. Se verificó por HTTPS operación/revisión de Alberto, Pamela y Flor, sesión y página de Flor, bloqueo de otro administrador y rechazo anónimo.
+
+Se envió a Flor desde `alberto.alfaro@taiico.com` la explicación original de Pamela, adaptada con el registro operativo en Pendientes, recuperación sin duplicados, misma carpeta y responsable inicial; distingue seguimiento operativo de sincronización bidireccional y envío a MetLife. Incluye solicitud de recomendaciones y conserva el papel de Pamela en el visto bueno final. Gmail confirmó SENT, mensaje `1a1c4d8e431dfee3`.
