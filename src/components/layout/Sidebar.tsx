@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, Menu, X } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, LogOut, KeyRound, Menu, X, BookOpen } from 'lucide-react';
 import { MODULE_CATALOG, canShowModule } from '@/lib/module-catalog';
 import { SmartLink } from '@/components/navigation/SmartLink';
 import { IdleModulePrefetch } from '@/components/navigation/IdleModulePrefetch';
@@ -152,6 +152,7 @@ export function Sidebar() {
                 <button type="button" onClick={() => setMobileOpen(false)} className="absolute right-3 top-3 rounded-full p-2 text-slate-500 hover:bg-slate-100 md:hidden" aria-label="Cerrar menú"><X className="h-5 w-5" /></button>
             </div>
             <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-2 py-4 [scrollbar-gutter:stable]">
+                <SmartLink href="/ayuda" onClick={() => setMobileOpen(false)} title="Ayuda" aria-current={pathname === '/ayuda' ? 'page' : undefined} className={`flex items-center rounded-md px-2 py-2.5 text-sm font-semibold text-sky-800 hover:bg-sky-50 ${collapsed ? 'md:justify-center' : ''} ${pathname === '/ayuda' ? 'bg-sky-50' : ''}`}><BookOpen className={`h-5 w-5 shrink-0 ${collapsed ? '' : 'mr-3'}`} /><span className={collapsed ? 'md:hidden' : ''}>Ayuda</span></SmartLink>
                 {NAV_ITEMS.filter((item) => canShowModule(item.module, permissions) && (item.href !== '/mesa-control' || mesaAccess)).map((item) => (
                     <SmartLink
                         key={item.name}

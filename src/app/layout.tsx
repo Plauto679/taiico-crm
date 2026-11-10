@@ -1,3 +1,4 @@
+import { ModuleHelp } from '@/components/ayuda/ModuleHelp';
 import { Plauto } from "@/components/plauto/Plauto";
 import type { Metadata } from "next";
 import "./globals.css";
@@ -58,7 +59,8 @@ export default function RootLayout({
           <Plauto />
           <Sidebar />
           <main className="min-w-0 flex-1 flex flex-col overflow-hidden bg-[#34587C]">
-            {children}
+            <ModuleHelp />
+            <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
           </main>
         </div>
       </body>
