@@ -162,7 +162,7 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                     insured_name: insuredName,
                     rfc,
                     poliza,
-                    tipo_tramite: tipoTramite as 'Cirugía Progamada' | 'Reembolso' | 'Programación de Medicamentos' | 'Programación de estudios/terapias',
+                    tipo_tramite: tipoTramite as 'Cirugía Progamada' | 'Cirugía Programada' | 'Pago Directo' | 'Reembolso' | 'Programación de Medicamentos' | 'Programación de estudios/terapias',
                     tramite: tramite as 'Inicial' | 'Complemento' | 'Reconsideración' | 'Garantías',
                     estatus: estatusSiniestro as 'En Proceso' | 'Pagado' | 'Rechazado' | 'Suspendido',
                     promotoria,
@@ -348,7 +348,7 @@ export function RegisterPendingModal({ source, onClose, onCreated, access }: Reg
                                 <>
                                     <TextField label="Asegurado" value={insuredName} onChange={setInsuredName} required={false} />
                                     <TextField label="Póliza" value={poliza} onChange={setPoliza} />
-                                    <SelectField label="Tipo de Trámite" value={tipoTramite} onChange={setTipoTramite} options={['Cirugía Progamada', 'Reembolso', 'Programación de Medicamentos', 'Programación de estudios/terapias']} />
+                                    <SelectField label="Tipo de Trámite" value={tipoTramite} onChange={setTipoTramite} options={['Cirugía Progamada', 'Cirugía Programada', 'Pago Directo', 'Reembolso', 'Programación de Medicamentos', 'Programación de estudios/terapias']} />
                                     <SelectField label="Trámite" value={tramite} onChange={setTramite} options={['Inicial', 'Complemento', 'Reconsideración', 'Garantías']} />
                                     <SelectField label="Estatus" value={estatusSiniestro} onChange={setEstatusSiniestro} options={['En Proceso', 'Pagado', 'Rechazado', 'Suspendido']} />
                                 </>

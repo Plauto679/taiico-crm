@@ -94,7 +94,7 @@ export interface SiniestrosPendingInput {
     insured_name: string;
     rfc: string;
     poliza: string;
-    tipo_tramite: 'Cirugía Progamada' | 'Reembolso' | 'Programación de Medicamentos' | 'Programación de estudios/terapias';
+    tipo_tramite: 'Cirugía Progamada' | 'Cirugía Programada' | 'Pago Directo' | 'Reembolso' | 'Programación de Medicamentos' | 'Programación de estudios/terapias';
     tramite: 'Inicial' | 'Complemento' | 'Reconsideración' | 'Garantías';
     estatus: 'En Proceso' | 'Pagado' | 'Rechazado' | 'Suspendido';
     promotoria: string;

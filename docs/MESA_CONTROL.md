@@ -152,3 +152,33 @@ Por instrucción del propietario se agregó `florgabriela.flores@taiico.com` a `
 Respaldo privado previo y manifiesto: `.runtime/deploy-backups/mesa-flor-20261110-104435/`. Solo se reinició backend; sin cambios de código, migración ni build frontend. Se verificó por HTTPS operación/revisión de Alberto, Pamela y Flor, sesión y página de Flor, bloqueo de otro administrador y rechazo anónimo.
 
 Se envió a Flor desde `alberto.alfaro@taiico.com` la explicación original de Pamela, adaptada con el registro operativo en Pendientes, recuperación sin duplicados, misma carpeta y responsable inicial; distingue seguimiento operativo de sincronización bidireccional y envío a MetLife. Incluye solicitud de recomendaciones y conserva el papel de Pamela en el visto bueno final. Gmail confirmó SENT, mensaje `1a1c4d8e431dfee3`.
+
+## Cirugía programada y pago directo (2026-11-15)
+
+Se incorporan `cirugia_programada_gmm` y `pago_directo_gmm`, conservando emisión y reembolso. Cada movimiento mantiene su tipo después de crearse. El acceso sigue limitado al propietario y operadores invitados (Pamela y Flor); no se amplían permisos ni se crean registros de prueba en producción.
+
+Fuentes oficiales revisadas el 15 de noviembre de 2026:
+- Cirugía: https://www.metlife.com.mx/tramites-y-servicios/tramites-de-seguros-de-gastos-medicos/cirugia-programada/
+- Pago directo: https://www.metlife.com.mx/tramites-y-servicios/tramites-de-seguros-de-gastos-medicos/ingreso-hospitalitario/
+
+### Preparación y revisión
+
+La cirugía captura hospital y fecha prevista; avisa cuando la anticipación es menor a los diez días indicados por el portal, sin inventar un plazo de autorización. Una fecha ya pasada debe revisarse antes de remitir a mesa. El piloto conserva identificación en complementos porque el checklist del PDF la pide aunque el portal la limita a iniciales; esta diferencia se muestra y requiere contraste administrativo.
+
+Pago directo distingue ingreso, estancia y egreso. Incluye credencial, expediente clínico, reporte del hospital, actas del Ministerio Público cuando corresponden y, para egreso, nota de alta y cuenta hospitalaria. El consentimiento se exige salvo carta pase de cirugía confirmada y aportada. La pantalla aclara que Mesa no reporta el ingreso y que no se debe esperar a completar el expediente para buscar atención de emergencia.
+
+Ambos flujos separan titular y paciente, conservan las condiciones sin responder como desconocidas y contemplan menores sin CURP, estudios, histopatología, firma digital, requerimientos previos y presupuesto/aceptación de honorarios de médicos fuera de convenio. No heredan la exigencia de facturas y cuenta bancaria del titular propia de reembolso. Son reglas de preparación documental, no un dictamen de cobertura.
+
+La revisión exige comprobaciones distintas de reembolso: identidad/producto, informes, condiciones de cobertura, honorarios y firma/consentimiento, además de anticipación o proceso hospitalario. Una respuesta negativa sobre red/pago/estancia no se interpreta automáticamente como rechazo o aceptación; el administrativo debe resolver/documentar la situación según la póliza. El portal de ingreso menciona MédicaLife Primordial y matiza la estancia superior a 24 horas según condiciones: se informa para no generalizar una regla a todos los productos. El informe médico se revisa con antigüedad máxima de seis meses y debe actualizarse también cuando cambie el médico, tratamiento o padecimiento, según el propio formato.
+
+### Formatos y registro operativo
+
+Se reutiliza la solicitud VG-2-068 VER. 12 verificada, marcando únicamente `PROGRAMACION` o `INGRRESO` según el movimiento; se conservan páginas, campos editables y apariencias. No se completan diagnósticos, importes, consentimiento ni firmas. Consentimiento informado VG-2-142 Ver.1, dos páginas: `https://www.metlife.com.mx/content/dam/metlifecom/mx/pdfs/cirugia-programada/consentimiento-informado-vg-2-142-ver-1.pdf`; SHA-256 `2acb9b1f9ceae9cc3822f2bad19d2fa2956d497614f76ad0616e51e273f89042`. Se enlaza para completar y firmar externamente; no se autocompleta.
+
+El informe médico de pago directo se enlaza desde el portal con nombre `CC-1-020-VER5.pdf`, pero el contenido verificado es CC-1-020 VER.7 y coincide con el hash ya registrado del informe utilizado en cirugía. Se conserva la URL específica del trámite y se comprueba su contenido. El job diario verifica solicitud, informe y consentimiento por cada portal, con estados independientes; un error en un trámite no habilita su generación usando la verificación de otro.
+
+Al validar se registra en Siniestros como «Cirugía Programada» o «Pago Directo», con la misma carpeta por RFC, responsable inicial y recuperación por UUID. La variante histórica «Cirugía Progamada» se sigue aceptando para compatibilidad; los nuevos movimientos de Mesa usan la escritura correcta. El registro no fija fecha de ingreso a aseguradora ni envía trámites. La ayuda del CRM y el contexto de Plauto incluyen ambos recorridos.
+
+Validación de esta entrega: 558 pruebas y 121 subtests en la suite completa; 41 pruebas focalizadas posteriores al ajuste final de revisión y fecha del registro. TypeScript, lint y build aprobados. PDFs ficticios comprobados en valores canónicos y widgets, y renderizados (seis páginas, modalidad correcta, sin precargar consentimientos). Navegador: ambos recorridos, documentos condicionales, borrador que no satisface firma, propuesta Plauto, revisión obligatoria, vínculo a Siniestros y móvil sin desbordamiento.
+
+Activado en `.next-mesa-hospital-20261115-final`, sin migración ni ampliación de acceso. Respaldo consistente SQLite y manifiesto en `.runtime/deploy-backups/mesa-hospital-20261115-081059/`. Reinicio solo backend/frontend. Comprobación diaria ejecutada satisfactoriamente para emisión, reembolso, cirugía y pago directo. Verificación pública: las tres cuentas del piloto, bloqueo de otro administrador y anónimo, opciones de nuevo trámite y ayuda actualizada. No se crearon expedientes, documentos ni filas operativas de prueba en producción.

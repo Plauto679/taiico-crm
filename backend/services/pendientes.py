@@ -180,6 +180,8 @@ class SiniestrosCreateRequest(BaseModel):
     poliza: str = Field(min_length=1)
     tipo_tramite: Literal[
         "Cirugía Progamada",
+        "Cirugía Programada",
+        "Pago Directo",
         "Reembolso",
         "Programación de Medicamentos",
         "Programación de estudios/terapias",

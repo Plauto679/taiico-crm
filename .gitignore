@@ -89,3 +89,5 @@ node_modules_viejo/
 # Local Next.js build variants and active build symlink
 /.next
 /.next-*/
+
+/.next-mesa-hospital-*/

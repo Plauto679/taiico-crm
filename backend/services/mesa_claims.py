@@ -14,6 +14,7 @@ from urllib.parse import urljoin
 import httpx
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator
+from services import mesa_hospital as hospital
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import NameObject, ArrayObject, FloatObject, TextStringObject
 from reportlab.pdfgen.canvas import Canvas
@@ -39,7 +40,19 @@ REVIEW_CHECKS = {
 
 
 class ClaimFields(BaseModel):
-    workflow: Literal['emision_gmm', 'reembolso_gmm'] = 'emision_gmm'
+    workflow: Literal['emision_gmm', 'reembolso_gmm', 'cirugia_programada_gmm', 'pago_directo_gmm'] = 'emision_gmm'
+    hospital_name: str = Field(default='', max_length=180)
+    event_date: str = Field(default='', max_length=10)
+    admission_date: str = Field(default='', max_length=10)
+    hospital_phase: Literal['', 'admission', 'stay', 'discharge'] = ''
+    hospital_in_network: bool | None = None
+    doctors_in_network: bool | None = None
+    doctors_accept_tariff: bool | None = None
+    policy_current_paid: bool | None = None
+    has_surgery_pass: bool | None = None
+    hospital_reported: bool | None = None
+    stay_over_24h: bool | None = None
+    mp_required: bool | None = None
     claim_stage: Literal['', 'initial', 'complement'] = ''
     policy_number: str = Field(default='', max_length=40)
     contractor_name: str = Field(default='', max_length=150)
@@ -68,11 +81,20 @@ class ClaimFields(BaseModel):
     def trim_claim(cls, value):
         return value.strip() if isinstance(value, str) else value
 
-    @field_validator('medical_report_date', 'bank_statement_date', 'address_proof_date')
+    @field_validator('medical_report_date', 'bank_statement_date', 'address_proof_date', 'admission_date')
     @classmethod
     def valid_date(cls, value):
         if value and (not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value) or date.fromisoformat(value) > date.today()):
             raise ValueError('Captura una fecha real, no futura, en formato AAAA-MM-DD.')
+        return value
+
+    @field_validator('event_date')
+    @classmethod
+    def valid_event_date(cls, value):
+        if value:
+            if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+                raise ValueError('Captura la fecha del evento en formato AAAA-MM-DD.')
+            date.fromisoformat(value)
         return value
 
     @field_validator('patient_curp')
@@ -85,7 +107,15 @@ class ClaimFields(BaseModel):
 
 
 def is_claim(data):
-    return data.get('workflow') == 'reembolso_gmm'
+    return data.get('workflow') == 'reembolso_gmm' or hospital.is_hospital(data)
+
+
+def review_checks(data):
+    return hospital.review_checks(data) if hospital.is_hospital(data) else REVIEW_CHECKS
+
+
+def workflow_label(data):
+    return hospital.WORKFLOWS.get(data.get('workflow'), 'Reembolso GMM' if is_claim(data) else 'Emisión GMM')
 
 
 def bank_needed(data):
@@ -94,6 +124,8 @@ def bank_needed(data):
 
 def questions(data):
     """Unknown is distinct from no; unanswered conditions cannot suppress requirements."""
+    if hospital.is_hospital(data):
+        return hospital.questions(data)
     fields = [
         ('claim_stage', 'Tipo de reembolso', '¿Es la primera reclamación de este padecimiento o un complemento de un siniestro existente?'),
         ('policy_number', 'Número de póliza', '¿Cuál es el número de póliza? Consúltalo en la carátula.'),
@@ -127,6 +159,8 @@ def questions(data):
 
 
 def requirements(data):
+    if hospital.is_hospital(data):
+        return hospital.requirements(data)
     result = ['Solicitud de reclamación GMM firmada', 'Informe médico firmado por cada médico tratante',
               'Facturas PDF', 'Facturas XML', 'Comprobante de domicilio']
     if data.get('claim_stage') == 'initial':
@@ -171,6 +205,8 @@ def _older_than(value, months):
 
 
 def missing_data(data):
+    if hospital.is_hospital(data):
+        return hospital.missing_data(data)
     result = [f['label'] for f in questions(data) if unanswered(data, f['key'])]
     if data.get('claim_stage') == 'complement' and data.get('medical_report_date') and _older_than(data['medical_report_date'], 6):
         result.append('Actualizar informe médico: supera seis meses')
@@ -206,31 +242,36 @@ def progress(data):
             'manual_sections': [
                 {'id': 'identity', 'title': 'Identidad y domicilio', 'pages': '1', 'question': 'Revisa titular y paciente por separado; completa nacimiento, nacionalidad, ocupación, domicilio y certificado/parentesco.'},
                 {'id': 'clinical', 'title': 'Antecedentes y relato del asegurado', 'pages': '2–3', 'question': 'El asegurado debe confirmar antecedentes, otras pólizas, motivo, fechas y relato. No deduzcas respuestas clínicas ni declaraciones.'},
-                {'id': 'invoices', 'title': 'Relación de facturas y pago', 'pages': '3', 'question': 'Relaciona cada factura PDF con su XML, revisa RFC del titular, conceptos, importes y suma. Confirma forma de pago y CLABE directamente con el titular; no se autocompletan.'},
+                {'id': 'invoices', 'title': 'Relación de facturas y pago', 'pages': '3', 'question': ('Honorarios y gastos deben revisarse según el trámite; no se autocompleta información bancaria del titular.' if hospital.is_hospital(data) else 'Relaciona cada factura PDF con su XML, revisa RFC del titular, conceptos, importes y suma. Confirma forma de pago y CLABE directamente con el titular; no se autocompletan.')},
                 {'id': 'sign', 'title': 'Declaraciones, privacidad y firma', 'pages': '4–6', 'question': 'El titular debe leer y completar las declaraciones y firmar por un medio autorizado. No se marcan consentimientos ni firmas automáticamente.'},
                 {'id': 'medical', 'title': 'Informe médico (documento separado)', 'pages': '1–4', 'question': 'Cada médico tratante debe completar antecedentes, diagnóstico, tratamiento, fechas, datos profesionales y firma. Usa «Leer documento o escaneo» para localizar omisiones; la revisión clínica corresponde al médico y a mesa.'},
             ]}
 
 
-def state_path():
+def state_path(workflow='reembolso_gmm'):
     from services.mesa_documents import status_path
-    return status_path().with_name(status_path().stem + '-claims.json')
+    suffix = '-claims' if workflow == 'reembolso_gmm' else '-' + workflow
+    return status_path().with_name(status_path().stem + suffix + '.json')
 
 
-def status():
+def status(workflow='reembolso_gmm'):
     try:
-        state = json.loads(state_path().read_text())
+        state = json.loads(state_path(workflow).read_text())
         checked = datetime.fromisoformat(state.get('checked_at', ''))
         stale = (datetime.now(timezone.utc)-checked).total_seconds() > 7*86400
     except (ValueError, TypeError, OSError):
         state, stale = {}, True
     return {**state, 'stale': stale, 'can_generate': state.get('status') == 'verified' and not stale,
-            'version': FORMS['claim']['version'], 'source_url': CLAIM_URL, 'medical_url': MEDICAL_URL,
-            'medical_version': FORMS['medical']['version'], 'source_page': SOURCE_PAGE,
-            'notice': state.get('notice', 'Falta verificar las fuentes oficiales de reembolso.')}
+            'version': FORMS['claim']['version'], 'source_url': CLAIM_URL, 'medical_url': hospital.DIRECT_MEDICAL_URL if workflow == 'pago_directo_gmm' else MEDICAL_URL,
+            'medical_version': FORMS['medical']['version'], 'source_page': source_page(workflow), 'consent_url': hospital.CONSENT_URL if workflow in hospital.WORKFLOWS else None,
+            'notice': state.get('notice', 'Falta verificar las fuentes oficiales del trámite.')}
 
 
-def check_sources():
+def source_page(workflow):
+    return {'cirugia_programada_gmm': hospital.SURGERY_PAGE, 'pago_directo_gmm': hospital.DIRECT_PAGE}.get(workflow, SOURCE_PAGE)
+
+
+def check_sources(workflow='reembolso_gmm'):
     from html.parser import HTMLParser
     from services.mesa_documents import _bounded_get
     class Links(HTMLParser):
@@ -238,30 +279,35 @@ def check_sources():
             super().__init__(); self.links = set()
         def handle_starttag(self, tag, attrs):
             if tag == 'a':
-                self.links.add(urljoin(SOURCE_PAGE, dict(attrs).get('href', '')))
+                self.links.add(urljoin(source_page(workflow), dict(attrs).get('href', '')))
     state = {'checked_at': datetime.now(timezone.utc).isoformat(), 'forms': {}}
     try:
         with httpx.Client(timeout=30, follow_redirects=False) as client:
-            parser = Links(); parser.feed(_bounded_get(client, SOURCE_PAGE).decode('utf-8'))
-            for key, form in FORMS.items():
+            parser = Links(); parser.feed(_bounded_get(client, source_page(workflow)).decode('utf-8'))
+            forms = {key: dict(form) for key, form in FORMS.items()}
+            if workflow in hospital.WORKFLOWS:
+                forms['consent'] = hospital.CONSENT_FORM
+            if workflow == 'pago_directo_gmm':
+                forms['medical']['source_url'] = hospital.DIRECT_MEDICAL_URL
+            for key, form in forms.items():
                 if form['source_url'] not in parser.links:
                     raise ValueError('official link changed')
                 digest = hashlib.sha256(_bounded_get(client, form['source_url'])).hexdigest()
                 state['forms'][key] = {'observed_sha256': digest, 'expected_sha256': form['sha256']}
                 if digest != form['sha256']:
                     raise ValueError('official content changed')
-        state.update(status='verified', notice='Solicitud e informe médico verificados en la fuente oficial.')
+        state.update(status='verified', notice='Formatos y enlaces verificados en la fuente oficial.')
     except ValueError:
-        state.update(status='changed', notice='Cambió un formato o enlace oficial de reembolso. Revisa su versión antes de generar.')
+        state.update(status='changed', notice='Cambió un formato o enlace oficial del trámite. Revisa su versión antes de generar.')
     except Exception:
-        state.update(status='unavailable', notice='No se pudo verificar la fuente oficial de reembolso.')
-    path = state_path(); path.parent.mkdir(parents=True, exist_ok=True)
+        state.update(status='unavailable', notice='No se pudo verificar la fuente oficial del trámite.')
+    path = state_path(workflow); path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix('.tmp'); temp.write_text(json.dumps(state, ensure_ascii=False)); temp.replace(path)
     return state
 
 
 def generate(data, case_id, revision):
-    state = status()
+    state = status(data.get('workflow', 'reembolso_gmm'))
     if not state['can_generate']:
         raise HTTPException(409, state['notice'] + (' La comprobación venció.' if state['stale'] else ''))
     if not is_claim(data) or not progress(data)['ready_for_partial_draft']:
@@ -284,7 +330,7 @@ def generate(data, case_id, revision):
         values['Celular'] = phone
     rfc = data['rfc']
     values.update({'Registro Federal de Contribuyentes RFC': rfc[:10], 'undefined': rfc[10:],
-                   'REMBOLSO': '/Yes', 'PRIMERA': '/Yes' if data['claim_stage'] == 'initial' else '/Off',
+                   {'reembolso_gmm': 'REMBOLSO', 'cirugia_programada_gmm': 'PROGRAMACION', 'pago_directo_gmm': 'INGRRESO'}[data['workflow']]: '/Yes', 'PRIMERA': '/Yes' if data['claim_stage'] == 'initial' else '/Off',
                    'SUBSECUENTE': '/Yes' if data['claim_stage'] == 'complement' else '/Off'})
     if data['claim_stage'] == 'complement':
         values['NUMSIN'] = data['claim_number']

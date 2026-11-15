@@ -17,9 +17,23 @@ export const claimConditions = {
     bank_holder_complete: '¿El estado de cuenta muestra el nombre completo del titular?',
     digital_signature: '¿Se usará firma digital autorizada por MetLife?',
 };
-export type ClaimData = { workflow: 'emision_gmm' | 'reembolso_gmm'; claim_stage: '' | 'initial' | 'complement' }
+export const workflowLabels = { emision_gmm: 'Emisión GMM', reembolso_gmm: 'Reembolso GMM', cirugia_programada_gmm: 'Cirugía programada GMM', pago_directo_gmm: 'Pago directo GMM' };
+export const hospitalTextFields = { hospital_name: 'Hospital', event_date: 'Fecha programada del evento', admission_date: 'Fecha de ingreso hospitalario' };
+export const hospitalConditions = {
+    hospital_in_network: '¿Se verificó el hospital en la red de este plan?',
+    doctors_in_network: '¿Todos los médicos pertenecen al grupo médico asociado?',
+    doctors_accept_tariff: '¿Los médicos fuera de convenio aceptan el tabulador?',
+    policy_current_paid: '¿Se verificó que la póliza está vigente y pagada?',
+    has_surgery_pass: '¿El ingreso ya cuenta con carta pase de cirugía programada?',
+    hospital_reported: '¿El hospital confirmó el reporte de ingreso a MetLife?',
+    stay_over_24h: '¿La estancia supera 24 horas?',
+    mp_required: '¿El evento requiere actas del Ministerio Público?',
+};
+export type ClaimData = { workflow: keyof typeof workflowLabels; hospital_phase: '' | 'admission' | 'stay' | 'discharge'; claim_stage: '' | 'initial' | 'complement' }
+    & Record<keyof typeof hospitalTextFields, string> & Record<keyof typeof hospitalConditions, boolean | null>
     & Record<keyof typeof claimTextFields, string> & Record<keyof typeof claimConditions, boolean | null>;
 export const emptyClaim: ClaimData = {
+    hospital_name: '', event_date: '', admission_date: '', hospital_phase: '', hospital_in_network: null, doctors_in_network: null, doctors_accept_tariff: null, policy_current_paid: null, has_surgery_pass: null, hospital_reported: null, stay_over_24h: null, mp_required: null,
     workflow: 'emision_gmm', claim_stage: '', policy_number: '', contractor_name: '', claim_number: '', previous_dcn: '',
     patient_paternal_surname: '', patient_maternal_surname: '', patient_given_names: '', patient_curp: '',
     medical_report_date: '', bank_statement_date: '', address_proof_date: '',

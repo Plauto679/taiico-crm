@@ -183,3 +183,17 @@ def test_requirements_use_published_snapshot_and_document_kinds(setup,monkeypatc
     assert pending._mesa_document_context(row)['kinds']=={'doc':'Solicitud firmada'}
     row['mesa_folder_id']='foreign-folder'
     assert pending._mesa_document_context(row) is None
+
+
+@pytest.mark.parametrize('workflow,label',[('cirugia_programada_gmm','Cirugía Programada'),('pago_directo_gmm','Pago Directo')])
+def test_hospital_claim_registers_correct_type_and_retries_without_duplicate(setup,workflow,label):
+    from test_mesa_hospital import hospital_data
+    item,profile,drive,memory=setup;source=pending.SOURCES['siniestros'];memory['content']=workbook(source)
+    data=hospital_data(workflow);data['rfc']=item.data['rfc'];item.data=data
+    first=bridge.register(item,profile,service=drive)
+    row=pending.parse_pending_workbook(memory['content'],source)['rows'][-1]
+    assert row['summary']['Tipo de Trámite']==label
+    assert row['summary']['Fecha de envío a la aseguradora']==''
+    assert row['mesa_folder_id']=='mesa-folder' and 'Hospital ficticio' in row['history'][-1]['update']
+    assert data['event_date' if workflow=='cirugia_programada_gmm' else 'admission_date'] in row['history'][-1]['update']
+    assert bridge.register(item,profile,service=drive)==first and memory['uploads']==1

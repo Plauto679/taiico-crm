@@ -12,4 +12,7 @@ if __name__ == '__main__':
     print(result['status'] + ': ' + result['notice'])
     claims = check_sources()
     print('Reembolso: ' + claims['status'] + ': ' + claims['notice'])
-    sys.exit(0 if result['status'] == claims['status'] == 'verified' else 1)
+    hospital_states = [check_sources(workflow) for workflow in ('cirugia_programada_gmm', 'pago_directo_gmm')]
+    for workflow, state in zip(('Cirugía programada', 'Pago directo'), hospital_states):
+        print(workflow + ': ' + state['status'] + ': ' + state['notice'])
+    sys.exit(0 if all(state['status'] == 'verified' for state in [result, claims, *hospital_states]) else 1)

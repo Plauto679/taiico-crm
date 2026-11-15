@@ -99,14 +99,16 @@ def register(item, profile, *, service=None):
                       **pendientes._automatic_creation_values(source)}
             if is_claim:
                 if item.data.get('claim_stage') not in {'initial', 'complement'} or not item.data.get('policy_number'):
-                    raise HTTPException(422, 'Confirma tipo de reembolso y póliza antes del registro operativo.')
-                values.update({'Tipo de Trámite': 'Reembolso', 'Trámite': 'Inicial' if item.data['claim_stage'] == 'initial' else 'Complemento', 'Estatus': 'En Proceso'})
+                    raise HTTPException(422, 'Confirma etapa de reclamación y póliza antes del registro operativo.')
+                values.update({'Tipo de Trámite': {'cirugia_programada_gmm': 'Cirugía Programada', 'pago_directo_gmm': 'Pago Directo'}.get(item.data.get('workflow'), 'Reembolso'), 'Trámite': 'Inicial' if item.data['claim_stage'] == 'initial' else 'Complemento', 'Estatus': 'En Proceso'})
             else:
                 values.update({'Casificacion': 'GMM', 'Tipo de Trámite': 'Emisión', 'Producto': item.data.get('product', ''),
                                'Solicitud de': 'EMISION PERSONA FISICA', 'Estatus actual': 'Pendiente Taiico'})
             updated = _add_headers(original, source)
             updated, source_row = pendientes.append_pending_record(updated, source, values)
             comment = f'Mesa {item.id}: expediente validado por {reviewer}, registrado por {profile.username}, revisión {item.revision}. Registro operativo, sin envío a MetLife.'
+            if mesa_claims.hospital.is_hospital(item.data):
+                comment += f" {mesa_claims.workflow_label(item.data)}. Hospital: {item.data.get('hospital_name', '')}. Fecha evento/ingreso: {item.data.get('event_date' if item.data.get('workflow') == 'cirugia_programada_gmm' else 'admission_date', '')}."
             if is_claim:
                 comment += f" Siniestro: {item.data.get('claim_number') or 'inicial'}."
                 if item.data.get('previous_dcn'):

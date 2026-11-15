@@ -480,3 +480,22 @@ def test_validation_keeps_review_when_handoff_fails_then_retries_with_revision_c
     assert changed['status']=='draft' and changed['pending_registration']['changed_after_registration']
     assert client.post(path,json={'revision':changed['revision']}).status_code==409
     assert len(calls)==2
+
+
+@pytest.mark.parametrize('workflow',['cirugia_programada_gmm','pago_directo_gmm'])
+def test_hospital_requires_own_admin_checks_before_pending_registration(app,monkeypatch,workflow):
+    from test_mesa_hospital import hospital_data
+    api,client,factory=app
+    item=create(client)[0].json()
+    with factory() as db:
+        obj=db.get(MesaCase,item['id']);obj.data=hospital_data(workflow)
+        obj.documents=[{'id':str(i),'kind':kind} for i,kind in enumerate(mesa.requirements(obj))];db.commit()
+    item=client.get('/mesa-control/cases').json()['cases'][0]
+    assert item['notices'] and 'coverage' in item['review_checks']
+    item=call(client,item,'submit').json()
+    api.dependency_overrides[current_access_profile]=lambda:profile(role='admin',username='reviewer')
+    item=call(client,item,'claim').json()
+    assert call(client,item,'validate',comment='Revisado',review_checks=list(mesa.mesa_claims.REVIEW_CHECKS)).status_code==422
+    monkeypatch.setattr(mesa.mesa_pending,'register',lambda *args:{'source':'siniestros','url':'/pendientes'})
+    response=call(client,item,'validate',comment='Revisión documental y de condiciones realizada',review_checks=list(item['review_checks']))
+    assert response.status_code==200 and response.json()['pending_registration']['status']=='registered'
