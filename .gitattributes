@@ -1,0 +1,2 @@
+# Preserve the exact bytes and hashes of verified official forms on every platform.
+backend/assets/metlife_forms/*.pdf binary
