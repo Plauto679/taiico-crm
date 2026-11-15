@@ -281,3 +281,14 @@ if __name__ == "__main__":
 
 from services.campaign_surveys import router as survey_router
 app.include_router(survey_router)
+
+# Website intake authenticates the WordPress webhook; inbox routes enforce CRM scope.
+from services import lead_capture
+app.include_router(lead_capture.router)
+
+# Private organic social editorial workspace.
+from services import social_media
+social_media.init_schema()
+from services import social_results
+social_results.init_schema()
+app.include_router(social_media.router)

@@ -1,0 +1,62 @@
+TAIICO · Guiones y operación de captación · 9 noviembre 2026
+Estado: preparados para uso del equipo; no enviados ni automatizados.
+Solo solicitudes de Taiico y agentes autorizados de Taiico.
+
+1. ANTES DEL CONTACTO
+La mesa abre /captacion?tipo=clientes, revisa nuevos y sin responsable y asigna
+según producto, ubicación y capacidad. El agente confirma que el lead está a
+su nombre, revisa la solicitud y el consentimiento. Usar WhatsApp únicamente
+si está autorizado. Completar los campos entre corchetes antes de enviar.
+Nunca pedir datos médicos, documentos o información bancaria en este primer paso.
+
+2. PRIMER CONTACTO — CLIENTE
+Hola, [nombre]. Soy [asesor], del equipo de Taiico. Recibimos tu solicitud en
+nuestra página para conocer opciones sobre [interés]. ¿Qué horario te viene
+bien para una breve llamada? Queremos entender qué necesitas y explicarte
+los siguientes pasos, sin compromiso de contratación.
+
+Por teléfono: identificarse, mencionar la solicitud y preguntar si es buen
+momento. Si no, acordar horario. Preguntas de orientación: ¿qué quieres
+proteger?, ¿en qué ciudad estás?, ¿hay alguna fecha que debamos considerar?
+Registrar una síntesis breve en el CRM y una próxima gestión concreta.
+
+3. INCORPORACIÓN DE AGENTES
+Hola, [nombre]. Soy [responsable] de Taiico. Recibimos tu interés en conocer
+nuestro modelo como promotoría. Nos indicaste que [etapa declarada]. ¿Qué
+horario te acomoda para conversar sobre lo que buscas y explicarte los pasos?
+No prometer contratación, ingresos, comisiones ni una cantidad de leads.
+
+4. SI NO RESPONDE
+Propuesta operativa: primer intento en un día hábil; segundo después de dos
+días hábiles; último después de otros tres. Respetar el horario acordado y
+cualquier petición de no contacto. No convertir esta propuesta en envío masivo.
+
+Segundo contacto:
+Hola, [nombre]. Retomo tu solicitud a Taiico sobre [interés]. ¿Aún te gustaría
+que conversemos? Puedes indicarme un horario que te resulte cómodo.
+
+Último contacto:
+Hola, [nombre]. Dejamos por ahora en pausa el seguimiento de tu solicitud.
+Si más adelante quieres retomarla, puedes responder por este medio. Gracias.
+
+Si pide no recibir más contacto: confirmarlo brevemente, detener los intentos
+y registrar la petición con fecha en el CRM. No incorporar a campañas nuevas.
+
+5. DESPUÉS DE LA CONVERSACIÓN
+Actualizar estado del lead, nota breve, próxima fecha y responsable.
+Registrar intentos sin respuesta en notas; reservar «Contactado» para contacto
+efectivo. «Calificado» indica necesidad y siguiente paso identificados, no
+aceptación de riesgo ni elegibilidad de seguro. La etapa de la oportunidad
+comercial se actualiza por separado en Gestión Comercial. «Cerrado» en el lead
+no debe contarse automáticamente como póliza vendida; validar cierre comercial.
+Reclutamiento mantiene sus candidaturas en /captacion?tipo=agentes.
+
+6. CONTROL SEMANAL
+Mesa responsable: confirmar internamente quién revisa la bandeja cada día.
+Medir por canal: solicitudes válidas, pendientes sin dueño, tiempo al primer
+intento, contactos efectivos, calificados, citas y cierres comerciales.
+Contacto efectivo / leads válidos = tasa de contacto.
+Calificados / contactos efectivos = tasa de calificación.
+Cierres comerciales / leads válidos = conversión final por cohorte.
+Separar clientes de candidatos y excluir pruebas/duplicados. No inferir el
+rendimiento de una publicación de Instagram a partir del enlace general de bio.

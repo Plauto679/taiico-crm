@@ -200,3 +200,20 @@ el catálogo y la solicitud oficial de MédicaLife Familiar. No envía mensajes 
 activa versiones desconocidas: un cambio bloquea el llenado hasta revisar el mapeo.
 Se instala como los demás LaunchAgents y registra únicamente el estado de la fuente.
 El piloto de Mesa requiere `MESA_OWNER_USERNAME`; ver `docs/MESA_CONTROL.md`.
+
+### Informe semanal de Renovaciones cartera Taiico
+
+`com.taiico.crm.renewal-portfolio-report` ejecuta `send_renewal_portfolio_report.py`
+cada 5 minutos. La configuración `renewal_portfolio_weekly` en Mails automáticos
+controla el envío: lunes a las 12:00 en `America/Mexico_City`, para Alberto,
+Pamela, Verónica y clientes@taiico.com. Reutiliza `TAIICO_AGENT_CODES` de la
+regla de envío directo para MetLife GMM, incluida Isis Karina.
+
+Lee Renovaciones sin modificarlas: excluye envío, renovación o cancelación
+registrada; la revisión manual y los registros sin envío siguen pendientes. Ventana desde
+tres meses calendario atrás hasta 45 días adelante. Rojo: vencidas y 0–10 días;
+amarillo: 11–30; verde: 31–45. Adjunta CSV completo; muestra hasta 50 pólizas por
+color en el cuerpo. Guarda cada corte JSON/HTML/CSV y estado por semana en
+`.runtime/renewal-portfolio-reports/`. Una entrega incierta no se reintenta
+sin revisar primero el correo enviado y el estado. `--dry-run` solo genera
+vista previa y resumen, sin enviar ni reclamar el periodo.

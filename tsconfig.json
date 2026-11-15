@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -19,16 +23,36 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": [
+        "./src/*"
+      ]
     }
   },
   "include": [
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
-    ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
-    "**/*.mts"
+    ".next/types/**/*.ts",
+    "**/*.mts",
+    ".next-marketing-funnel/types/**/*.ts",
+    ".next-marketing-funnel/dev/types/**/*.ts",
+    ".next-social-20261111/types/**/*.ts",
+    ".next-social-20261111/dev/types/**/*.ts",
+    ".next-social-20261111-final/types/**/*.ts",
+    ".next-social-20261111-final/dev/types/**/*.ts",
+    ".next-social-scroll-20261111/types/**/*.ts",
+    ".next-social-scroll-20261111/dev/types/**/*.ts",
+    ".next-social-scroll-final-20261111/types/**/*.ts",
+    ".next-social-scroll-final-20261111/dev/types/**/*.ts",
+    ".next-social-access-20261111/types/**/*.ts",
+    ".next-social-access-20261111/dev/types/**/*.ts",
+    ".next-social-access-final-20261111/types/**/*.ts",
+    ".next-social-access-final-20261111/dev/types/**/*.ts",
+    ".next-social-results-20261115/types/**/*.ts",
+    ".next-social-results-20261115/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules"
+  ]
 }

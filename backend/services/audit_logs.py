@@ -82,7 +82,9 @@ async def capture_request(request: Request) -> tuple[str | None, dict[str, Any]]
             parsed = json.loads((await request.body()).decode("utf-8"))
             if isinstance(parsed, dict):
                 payload = ({'search_only': bool(parsed.get('search_only')), 'message_length': len(str(parsed.get('message', '')))}
-                           if request.url.path == '/plauto/chat' else _safe_value(parsed))
+                           if request.url.path == '/plauto/chat' else
+                           {'private_workspace': True, 'fields': sorted(parsed.keys())}
+                           if request.url.path.startswith('/redes-sociales') else _safe_value(parsed))
         except (UnicodeDecodeError, json.JSONDecodeError):
             payload = {}
     return username, payload

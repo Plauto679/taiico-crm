@@ -1,0 +1,60 @@
+TAIICO — Captación web y reparto de leads · 9 noviembre 2026
+
+Publicación
+Portada WordPress 56; asesoría 365; incorporación 147.
+Editor Elementor Atomic. Formularios mediante marcadores {{TAIICO_CAPTACION_CLIENTES}}
+y {{TAIICO_CAPTACION_AGENTES}}, sustituidos al renderizar por el snippet 6:
+«Taiico CRM capture bridge». Fuente versionable: taiico-lead-capture.php.
+El placeholder __WEBHOOK_KEY__ se sustituye al desplegar por el valor de
+TAIICO_WEBSITE_WEBHOOK_KEY de backend/.env. Nunca copiar el secreto a HTML,
+repositorio, calendario o registros.
+
+Flujo
+Navegador POST /wp-json/taiico/v1/lead/clientes|agentes → WordPress valida
+campos, limita frecuencia y reenvía al CRM → /api/captacion/elementor/{kind}.
+Solo se presenta éxito al recibir confirmación del guardado. El formulario
+retiene los campos en fallos para reintentar. Reintentos del mismo teléfono,
+correo y tipo se deduplican durante 24 h; no sobrescriben identidad ni dueño.
+La promotoría se fija en TAIICO en servidor. Consentimiento de contacto
+obligatorio, WhatsApp opcional y no preseleccionado. Ambos quedan registrados.
+
+Clientes: Lead + CommercialOpportunity, responsable inicial POR-ASIGNAR.
+Agentes: Lead + Candidate; no escribe en el XLS anterior de reclutamiento.
+Las candidaturas web se atienden en /captacion?tipo=agentes (acceso desde Recluta).
+Los clientes se atienden en /captacion?tipo=clientes (desde Gestión Comercial).
+La mesa asigna manualmente a un RFC Taiico elegible del directorio existente.
+El agente solo ve y actualiza sus leads. No puede reasignarlos.
+El estado del contacto y la etapa de la oportunidad comercial son distintos;
+actualizar ambos según corresponda. No hay correo/WhatsApp automático ni reparto
+round-robin. El indicador 24h es orientativo, incluye fines de semana.
+
+Validación realizada
+4 pruebas automatizadas de validación, deduplicación, aislamiento y asignación.
+Build Next completado. Dos envíos ficticios (cliente y candidato) confirmados en
+BD; cliente confirmado también desde navegador. Consentimiento ausente rechazado.
+Acceso anónimo a bandeja y webhook protegido rechazado. Portada y asesoría revisadas
+en escritorio y a 390px. Los 2 registros ficticios y sus relaciones se retiraron;
+evidencia sin credenciales en .runtime/marketing-20261109/qa-results.json.
+
+Despliegue
+Backend launchd com.taiico.crm.backend. Frontend com.taiico.crm.frontend.
+.next apunta a .next-marketing-funnel. Evitar sobrescribir builds de otros trabajos.
+Tras publicar, limpiar caché Elementor y GoDaddy: WP Admin → GoDaddy → Tools →
+Flush Cache. El purge Elementor solo no limpia el CDN. Un navegador que hubiera
+visitado antes puede necesitar recarga forzada por las cabeceras de caché previas.
+
+Recuperación
+Respaldos de cada página antes del cambio:
+.runtime/marketing-20261109/page-{56,147,365}-before.json.
+Backup SQLite anterior: .runtime/backups/before-marketing-20261109.db.
+Build anterior: .runtime/frontend-before-marketing-20261109.
+Para revertir el sitio, restaurar únicamente datos Elementor y ajustes de esas
+páginas desde sus respaldos, publicar y purgar cachés. Restaurar páginas antes de
+desactivar snippet 6 para evitar marcadores sin resolver. No restaurar toda la BD
+para revertir una interfaz: perdería datos nuevos y cambios de otros trabajos.
+Conservar rutas de intake mientras haya formularios públicos que las utilicen.
+
+Calendario
+Archivo docs/marketing/calendario-taiico-2026-11.html + JSON.
+10 contenidos / 20 destinos. Preparados, no programados. Faltan artes finales
+y configurar el enlace de bio indicado en el calendario. No hubo gasto adicional.

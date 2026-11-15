@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { ReclutaView } from '@/components/recluta/ReclutaView';
 import { getReclutaProspects } from '@/modules/recluta/service';
 
@@ -11,6 +12,7 @@ export default async function ReclutaPage() {
         <div className="flex h-full flex-col">
             <div className="flex-none px-8 pb-4 pt-8">
                 <h1 className="text-2xl font-bold text-white">Recluta</h1>
+                <Link href="/captacion?tipo=agentes" className="mt-2 inline-block rounded-lg bg-white px-4 py-2 text-sm font-semibold text-[#34587c]">Leads web · Taiico →</Link>
                 <p className="mt-1 text-sm text-blue-100">
                     Seguimiento de prospectos a agentes y sus documentos.
                 </p>

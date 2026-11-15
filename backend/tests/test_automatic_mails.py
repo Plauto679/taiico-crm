@@ -50,6 +50,7 @@ class AutomaticMailConfigurationTests(unittest.TestCase):
                 "agent_birthdays_promotoria_fenix_prevision",
                 "agent_license_expiration",
                 "renewal_agent",
+                "renewal_portfolio_weekly",
             },
         )
         self.assertNotIn(

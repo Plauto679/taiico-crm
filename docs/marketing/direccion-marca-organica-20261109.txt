@@ -1,0 +1,28 @@
+TAIICO — DIRECCIÓN DE MARCA Y CONTENIDO
+Actualizado: 9 noviembre 2026
+
+REFERENCIA RECIBIDA
+Paleta: #1D2F3E, #283E63, #34587C, #5996D1, #FFFFFF.
+Tipografías: Helvetica y Ubuntu Light. Fallback web Helvetica, Arial, sans-serif; Ubuntu con peso 300 cuando se integre su fuente.
+La referencia recibida es una imagen de paleta y tipografías, no un manual completo de marca.
+Priorizar esta paleta sobre el crema/dorado de las propuestas anteriores.
+Plauto: conservar el pingüino original; ilustración cercana y profesional, situaciones cotidianas, iconografía consistente, sin infantilizar ni prometer resultados.
+
+DESPLIEGUE ACTUAL
+Cabecera móvil global 122: barra de 64 px con logo y botón circular de 48 px. Menú desplegable, submenús y cierre por Escape o clic exterior. Cambios limitados a <=767 px.
+Snippet WordPress 7: Taiico compact mobile navigation.
+Rollback: desactivar únicamente snippet 7. No tocar snippet 6 de formularios CRM.
+
+SIGUIENTES FASES
+1. Alinear asesoría, inicio y reclutamiento con la paleta y Plauto; después páginas públicas de seguros, equipo, fundación y pie de página. Revisar enlaces sociales antiguos del pie.
+2. Preparar estrategia del blog y piezas originales asociadas. Mantener formularios y atribución CRM.
+3. Revisar el calendario y los artes previos; no están listos para publicación tras el cambio de dirección.
+
+DISTRIBUCIÓN ORGÁNICA
+Sin pauta, boosts ni contratación de planes. Tope operativo de 20 publicaciones totales al mes entre Facebook e Instagram; adaptar cada pieza a su canal.
+Variedad editorial: dudas frecuentes, situaciones cotidianas, checklists, explicación de conceptos, profesión del agente, equipo con autorización y actualidad verificada al preparar la publicación.
+Variedad visual: carruseles, infografías, ilustraciones originales de Plauto y fotografías autorizadas. Evitar diez variaciones de la misma plantilla o mensaje. Vídeo solo cuando exista producción disponible.
+Recorrido: gancho social -> artículo específico -> CTA contextual -> formulario -> CRM Taiico -> seguimiento del asesor.
+No inventar URLs de artículos aún no publicados. Publicaciones de conversión directa ocasionales.
+Medir alcance, guardados, compartidos, visitas con UTM, consultas válidas y seguimiento. No solo seguidores.
+La estrategia detallada del blog se trabajará en la siguiente fase indicada por el usuario.

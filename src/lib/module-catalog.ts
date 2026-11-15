@@ -25,6 +25,7 @@ export const MODULE_CATALOG = [
   ['gestion_comercial', 'Gestión Comercial', '/gestion-comercial', 'Oportunidades y seguimiento', ChartNoAxesCombined],
   ['logs', 'Logs', '/logs', 'Auditoría de usuarios y cambios', ScrollText],
   ['rrhh', 'RRHH', '/rrhh', 'Colaboradores, contratos y vacaciones', ContactRound],
+  ['redes_sociales', 'Redes sociales', '/redes-sociales', 'Campañas orgánicas, copys y artes', Megaphone],
   ['campanas', 'Campañas', '/campanas', 'Audiencias, mensajes y resultados', Megaphone],
   ['finanzas', 'Finanzas', '/finanzas', 'Movimientos, presupuestos y proyecciones', Landmark],
 ] as const;

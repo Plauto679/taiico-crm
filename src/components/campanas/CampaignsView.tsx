@@ -224,16 +224,25 @@ export function CampaignsView({ initialCampaigns, safeVariables }: { initialCamp
       <button type="button" onClick={newCampaign} className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2.5 font-semibold text-blue-700 shadow"><Plus className="h-5 w-5" />Nueva campaña</button>
     </div>
 
-    <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[18rem_minmax(0,1fr)]">
-      <aside className="rounded-xl bg-white p-4 shadow">
-        <h2 className="mb-3 font-bold text-slate-900">Todas las campañas</h2>
-        <div className="space-y-2">
-          {campaigns.map((campaign) => <button key={campaign.id} type="button" onClick={() => chooseCampaign(campaign)} className={`w-full rounded-lg border p-3 text-left ${selectedId === campaign.id ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}><span className="block font-semibold text-slate-900">{campaign.nombre}</span><span className="mt-1 block text-xs text-slate-500">{campaign.estatus} · {new Date(campaign.updated_at).toLocaleDateString('es-MX')}</span></button>)}
-          {campaigns.length === 0 && <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-500">Todavía no hay campañas guardadas.</p>}
-        </div>
-      </aside>
+    <div className="mb-5 flex shrink-0 flex-col items-stretch gap-3 rounded-xl bg-white p-4 shadow sm:flex-row sm:items-center">
+      <label htmlFor="campaign-selector" className="text-sm font-semibold text-slate-700">Campaña</label>
+      <select
+        id="campaign-selector"
+        value={selectedId}
+        onChange={(event) => {
+          const campaign = campaigns.find((item) => item.id === event.target.value);
+          if (campaign) chooseCampaign(campaign);
+        }}
+        className="min-w-0 w-full flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 sm:w-auto"
+      >
+        {creating && <option value="" disabled>Nueva campaña sin guardar</option>}
+        {campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.nombre} · {campaign.estatus.replaceAll('_', ' ')}</option>)}
+      </select>
+      {selected && <span className="text-xs text-slate-500">Actualizada {new Date(selected.updated_at).toLocaleDateString('es-MX')}</span>}
+    </div>
 
-      <section className="space-y-5">
+    <div className="min-w-0">
+      <section className="min-w-0 space-y-5">
         <div className="rounded-xl bg-white p-5 shadow sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-bold text-slate-900">{creating ? 'Nueva campaña' : selected?.estatus === 'borrador' ? 'Editar borrador' : 'Campaña preparada'}</h2><p className="text-sm text-slate-500">Revisa la audiencia, realiza una prueba interna y congela los mensajes antes del envío controlado.</p></div>{(creating || selected?.estatus === 'borrador') && <button type="button" onClick={save} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white disabled:opacity-50">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Guardar borrador</button>}</div>
           <div className="mt-5 grid gap-4 lg:grid-cols-2">

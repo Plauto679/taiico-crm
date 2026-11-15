@@ -85,3 +85,7 @@ node_modules_viejo/
 
 /.next-mesa-pending-*/
 /.next-help-*/
+
+# Local Next.js build variants and active build symlink
+/.next
+/.next-*/

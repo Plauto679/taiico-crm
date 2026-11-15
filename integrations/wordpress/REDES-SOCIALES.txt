@@ -1,0 +1,63 @@
+Redes sociales — CRM — actualizado 11 noviembre 2026
+URL: https://taiico-crm.com/redes-sociales
+
+ACCESO
+Configurable en Accesos mediante redes_sociales: ninguno, lectura u operación.
+Lectura permite ver piezas, artes e historial. Operación permite crear y editar.
+También se exige TAIICO en las promotorías del perfil. Ningún administrador obtiene este módulo por defecto.
+Operación concedida explícitamente a alberto.alfaro@taiico.com y katia.gonzalez@taiico.com en el directorio oficial. Otros permisos intactos.
+
+DATOS
+backend/services/social_media.py: social_campaigns, social_posts, social_assets, social_events, social_deliveries.
+Artes privados: .runtime/social-media-assets. Respaldar junto con la DB.
+Importador idempotente backend/jobs/import_social_calendar.py no sobrescribe ediciones.
+Estados: borrador, revision, listo, programado, publicado. Listo es autorización del usuario para enviar el contenido exacto.
+Programado y publicado bloquean copy/arte para impedir divergencia con la entrega. Cambios de una programación deben hacerse sobre su ID existente en Metricool y reflejarse en CRM, no creando otra.
+Guardar en CRM no llama a Metricool. El asistente usa el MCP y registra la confirmación en social_deliveries. No hay sincronización continua de métricas.
+
+OPERACIÓN MCP
+Marca exclusiva Taiico 7964298. Facebook e Instagram; sin pauta ni compras. Máximo 20 publicaciones mensuales TOTAL entre ambas redes.
+Revisar estado actual/revisión/arte; nunca usar el JSON semilla como fuente de aprobación.
+Consultar programaciones existentes antes de crear. Comprobar social_deliveries e historial para no duplicar. Si un envío devuelve resultado ambiguo, reconciliar antes de reintentar.
+Publicar vencidas cuanto antes; futuras a planned_at con su zona, sin adelantar. Para Metricool: publicationDate.dateTime hora local SIN offset y timezone Europe/Madrid; argumento date ISO con offset. autoPublish true, draft false, shortener false; providers [{network:facebook|instagram}], media URL HTTPS de arte aprobado, saveExternalMediaFiles true; facebookData/instagramData type POST.
+Artes aprobados pueden subirse a WP media en taiico.com, usando credenciales existentes sin imprimirlas. No hacer público todo el almacén privado del CRM.
+Revalidar listo/revisión inmediatamente antes de crear. Registrar de inmediato respuesta e ID de proveedor en social_deliveries(post_id PK, provider_id UNIQUE, planner_url, scheduled_at, recorded_at, response); usar social_media.change para status programado y evento con CAS de revisión. No cambiar el copy aprobado.
+No inferir Publicado porque desaparezca del listado de programados: confirmar en Metricool o URL real en red. Registrar URL y fecha real en /posts/{id}/publication, o record_publication() con perfil de operación. Conservar evidencia. Métricas manuales identificadas como manuales; ausencia no significa cero.
+
+ENTREGAS 11 NOV
+Snapshot aprobado .runtime/social-approved-20261111.json. Respuestas .runtime/social-deliveries-20261111.json.
+Una conversación que protege FB: 425024968, IG: 425025103; enviadas para 11 noviembre 23:26 Madrid, recuperan la fecha vencida del 10.
+Conoce Taiico FB: 425025127, IG: 425025153; 12 noviembre 19:00 Madrid = 12:00 CDMX.
+No volver a crear estas cuatro publicaciones.
+
+SEGUIMIENTO
+Automatización local del chat publicar-aprobadas-de-taiico, revisión diaria 16:00 y 22:00 Madrid. Requiere equipo encendido, app abierta y proyecto disponible. Programa nuevas Listas y confirma entregas; mantiene silencio sin cambios o acciones. Metricool ejecuta las ya programadas independientemente de este equipo.
+
+VALIDACIÓN Y DESPLIEGUE
+10 pruebas backend: autenticación, aislamiento Taiico, lectura/operación, edición, conflictos, activos privados, programaciones y publicados. Build Next .next-social-access-final-20261111, anterior .next-social-scroll-final-20261111 conservado. Servicios launchd frontend/backend reiniciados.
+Verificado API real: Alberto y Katia 200, can_operate true; Accesos incluye redes_sociales.
+Móvil mantiene h-full/min-h-0/overflow-y-auto y lista con scroll independiente solo en escritorio.
+
+CONFIRMACIÓN 11 NOV 23:26 MADRID
+Verificados enlaces reales en los detalles del planificador Metricool y registrados en CRM como publicado:
+Facebook https://www.facebook.com/TaiicoLifeAdvisors/posts/1766680292023253
+Instagram https://www.instagram.com/p/DfnjREyjCuE/
+Resumen: 2 publicadas, 2 programadas, 16 revisión. No se envió ninguna pieza en revisión.
+
+RESULTADOS — 15 NOVIEMBRE
+Nuevo submódulo /redes-sociales/resultados y GET /redes-sociales/results, bajo los mismos permisos de lectura Taiico.
+Fuente: tabla social_analytics_snapshots con cuatro copias separadas de Metricool; definiciones exactas FIELDS en backend/services/social_results.py. No mezclar con métricas manuales del editor.
+En cada revisión del asistente, consultar vía MCP getAnalyticsDataByMetrics los últimos 30 días, cada dataset por separado:
+facebook_posts: FBPO02 FBPO03 FBPO06 FBPO08 FBPO09 FBPO11 FBPO12 FBPO13 FBPO14
+instagram_posts: IGPO02 IGPO03 IGPO06 IGPO08 IGPO12 IGPO13 IGPO14 IGPO15 IGPO27 IGPO28
+facebook_evolution: FBEV17 FBEV30 FBEV10
+instagram_evolution: IGEV01 IGEV05 IGEV09
+Las filas evolution devuelven la fecha YYYYMMDD al final; posts devuelven fecha YYYYMMDDHHMMSS en primera columna. Conservar orden y valores nulos.
+Guardar JSON con brand_id "7964298", fetched_at ISO con zona, from/to fechas, datasets {nombre:{fields:[...],rows:[...]}}. Importar: PYTHONPATH=backend .venv/bin/python backend/jobs/import_social_results.py archivo.json
+Ejemplo inicial .runtime/social-metrics-20261115.json. No importar errores como filas vacías. El importador acepta series parciales para conservar las demás en caso de fallo. Las consultas se limitan a últimos 30 días; el panel indica última consulta. No es integración de API directa ni actualiza al pulsar Recargar: ese botón vuelve a leer la copia del CRM.
+Coincidencia publicación: URL normalizada o copy exacto + red + fecha únicos (Facebook puede devolver ID de foto distinto del post del planificador). Filas ambiguas no atribuidas. FB interacciones = reacciones + comentarios + compartidos; IG usa total orgánico de Metricool. No sumar alcance como personas únicas. Clics no son leads ni ventas. Impresiones FB y vistas IG separadas.
+Automatización actualizada para refrescar las cuatro series a las 16:00 y 22:00 Madrid sin anuncios rutinarios de métricas.
+Conexión MCP: Primary link_6af101fec7a08191bd7b14e59a518669, Taiico marca 7964298. No usar conexión Reveal.
+16 piezas aprobadas enviadas 15 noviembre: Protección para tu familia FB/IG recuperadas a 00:20 Madrid; otras 14 programadas para sus fechas 16,18,20,23,25,27,30 noviembre 19:00 Madrid. IDs y respuestas en social_deliveries. Total 20 entre ambas redes, no repetir.
+Build .next-social-results-20261115; 15 pruebas backend de acceso, validaciones, vinculación y valores ausentes aprobadas.
+Confirmación final: Protección para tu familia publicada en ambas redes, verificada PUBLISHED en MCP; FB https://facebook.com/1766889568668992/posts/1770495804975035 e IG https://www.instagram.com/p/DfvX1KHiZuY/. Estado CRM: 6 publicadas y 14 programadas. Resultados: 4 piezas con métricas, 2 recién publicadas pendientes. Validación final 16 pruebas; API Alberto/Katia 200 y anónimo 401. UI comprobada en escritorio y móvil 400x871, incluido desplazamiento vertical. Coincidencia alternativa FB compara copy exacto y hora UTC dentro de una hora de published_at para cubrir cambio de fecha en Madrid; no solo día textual.

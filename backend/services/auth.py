@@ -76,9 +76,10 @@ MODULES = (
     "finanzas",
     "gestion_comercial",
     "time_machine",
+    "redes_sociales",
 )
 UNIVERSAL_READ_MODULES = {"inicio"}
-AGENT_OPERATION_MODULES = {"agentes", "cartera", "pendientes", "renovaciones"}
+AGENT_OPERATION_MODULES = {"redes_sociales", "agentes", "cartera", "pendientes", "renovaciones"}
 MODULE_COLUMNS = {
     module: f"Permiso_{module.title()}"
     for module in MODULES
@@ -126,6 +127,7 @@ MODULE_LABELS = {
     "finanzas": "Finanzas",
     "gestion_comercial": "Gestión Comercial",
     "time_machine": "Time Machine",
+    "redes_sociales": "Redes sociales",
 }
 
 PERMISSION_LABELS = {
@@ -279,6 +281,7 @@ def _default_module_permissions(role: str, promotorias: tuple[str, ...]) -> dict
     permissions["gestion_comercial"] = "ninguno"
     permissions["mails_automaticos"] = "ninguno"
     permissions["time_machine"] = "ninguno"
+    permissions["redes_sociales"] = "ninguno"
     for module in UNIVERSAL_READ_MODULES:
         permissions[module] = "lectura"
     if role == "agente":
