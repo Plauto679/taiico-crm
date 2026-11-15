@@ -87,6 +87,10 @@ def apply_source_rfc(db, client: Client, rfc: str | None) -> bool:
     normalized = normalize_rfc(rfc)
     if not valid_client_rfc(normalized):
         return False
+    existing_rfc = normalize_rfc(client.rfc)
+    if valid_client_rfc(existing_rfc) and existing_rfc != normalized:
+        client.metadata_json = {**(client.metadata_json or {}), "source_rfc": normalized, "requires_human_review": True}
+        return False
     query = db.query(Client).filter(
         func.upper(func.trim(Client.rfc)) == normalized,
     )
@@ -320,7 +324,17 @@ def ingest_rows(db, source_document, parsed_rows, workbook_issues, parser_name, 
             if payload.get("expediente_link") and not policy.document_link:
                 policy.document_link = payload["expediente_link"]
             if deadline > policy.effective_end_date:
-                policy.effective_end_date = deadline
+                metadata = dict(policy.metadata_json or {})
+                registry = dict(metadata.get("registry", {}))
+                if registry.get("validated"):
+                    conflict = {"field": "effective_end_date", "current": str(policy.effective_end_date), "incoming": str(deadline), "source": "Carga de renovaciones"}
+                    conflicts = list(registry.get("source_conflicts", []))
+                    if conflict not in conflicts:
+                        registry["source_conflicts"] = (conflicts + [conflict])[-20:]
+                    metadata["registry"] = registry
+                    policy.metadata_json = metadata
+                else:
+                    policy.effective_end_date = deadline
             db.flush()
             if created:
                 run.rows_imported += 1

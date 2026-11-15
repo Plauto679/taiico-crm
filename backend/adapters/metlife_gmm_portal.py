@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+from contextlib import contextmanager
 import os
 import re
 import shutil
@@ -95,6 +96,15 @@ def stable_chrome_profile_dir() -> Path:
     if configured:
         return Path(configured).expanduser()
     return Path.home() / "Library/Application Support/Taiico/MetLife GMM Chrome"
+
+
+@contextmanager
+def chrome_operation_lock(profile_dir: Path):
+    """Serialize portal operations sharing a Chrome context/download settings."""
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    with (profile_dir / ".taiico-portal-operation.lock").open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        yield
 
 
 def chrome_cdp_port() -> int:
@@ -466,9 +476,9 @@ class MetLifeGmmPortalAdapter:
         drive_folder = None
 
         try:
-            with sync_playwright() as p:
+            with chrome_operation_lock(self.session_profile_dir), sync_playwright() as p:
                 ensure_persistent_chrome(self.session_profile_dir)
-                browser = p.chromium.connect_over_cdp(chrome_cdp_url())
+                browser = p.chromium.connect_over_cdp(chrome_cdp_url(), timeout=30_000)
                 context = browser.contexts[0]
                 page = portal_page(context, METLIFE_PORTAL_URL)
 
@@ -727,7 +737,12 @@ class MetLifeGmmPortalAdapter:
         except Exception:
             page.keyboard.press("Meta+A")
             page.keyboard.insert_text(value)
-        page.get_by_test_id("searchIconId").click()
+        # Result cards may render another search icon with the same test id.
+        # The first visible icon belongs to the main search field.
+        icons = self._visible_locators(page.get_by_test_id("searchIconId"))
+        if not icons:
+            raise MetLifePortalAdapterError("No se encontró el botón de búsqueda")
+        icons[0].click()
 
     def search_by_rfc(self, page, rfc: str):
         self.search(page, "RFC Contratante", rfc)
@@ -788,6 +803,8 @@ class MetLifeGmmPortalAdapter:
                 ("search_name", task.client_name, self.search_by_name),
             ]
         )
+        if task.original_policy_number and policy_digits(task.original_policy_number) != policy_digits(task.policy_number):
+            attempts.insert(-1, ("search_policy", task.original_policy_number, self.search_by_policy))
         policy_numbers = (task.policy_number, task.original_policy_number or "")
         errors: list[str] = []
         for step_name, value, search in attempts:

@@ -11,6 +11,7 @@ from adapters.metlife_gmm_portal import (
     MetLifeGmmPortalTask,
     MetLifePortalMfaRequired,
     chrome_cdp_url,
+    chrome_operation_lock,
     ensure_persistent_chrome,
     portal_page,
 )
@@ -55,9 +56,9 @@ class MetLifeGmmCollectionAdapter(MetLifeGmmPortalAdapter):
         paid_until: date | None = None
         page = None
         try:
-            with sync_playwright() as playwright:
+            with chrome_operation_lock(self.session_profile_dir), sync_playwright() as playwright:
                 ensure_persistent_chrome(self.session_profile_dir)
-                browser = playwright.chromium.connect_over_cdp(chrome_cdp_url())
+                browser = playwright.chromium.connect_over_cdp(chrome_cdp_url(), timeout=30_000)
                 context = browser.contexts[0]
                 page = portal_page(context, METLIFE_PORTAL_URL)
 
@@ -71,21 +72,9 @@ class MetLifeGmmCollectionAdapter(MetLifeGmmPortalAdapter):
                 step = self.record_step("collection_open_clientes_beta")
                 self.complete_step(step, current_url=page.url)
 
-                step = self.record_step("collection_search_rfc", rfc=task.rfc)
-                self.search_by_rfc(page, task.rfc)
-                self.complete_step(step, current_url=page.url)
-
-                step = self.record_step(
-                    "collection_select_policy",
-                    policy_number=task.policy_number,
-                    original_policy_number=task.original_policy_number,
-                )
-                self.select_matching_policy(
-                    page,
-                    task.policy_number,
-                    task.original_policy_number or "",
-                )
-                self.complete_step(step, current_url=page.url)
+                # RFCs in the imported portfolio may be outdated. Reuse exact
+                # policy matching with RFC, number and name fallbacks.
+                self.search_with_fallbacks(page, task, stop_after=None)
 
                 step = self.record_step("collection_read_paid_until")
                 paid_until = self.read_paid_until(page)

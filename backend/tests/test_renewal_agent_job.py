@@ -524,7 +524,7 @@ class RenewalAgentJobTests(unittest.TestCase):
         self.assertIn("Revision Manual Necesaria", item["detail"])
         self.assertFalse(portal_failure)
 
-    def test_failed_collection_check_persists_sentinel_date(self):
+    def test_failed_collection_check_reports_unverified_date(self):
         from adapters.metlife_gmm_collection import MetLifeGmmCollectionResult
         from adapters.metlife_gmm_portal import AdapterStepResult, MetLifeGmmPortalResult
 
@@ -591,7 +591,7 @@ class RenewalAgentJobTests(unittest.TestCase):
             succeeded=False,
             error="La sección Cobranza no cargó",
         )
-        self.assertIn("Pagado Hasta: 01/01/2000", item["detail"])
+        self.assertIn("Pagado Hasta: no verificado", item["detail"])
         self.assertTrue(portal_failure)
 
     def test_start_and_close_notices_use_dedicated_renewal_sender(self):

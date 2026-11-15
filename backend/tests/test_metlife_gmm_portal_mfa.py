@@ -296,6 +296,7 @@ class MetLifeGmmMfaContinuationTests(unittest.TestCase):
             side_effect=[
                 RuntimeError("no RFC result"),
                 RuntimeError("no policy result"),
+                RuntimeError("no original policy result"),
                 label,
             ]
         )
@@ -319,13 +320,14 @@ class MetLifeGmmMfaContinuationTests(unittest.TestCase):
             [
                 ("rfc", "SABM7809274J4"),
                 ("policy", "1353851"),
+                ("policy", "1066235"),
                 ("name", "JOSE MIGUEL SANCHEZ BAUTISTA"),
             ],
         )
         label.click.assert_called_once_with()
         self.assertEqual(
             [step.status for step in adapter.steps],
-            ["failed", "failed", "completed"],
+            ["failed", "failed", "failed", "completed"],
         )
 
     def test_search_closes_residual_menu_selects_visible_option_and_waits_for_close(self):

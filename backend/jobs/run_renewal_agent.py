@@ -21,6 +21,7 @@ load_dotenv(BACKEND_DIR / ".env", override=True)
 from adapters.metlife_gmm_portal import (  # noqa: E402
     MetLifeGmmPortalAdapter,
     MetLifeGmmPortalTask,
+    MetLifeGmmPortalResult,
     result_to_dict,
 )
 from adapters.metlife_gmm_collection import (  # noqa: E402
@@ -307,6 +308,8 @@ def update_crm_renewal_fields(
     renewal_status: str | None = None,
 ) -> None:
     policy = db.query(Policy).filter(
+        Policy.insurer_id == "metlife",
+        Policy.product_id == "prod_met_gmm",
         Policy.policy_number == str(task.policy_number).strip()
     ).first()
     if policy is None:
@@ -314,13 +317,14 @@ def update_crm_renewal_fields(
     if expediente_link:
         policy.document_link = expediente_link
     renewal = db.query(Renewal).filter(
-        Renewal.original_policy_id == policy.id
+        Renewal.original_policy_id == policy.id,
+        Renewal.renewal_deadline == task.renewal_deadline
     ).first()
     if renewal is None:
         renewal = Renewal(
             original_policy_id=policy.id,
             client_id=policy.client_id,
-            renewal_deadline=policy.effective_end_date,
+            renewal_deadline=task.renewal_deadline,
             status="in_progress",
         )
         db.add(renewal)
@@ -401,28 +405,32 @@ def persist_collection_check(
         if task is None:
             raise RuntimeError(f"No existe la tarea de renovación {task_id}")
         payload = dict(task.normalized_payload or {})
-        payload["paid_until_date"] = paid_until.isoformat()
+        if succeeded:
+            payload["paid_until_date"] = paid_until.isoformat()
         payload["collection_check"] = {
             "status": "completed" if succeeded else "failed",
-            "paid_until": paid_until.isoformat(),
+            "paid_until": paid_until.isoformat() if succeeded else None,
             "error": error,
             "checked_at": datetime.utcnow().isoformat(),
         }
         task.normalized_payload = payload
 
         policy = db.query(Policy).filter(
+            Policy.insurer_id == "metlife",
+            Policy.product_id == "prod_met_gmm",
             Policy.policy_number == str(task.policy_number).strip()
         ).first()
         manual_review_assigned = False
-        if policy is not None:
+        if policy is not None and succeeded:
             renewal = db.query(Renewal).filter(
-                Renewal.original_policy_id == policy.id
+                Renewal.original_policy_id == policy.id,
+                Renewal.renewal_deadline == task.renewal_deadline
             ).first()
             if renewal is None:
                 renewal = Renewal(
                     original_policy_id=policy.id,
                     client_id=policy.client_id,
-                    renewal_deadline=policy.effective_end_date,
+                    renewal_deadline=task.renewal_deadline,
                     status="in_progress",
                 )
                 db.add(renewal)
@@ -430,7 +438,7 @@ def persist_collection_check(
             renewal.paid_until = paid_until
             if (
                 succeeded
-                and paid_until >= task.renewal_deadline
+                and paid_until > task.renewal_deadline
                 and not str(renewal.insurer_response or "").strip()
             ):
                 renewal.insurer_response = "Revision Manual Necesaria"
@@ -471,6 +479,44 @@ def record_action(
         db.commit()
     finally:
         db.close()
+
+
+def send_renewal_email_once(*, task, **message):
+    """Durable intent before SMTP: crashes and ambiguous deliveries never retry.
+
+    The per-task lock also covers direct/API invocations outside the batch lock.
+    A started intent requires reconciliation, even if SMTP raised an exception.
+    """
+    lock_dir = REPOSITORY_ROOT / ".runtime" / "renewal-delivery-locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    import hashlib
+    key = hashlib.sha256(str(task.id).encode()).hexdigest()
+    with (lock_dir / key).open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        with SessionLocal() as db:
+            prior = db.query(AgentAction).filter(
+                AgentAction.action_type == "renewal_delivery",
+                AgentAction.status.in_(["completed", "delivery_uncertain", "delivery_started"]),
+            ).all()
+            if any(str((action.input_payload or {}).get("task_id")) == str(task.id)
+                   for action in prior):
+                raise SmtpDeliveryUncertainError("Envío previo o iniciado; bloqueado para evitar duplicados")
+        with SessionLocal() as db:
+            renewals = db.query(Renewal).join(Policy, Renewal.original_policy_id == Policy.id).filter(
+                Policy.insurer_id == "metlife", Policy.product_id == "prod_met_gmm",
+                Policy.policy_number == str(task.policy_number).strip(),
+                Renewal.renewal_deadline == task.renewal_deadline,
+            ).all()
+            if any(renewal_status_blocks_automation(r.insurer_response)
+                   or r.status in {"sent", "delivered", "renewed", "cancelled", "canceled"}
+                   for r in renewals):
+                raise SmtpDeliveryUncertainError("Renovación protegida en CRM; envío bloqueado")
+        record_action(task=task, status="delivery_started", output={
+            "recipients": message.get("recipients", []),
+            "deadline": task.renewal_deadline.isoformat(),
+            "subject": message.get("subject"),
+        }, duration_ms=0)
+        send_email_smtp(**message)
 
 
 def task_processing_order(
@@ -531,17 +577,21 @@ def selected_tasks(
             for action in db.query(AgentAction)
             .filter(
                 AgentAction.action_type == "renewal_delivery",
-                AgentAction.status.in_(["completed", "delivery_uncertain"]),
+                AgentAction.status.in_(["completed", "delivery_uncertain", "delivery_started"]),
             )
             .all()
             if action.input_payload and action.input_payload.get("task_id")
         }
-        protected_policy_numbers = {
-            str(policy_number).strip()
-            for policy_number, renewal_status in (
-                db.query(Policy.policy_number, Renewal.insurer_response)
+        protected_policy_periods = {
+            (str(policy_number).strip(), deadline)
+            for policy_number, deadline, renewal_status in (
+                db.query(Policy.policy_number, Renewal.renewal_deadline, Renewal.insurer_response)
                 .join(Renewal, Renewal.original_policy_id == Policy.id)
-                .filter(Renewal.insurer_response.isnot(None))
+                .filter(
+                    Renewal.insurer_response.isnot(None),
+                    Policy.insurer_id == "metlife",
+                    Policy.product_id == "prod_met_gmm",
+                )
                 .all()
             )
             if renewal_status_blocks_automation(renewal_status)
@@ -552,7 +602,7 @@ def selected_tasks(
             task
             for task in tasks
             if task.id not in protected_task_ids
-            and str(task.policy_number).strip() not in protected_policy_numbers
+            and (str(task.policy_number).strip(), task.renewal_deadline) not in protected_policy_periods
         ]
         effective_process_date = process_date or local_now().date()
         return sorted(
@@ -743,7 +793,7 @@ def finish_run(
         "",
         f"Fecha de proceso: {process_date.isoformat()}",
         f"Pólizas planeadas: {summary['selected']}",
-        f"Renovaciones completadas: {summary['succeeded']}",
+        f"Gestiones completadas (envío o conciliación): {summary['succeeded']}",
         f"Errores / pendientes: {summary['failed']}",
         f"Proceso abortado: {'sí' if aborted else 'no'}",
         "WhatsApp: desactivado; no se intentaron mensajes.",
@@ -769,6 +819,13 @@ def finish_run(
 
 
 def is_portal_failure(result_data: dict) -> bool:
+    # Connection failures can happen before the first adapter step exists.
+    detail = str(result_data.get("error_message") or "").casefold()
+    if any(marker in detail for marker in (
+        "connect_over_cdp", "econnrefused", "debugging endpoint",
+        "browser has been closed", "connection closed",
+    )):
+        return True
     failed_steps = [
         item
         for item in result_data.get("steps") or []
@@ -822,7 +879,7 @@ def is_portal_failure(result_data: dict) -> bool:
 def is_browser_interruption(result) -> bool:
     steps = list(getattr(result, "steps", None) or [])
     if any(
-        getattr(item, "step_name", "") == "upload_to_drive"
+        getattr(item, "step_name", "") in {"upload_to_drive", "upload_to_client_folder"}
         and getattr(item, "status", "") == "completed"
         for item in steps
     ):
@@ -867,7 +924,7 @@ def run_portal_with_browser_recovery(operation, *, policy: str, portal: str):
     return recovered
 
 
-def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
+def process_one(run_id: str, task_id: str, *, prechecked_collection=None) -> tuple[dict, bool]:
     task = update_task_attempt(task_id)
     started = time.monotonic()
     emit(
@@ -909,23 +966,37 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
             from_portal="old",
             to_portal="clientes_beta",
         )
-        new_result = run_portal_with_browser_recovery(
-            lambda: MetLifeGmmPortalAdapter(headless=False).run(
-                MetLifeGmmPortalTask(
-                    id=task.id,
-                    policy_number=task.policy_number,
-                    rfc=task.rfc or "",
-                    client_name=task.client_name,
-                    renewal_deadline=task.renewal_deadline,
-                    original_policy_number=task.original_policy_number,
-                ),
-                stop_after=None,
-                upload_to_drive=True,
-                target_drive_folder_id=target_drive_folder_id(),
-            ),
-            policy=task.policy_number,
-            portal="clientes_beta",
+        reuse_check = (
+            prechecked_collection is not None
+            and normalize_rfc(prechecked_collection.rfc) == normalize_rfc(task.rfc or "")
+            and prechecked_collection.status != "completed"
+            and not is_portal_failure(collection_result_to_dict(prechecked_collection))
+            and "found 0 matches" in str(prechecked_collection.error_message or "")
         )
+        if reuse_check:
+            new_result = MetLifeGmmPortalResult(
+                status="failed", task_id=task.id, policy_number=task.policy_number,
+                rfc=task.rfc or "", steps=prechecked_collection.steps,
+                error_message=prechecked_collection.error_message,
+            )
+        else:
+            new_result = run_portal_with_browser_recovery(
+                lambda: MetLifeGmmPortalAdapter(headless=False).run(
+                    MetLifeGmmPortalTask(
+                        id=task.id,
+                        policy_number=task.policy_number,
+                        rfc=task.rfc or "",
+                        client_name=task.client_name,
+                        renewal_deadline=task.renewal_deadline,
+                        original_policy_number=task.original_policy_number,
+                    ),
+                    stop_after=None,
+                    upload_to_drive=True,
+                    target_drive_folder_id=target_drive_folder_id(),
+                ),
+                policy=task.policy_number,
+                portal="clientes_beta",
+            )
         new_data = result_to_dict(new_result)
         new_data["steps"] = [
             *(data.get("steps") or []),
@@ -965,14 +1036,17 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
                     client_name=task.client_name,
                     renewal_deadline=task.renewal_deadline,
                 )
-                collection_result = run_portal_with_browser_recovery(
-                    lambda: check_metlife_gmm_collection(
-                        collection_task,
-                        headless=False,
-                    ),
-                    policy=task.policy_number,
-                    portal="collection",
-                )
+                if prechecked_collection is not None and normalize_rfc(prechecked_collection.rfc) == normalized_task_rfc:
+                    collection_result = prechecked_collection
+                else:
+                    collection_result = run_portal_with_browser_recovery(
+                        lambda: check_metlife_gmm_collection(
+                            collection_task,
+                            headless=False,
+                        ),
+                        policy=task.policy_number,
+                        portal="collection",
+                    )
                 collection_data = collection_result_to_dict(collection_result)
                 data["steps"] = [
                     *(data.get("steps") or []),
@@ -997,7 +1071,7 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
                     detail = (
                         f"{detail} | Falló consulta de cobranza: "
                         f"{collection_result.error_message or 'error desconocido'} | "
-                        "Pagado Hasta: 01/01/2000"
+                        "Pagado Hasta: no verificado"
                     )
                 emit(
                     "collection_check_finished",
@@ -1019,9 +1093,17 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
                 )
                 manual_review_assigned = persist_manual_review(task.id, error)
                 detail = (
-                    f"{detail} | {error} | Pagado Hasta: 01/01/2000 | "
+                    f"{detail} | {error} | Pagado Hasta: no verificado | "
                     "CRM: Revision Manual Necesaria"
                 )
+        if (
+            not collection_handled_failure
+            and not is_portal_failure(data)
+            and "0 coincidencias exactas" in old_portal_detail
+            and "found 0 matches" in str(result.error_message or "")
+        ):
+            manual_review_assigned = persist_manual_review(task.id, detail)
+            detail += " | CRM: Revision Manual Necesaria; no localizada en ambos portales"
         persist_result(
             run_id,
             task.id,
@@ -1138,7 +1220,8 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
         )
 
         step_started = datetime.utcnow()
-        send_email_smtp(
+        send_renewal_email_once(
+            task=task,
             subject=subject,
             body=email_body,
             recipients=recipients,
@@ -1298,6 +1381,48 @@ def process_one(run_id: str, task_id: str) -> tuple[dict, bool]:
         }, False
 
 
+def process_one_reconciled(run_id: str, task_id: str) -> tuple[dict, bool]:
+    """Check current collection evidence before downloading or sending a renewal."""
+    with SessionLocal() as db:
+        task = db.get(PolicyDocumentRetrievalTask, task_id)
+        if task is None:
+            raise RuntimeError(f"No existe la tarea {task_id}")
+        db.expunge(task)
+    eligible = {item.id for item in selected_tasks(task.renewal_deadline, start_date=task.renewal_deadline)}
+    if task.id not in eligible:
+        return {"policy": task.policy_number, "client": task.client_name or "-",
+                "status": "completed", "detail": "Omitida: envío previo o revisión protegida en CRM"}, False
+    check = check_metlife_gmm_collection(MetLifeGmmPortalTask(
+        id=task.id, policy_number=task.policy_number, rfc=task.rfc or "",
+        client_name=task.client_name, renewal_deadline=task.renewal_deadline,
+        original_policy_number=task.original_policy_number,
+    ), headless=False)
+    evidence = collection_result_to_dict(check)
+    succeeded = check.status == "completed" and check.paid_until is not None
+    persist_collection_check(task.id, paid_until=check.paid_until or COLLECTION_FAILURE_DATE,
+                             succeeded=succeeded, error=check.error_message)
+    if succeeded and check.paid_until > task.renewal_deadline:
+        with SessionLocal() as db:
+            run = db.get(PolicyDocumentRetrievalRun, run_id)
+            persist_adapter_steps(db, run_id, task.id, evidence.get("steps") or [])
+            run.processed_count += 1
+            run.succeeded_count += 1
+            db.add(AgentAction(agent_name="renewal_agent", action_type="renewal_reconciliation",
+                status="completed", input_payload={"task_id": task.id, "policy_number": task.policy_number},
+                output_payload=evidence))
+            db.commit()
+        return {"policy": task.policy_number, "client": task.client_name or "-", "status": "completed",
+                "detail": f"Cobranza verificada hasta {check.paid_until}; sin envío. Revisar vigencia contractual."}, False
+    if not succeeded and (is_portal_failure(evidence) or any(
+        marker in str(check.error_message or "").lower() for marker in ("mfa_required", "operator_action_required")
+    )):
+        persist_result(run_id, task.id, evidence, retrieval_succeeded=False,
+                       delivery_succeeded=False, error=check.error_message)
+        return {"policy": task.policy_number, "client": task.client_name or "-", "status": "failed",
+                "detail": check.error_message or "Cobranza no disponible"}, True
+    return process_one(run_id, task_id, prechecked_collection=check)
+
+
 def process_one_subprocess(run_id: str, task_id: str) -> tuple[dict, bool]:
     command = [
         sys.executable,
@@ -1307,13 +1432,20 @@ def process_one_subprocess(run_id: str, task_id: str) -> tuple[dict, bool]:
         "--process-task-id",
         task_id,
     ]
-    completed = subprocess.run(
-        command,
-        cwd=str(REPOSITORY_ROOT),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(REPOSITORY_ROOT),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired:
+        # A durable SMTP intent prevents duplicate mail if the worker died
+        # after transmission. Keep the task for explicit reconciliation.
+        return {"policy": task_id, "client": "-", "status": "failed",
+                "detail": "operator_action_required: tarea excedió 600 segundos; revisar antes de reintentar"}, True
     result_payload = None
     for line in completed.stdout.splitlines():
         print(line, flush=True)
@@ -1479,7 +1611,6 @@ def run(
             return 0
 
         started_state = {
-            **state,
             "last_started_date": now.date().isoformat(),
             "last_started_at": now.isoformat(),
             "status": "running",
@@ -1553,7 +1684,7 @@ def main() -> int:
     parser.add_argument("--process-task-id")
     arguments = parser.parse_args()
     if arguments.process_task_run_id and arguments.process_task_id:
-        item, portal_failure = process_one(
+        item, portal_failure = process_one_reconciled(
             arguments.process_task_run_id,
             arguments.process_task_id,
         )

@@ -3,7 +3,7 @@ import time
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from services import cobranza, renovaciones, cumpleanos, cumpleanos_agentes, agentes, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, renewal_agent_api, client_email_directory, whatsapp, pendientes, mail_configuration, automatic_mails, recluta, password_management, base_loads, accesos, cotizaciones, audit_logs, rrhh, campanas, finanzas, gestion_comercial, time_machine, prospectadores, cobranza_prospectadores, home_widgets
+from services import polizas, cobranza, renovaciones, cumpleanos, cumpleanos_agentes, agentes, cartera, auth, clientes, ingestion, drive_sources, renewal_ingestion, renewal_agent_api, client_email_directory, whatsapp, pendientes, mail_configuration, automatic_mails, recluta, password_management, base_loads, accesos, cotizaciones, audit_logs, rrhh, campanas, finanzas, gestion_comercial, time_machine, prospectadores, cobranza_prospectadores, home_widgets
 from services import agent_statements
 from services.mesa_access import mesa_available
 from services.login_security import login_rate_limiter, secure_cookie_for
@@ -292,3 +292,5 @@ social_media.init_schema()
 from services import social_results
 social_results.init_schema()
 app.include_router(social_media.router)
+
+app.include_router(polizas.router)

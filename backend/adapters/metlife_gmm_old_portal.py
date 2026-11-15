@@ -18,6 +18,7 @@ from adapters.metlife_gmm_portal import (
     MetLifePortalAdapterError,
     build_drive_service,
     chrome_cdp_url,
+    chrome_operation_lock,
     ensure_persistent_chrome,
     ensure_credentials,
     now_iso,
@@ -230,9 +231,9 @@ class MetLifeGmmOldPortalAdapter(MetLifeGmmPortalAdapter):
         extracted: Path | None = None
         drive_folder: dict[str, Any] | None = None
         try:
-            with sync_playwright() as playwright:
+            with chrome_operation_lock(self.session_profile_dir), sync_playwright() as playwright:
                 ensure_persistent_chrome(self.session_profile_dir)
-                browser = playwright.chromium.connect_over_cdp(chrome_cdp_url())
+                browser = playwright.chromium.connect_over_cdp(chrome_cdp_url(), timeout=30_000)
                 context = browser.contexts[0]
                 page = portal_page(context, METLIFE_OLD_PORTAL_URL)
 

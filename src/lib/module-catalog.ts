@@ -13,6 +13,7 @@ export const MODULE_CATALOG = [
   ['prospectadores', 'Prospectadores', '/prospectadores', 'Catálogo, pagos y cartera', UserRoundSearch],
   ['cobranza_prospectadores', 'Cobranza para prospectadores', '/cobranza-prospectadores', 'Comisiones y distribución mensual', HandCoins],
   ['estados_agentes', 'Estados de Prospectadores', '/estados-prospectadores', 'Estados de cuenta y pagos', ScrollText],
+  ['polizas', 'Pólizas', '/polizas', 'Registro central, expedientes y conciliación', ScrollText],
   ['clientes', 'Clientes', '/clientes', 'Directorio de contactos', Users],
   ['recluta', 'Recluta', '/recluta', 'Seguimiento de prospectos a agentes', UserRoundSearch],
   ['dashboards', 'Dashboards', '/dashboards', 'Datos y métricas', BarChart3],
