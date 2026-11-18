@@ -1,15 +1,15 @@
+import { RenewalInsurerLinks } from '@/components/renovaciones/RenewalInsurerLinks';
 import { getUpcomingRenewals } from '@/modules/renovaciones/service';
 import { RenovacionesView } from '@/components/renovaciones/RenovacionesView';
 import { RenovacionGMM, RenovacionVida, RenovacionSura, RenovacionAarco, RenovacionPromotoriaSura } from '@/lib/types/renovaciones';
 import { getDefaultDateRange } from '@/lib/dateRange';
-import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
 export default async function RenovacionesPage({
     searchParams,
 }: {
-    searchParams: Promise<{ insurer?: string; startDate?: string; endDate?: string; renewalType?: string }>;
+    searchParams: Promise<{ insurer?: string; startDate?: string; endDate?: string; renewalType?: string; ramo?: string }>;
 }) {
     // Await searchParams for Next.js 15+
     const params = await searchParams;
@@ -61,19 +61,7 @@ export default async function RenovacionesPage({
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <h1 className="text-2xl font-bold text-white">Renovaciones</h1>
 
-                    {/* Insurer Selector */}
-                    <div className="hidden sm:flex max-w-full overflow-x-auto rounded-md shadow-sm" role="group">
-                        {['Metlife', 'SURA', 'AARCO_AXA', 'Promotoria SURA'].map((ins) => (
-                            <Link
-                                key={ins}
-                                href={`?insurer=${encodeURIComponent(ins)}&startDate=${startDate}&endDate=${endDate}&renewalType=${renewalType}`}
-                                scroll={false}
-                                className={`shrink-0 px-4 py-2 text-sm font-medium border border-gray-200 first:rounded-l-lg last:rounded-r-lg ${insurer === ins ? 'bg-blue-600 text-white' : 'bg-white text-gray-900 hover:bg-gray-100'}`}
-                            >
-                                {ins === 'AARCO_AXA' ? 'AARCO & AXA' : ins}
-                            </Link>
-                        ))}
-                    </div>
+                    <RenewalInsurerLinks insurer={insurer} startDate={startDate} endDate={endDate} renewalType={renewalType} />
                 </div>
 
             </div>
@@ -88,6 +76,7 @@ export default async function RenovacionesPage({
                     promotoriaSuraRenewals={promotoriaSuraRenewals}
                     insurer={insurer}
                     initialTab={renewalType}
+                    initialRamo={insurer === 'AARCO_AXA' ? params.ramo || '' : ''}
                     initialStartDate={startDate}
                     initialEndDate={endDate}
                 />

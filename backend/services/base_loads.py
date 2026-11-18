@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from openpyxl import load_workbook
 from starlette.concurrency import run_in_threadpool
 
-from config import GOOGLE_DRIVE_SOURCE_FOLDERS, METLIFE_PATHS
+from config import GOOGLE_DRIVE_SOURCE_FOLDERS, METLIFE_PATHS, AARCO_PATHS
 from drive.client import download_drive_file_bytes
 
 
@@ -102,6 +102,28 @@ def staging_root() -> Path:
     return root
 
 
+@router.get("/latest")
+def latest_base_loads():
+    """Return only successful application receipts, never pending previews."""
+    latest = {"gmm": None, "vida": None, "aarco": None}
+    timestamps = {}
+    for receipt_path in staging_root().glob("*/apply-result.json"):
+        try:
+            receipt = json.loads(receipt_path.read_text())
+            manifest = json.loads((receipt_path.parent / "manifest.json").read_text())
+            product = {"renovaciones.metlife_gmm": "gmm", "renovaciones.metlife_vida": "vida", "renovaciones.aarco_axa": "aarco"}.get(manifest.get("source_key"))
+            if not product or receipt.get("applied") is not True or not receipt.get("filename"):
+                continue
+            applied_at = receipt.get("applied_at") or datetime.fromtimestamp(receipt_path.stat().st_mtime, timezone.utc).isoformat()
+            timestamp = datetime.fromisoformat(applied_at).timestamp()
+            if timestamp > timestamps.get(product, float("-inf")):
+                timestamps[product] = timestamp
+                latest[product] = {"filename": receipt["filename"], "applied_at": applied_at}
+        except (OSError, ValueError, TypeError, AttributeError):
+            logger.warning("Could not read base load receipt: %s", receipt_path.name)
+    return latest
+
+
 def stage_agents_workbook(destination: Path) -> Path:
     """Download the canonical MetLife agent catalog from Google Drive."""
     file_id = os.getenv(
@@ -125,6 +147,7 @@ def canonical_drive_file_id(
     defaults = {
         "renovaciones.metlife_gmm": DEFAULT_METLIFE_GMM_FILE_ID,
         "renovaciones.metlife_vida": DEFAULT_METLIFE_VIDA_FILE_ID,
+        "renovaciones.aarco_axa": "",
     }
     if source_key not in defaults:
         raise ValueError(f"Fuente de carga no soportada: {source_key}")
@@ -988,6 +1011,7 @@ def run_gmm_apply_job(token_dir: Path, manifest: dict) -> dict:
             renewal_sync = {"status": "failed", "error": str(exc)}
         completed = {
             "applied": True, "filename": manifest["filename"],
+            "applied_at": datetime.now(timezone.utc).isoformat(),
             **manifest["preview"], **result, "renewal_sync": renewal_sync,
         }
         write_apply_record(token_dir, "apply-result", completed)
@@ -1128,14 +1152,18 @@ async def apply_metlife_vida_base(token: str):
         except Exception as sync_exc:
             logger.exception("Canonical Vida workbook applied but renewal synchronization failed")
             renewal_sync = {"status": "failed", "error": str(sync_exc)}
-        shutil.rmtree(token_dir, ignore_errors=True)
-        return {
+        completed = {
             "applied": True,
+            "applied_at": datetime.now(timezone.utc).isoformat(),
             "filename": manifest["filename"],
             **manifest["preview"],
             **result,
             "renewal_sync": renewal_sync,
         }
+        write_apply_record(token_dir, "apply-result", completed)
+        for name in ("source.xlsx", "prepared.xlsx", "agents.xlsx"):
+            (token_dir / name).unlink(missing_ok=True)
+        return completed
     except Exception as exc:
         logger.exception(
             "MetLife Vida base apply failed; token=%s staging=%s",
@@ -1143,3 +1171,76 @@ async def apply_metlife_vida_base(token: str):
             token_dir,
         )
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/aarco/preview")
+async def preview_aarco_base(file: UploadFile = File(...)):
+    from services.aarco_base_loads import prepare, SOURCE
+    filename = safe_filename(file.filename)
+    if not filename.casefold().endswith('.xlsx'):
+        raise HTTPException(400, 'Sólo se aceptan archivos .xlsx')
+    token_dir = staging_root() / uuid.uuid4().hex
+    token_dir.mkdir()
+    try:
+        size, sha256 = await save_upload(file, token_dir / 'source.xlsx')
+        canonical = AARCO_PATHS['RENOVACIONES']
+        before = file_sha256(canonical)
+        preview = await run_in_threadpool(prepare, token_dir / 'source.xlsx', token_dir / 'prepared.xlsx')
+        manifest = dict(token=token_dir.name, source_key=SOURCE, filename=filename, size=size, sha256=sha256,
+                        canonical_sha256=before, candidate_sha256=file_sha256(token_dir / 'prepared.xlsx'),
+                        created_at=datetime.now(timezone.utc).isoformat(), preview=preview)
+        write_apply_record(token_dir, 'manifest', manifest)
+        return manifest
+    except Exception as exc:
+        shutil.rmtree(token_dir, ignore_errors=True)
+        if isinstance(exc, HTTPException): raise
+        raise HTTPException(400, str(exc)) from exc
+    finally: await file.close()
+
+
+def run_aarco_apply_job(token_dir, manifest):
+    import fcntl
+    with (staging_root() / 'aarco-apply.lock').open('a') as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            return _run_aarco_apply_job(token_dir, manifest)
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _run_aarco_apply_job(token_dir, manifest):
+    from services.aarco_base_loads import sync_index, SOURCE
+    try:
+        result = apply_prepared_workbook(token_dir / 'prepared.xlsx', AARCO_PATHS['RENOVACIONES'],
+                                        manifest['candidate_sha256'], manifest['canonical_sha256'], SOURCE)
+        write_apply_record(token_dir, 'applied-workbook', result)
+        sync = sync_index()
+        completed = dict(applied=True, filename=manifest['filename'], applied_at=datetime.now(timezone.utc).isoformat(),
+                         **manifest['preview'], **result, renewal_sync=sync)
+        write_apply_record(token_dir, 'apply-result', completed)
+        write_apply_record(token_dir, 'apply-state', {'status':'completed'})
+    except Exception as exc:
+        logger.exception('AARCO apply failed')
+        write_apply_record(token_dir, 'apply-state', {'status':'failed', 'detail': str(exc)})
+
+
+@router.get('/aarco/apply/{token}')
+async def get_aarco_apply_status(token: str):
+    if not re.fullmatch(r'[a-f0-9]{32}', token): raise HTTPException(400, 'Token de carga inválido')
+    return apply_job_status(staging_root() / token)
+
+
+@router.post('/aarco/apply/{token}')
+async def apply_aarco_base(token: str, background_tasks: BackgroundTasks):
+    if not re.fullmatch(r'[a-f0-9]{32}', token): raise HTTPException(400, 'Token de carga inválido')
+    directory = staging_root() / token
+    if (directory / 'apply-state.json').exists(): return apply_job_status(directory)
+    if not (directory / 'manifest.json').exists(): raise HTTPException(404, 'Vista previa no disponible')
+    manifest = json.loads((directory / 'manifest.json').read_text())
+    if manifest.get('source_key') != 'renovaciones.aarco_axa': raise HTTPException(409, 'La carga no corresponde a AARCO')
+    if file_sha256(directory / 'source.xlsx') != manifest['sha256']: raise HTTPException(409, 'El archivo cambió')
+    try: (directory / 'apply-claim').mkdir()
+    except FileExistsError: return {'status':'processing'}
+    write_apply_record(directory, 'apply-state', {'status':'processing','worker_pid':os.getpid()})
+    background_tasks.add_task(run_aarco_apply_job, directory, manifest)
+    return {'status':'processing'}

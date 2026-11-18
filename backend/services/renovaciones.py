@@ -1762,30 +1762,9 @@ async def get_upcoming_renewals(
                     })
                     
         elif insurer.upper() in ["AARCO_AXA", "AARCO"]:
-            query = query.filter(Policy.insurer_id == "aarco")
-            renewals = query.all()
-            
-            for ren in renewals:
-                pol = ren.original_policy
-                prospectador = pol.client.metadata_json.get("prospectador", "") if pol.client else ""
-                results.append({
-                    "POLIZA": pol.policy_number,
-                    "ASEGURADORA": "AARCO",
-                    "PROMOTORIA": "AARCO Promotoria",
-                    "AGENTE": "Aarco Agente",
-                    "PROSPECTADOR": prospectador,
-                    "RAMO": pol.product.branch if pol.product else "VIDA",
-                    "PRODUCTO": pol.product.name if pol.product else "Vida Individual",
-                    "CONTRATANTE": pol.client.full_name if pol.client else "",
-                    "ASEGURADO": pol.client.full_name if pol.client else "",
-                    "INICIO VIGENCIA": format_date(pol.effective_start_date),
-                    "FIN VIGENCIA": format_date(ren.renewal_deadline),
-                    "PRIMA NETA ANUAL": float(pol.premium_amount) if pol.premium_amount else 0.0,
-                    "ESTATUS_DE_RENOVACION": ren.insurer_response,
-                    "EXPEDIENTE": pol.document_link,
-                    "Email": pol.client.email if pol.client else None
-                })
-                
+            from services.aarco_base_loads import renewal_rows
+            results = await run_in_threadpool(renewal_rows, sd, ed)
+
         return scope_renewal_rows(results, profile) if isinstance(profile, AccessProfile) else results
     except Exception as e:
         print(f"Error fetching upcoming renewals: {e}")
@@ -1813,6 +1792,8 @@ async def update_renewal_status(
         
         if not policy:
             raise HTTPException(status_code=404, detail=f"Policy {policy_number} not found")
+        if insurer.upper() in {'AARCO', 'AARCO_AXA'} and policy.insurer_id != 'aarco':
+            raise HTTPException(409, 'Número de póliza compartido con otra aseguradora; requiere conciliación')
         require_renewal_policy_access(profile, policy, type)
             
         # Retrieve related renewal
@@ -1888,6 +1869,8 @@ async def send_renewal_email_endpoint(
         
         if not policy or not policy.client:
             raise HTTPException(status_code=404, detail="Policy or client profile not found")
+        if insurer.upper() in {'AARCO', 'AARCO_AXA'} and policy.insurer_id != 'aarco':
+            raise HTTPException(409, 'Número de póliza compartido con otra aseguradora; requiere conciliación')
         require_renewal_policy_access(profile, policy, type)
             
         recipient_email = policy.client.email

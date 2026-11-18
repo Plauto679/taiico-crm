@@ -17,11 +17,12 @@ interface RenovacionesViewProps {
     promotoriaSuraRenewals?: RenovacionPromotoriaSura[];
     insurer: string;
     initialTab?: 'VIDA' | 'GMM';
+    initialRamo?: string;
     initialStartDate: string;
     initialEndDate: string;
 }
 
-export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRenewals = [], aarcoRenewals = [], promotoriaSuraRenewals = [], insurer, initialTab = 'VIDA', initialStartDate, initialEndDate }: RenovacionesViewProps) {
+export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRenewals = [], aarcoRenewals = [], promotoriaSuraRenewals = [], insurer, initialTab = 'VIDA', initialRamo = '', initialStartDate, initialEndDate }: RenovacionesViewProps) {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<'VIDA' | 'GMM'>(initialTab);
     const [selectedRow, setSelectedRow] = useState<any>(null);
@@ -37,6 +38,9 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
     const [loadError, setLoadError] = useState('');
     const [controlsOpen, setControlsOpen] = useState(false);
     const [search, setSearch] = useState('');
+    const [ramo, setRamo] = useState(initialRamo);
+    const ramoValue = (value: unknown) => String(value || 'Sin ramo').trim().toUpperCase();
+    const ramoOptions = useMemo(() => Array.from(new Set(aarcoData.map(row => ramoValue(row.RAMO)))).sort(), [aarcoData]);
     const normalizeSearch = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
     const activeRenewals = insurer === 'Metlife'
@@ -49,11 +53,14 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
 
     const searchedRenewals = useMemo(() => {
         const query = normalizeSearch(search.trim());
-        if (!query) return activeRenewals;
-        return activeRenewals.filter(row => Object.values(row).some(value =>
+        const rows = insurer === 'AARCO_AXA' && ramo
+            ? aarcoData.filter(row => ramoValue(row.RAMO) === ramo)
+            : activeRenewals;
+        if (!query) return rows;
+        return rows.filter(row => Object.values(row).some(value =>
             (typeof value === 'string' || typeof value === 'number') && normalizeSearch(String(value)).includes(query)
         ));
-    }, [activeRenewals, search]);
+    }, [activeRenewals, aarcoData, insurer, ramo, search]);
 
     useEffect(() => setVidaData(vidaRenewals), [vidaRenewals]);
     useEffect(() => setGmmData(gmmRenewals), [gmmRenewals]);
@@ -82,6 +89,10 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
         }
         if (insurer === 'Metlife' && !params.has('renewalType')) {
             params.set('renewalType', initialTab);
+            changed = true;
+        }
+        if (insurer !== 'Metlife' && params.has('renewalType')) {
+            params.delete('renewalType');
             changed = true;
         }
         if (changed) {
@@ -406,7 +417,7 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
             </div>
             <div id="renewal-controls" className={`${controlsOpen ? 'block' : 'hidden'} max-h-[45dvh] flex-none space-y-3 overflow-y-auto sm:block sm:max-h-none sm:overflow-visible`}>
                 <label className="block text-sm text-white sm:hidden">Aseguradora
-                    <select aria-label="Aseguradora" value={insurer} onChange={event => { const params = new URLSearchParams(window.location.search); params.set('insurer', event.target.value); params.set('renewalType', activeTab); router.push(`?${params.toString()}`, {scroll: false}); }} className="mt-1 w-full rounded-lg bg-white p-2.5 text-base text-slate-900">
+                    <select aria-label="Aseguradora" value={insurer} onChange={event => { const params = new URLSearchParams(window.location.search); params.set('insurer', event.target.value); if (event.target.value === 'Metlife') params.set('renewalType', activeTab); else params.delete('renewalType'); params.delete('ramo'); window.location.assign(`/renovaciones?${params.toString()}`); }} className="mt-1 w-full rounded-lg bg-white p-2.5 text-base text-slate-900">
                         {['Metlife','SURA','AARCO_AXA','Promotoria SURA'].map(value => <option key={value} value={value}>{value === 'AARCO_AXA' ? 'AARCO & AXA' : value}</option>)}
                     </select>
                 </label>
@@ -425,6 +436,24 @@ export function RenovacionesView({ vidaRenewals = [], gmmRenewals = [], suraRene
             />
                 <button type="button" onClick={handleExport} className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white sm:hidden">Exportar Excel</button>
             </div>
+            {insurer === 'AARCO_AXA' && (
+                <div className="flex flex-wrap items-end gap-3 rounded-lg bg-white p-4">
+                    <label htmlFor="aarco-ramo" className="text-sm font-medium text-slate-700">Ramo
+                        <select id="aarco-ramo" value={ramo} onChange={event => {
+                            const value = event.target.value;
+                            setRamo(value);
+                            const params = new URLSearchParams(window.location.search);
+                            if (value) params.set('ramo', value); else params.delete('ramo');
+                            params.delete('renewalType');
+                            window.history.replaceState(window.history.state, '', `${window.location.pathname}?${params.toString()}`);
+                        }} className="mt-1 block rounded-md border border-slate-300 bg-white p-2.5 text-slate-900">
+                            <option value="">Todos los ramos</option>
+                            {Array.from(new Set([...ramoOptions, ...(ramo ? [ramo] : [])])).map(value => <option key={value} value={value}>{value}</option>)}
+                        </select>
+                    </label>
+                    <p role="status" className="pb-2 text-sm text-slate-600">{searchedRenewals.length} renovaciones en el rango seleccionado</p>
+                </div>
+            )}
             <div className="relative flex-none">
                 <label htmlFor="renewal-search" className="sr-only">Buscar cliente o póliza</label>
                 <input id="renewal-search" type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar cliente o póliza…" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-base text-slate-900" />

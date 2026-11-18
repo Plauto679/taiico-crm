@@ -78,3 +78,27 @@ def test_no_agent_matches_rejects_apply_without_backup_or_job(tmp_path):
             assert tasks.tasks == []
             assert not (directory / 'apply-claim').exists()
             apply.assert_not_called()
+
+
+def test_latest_loads_only_applied_per_product_and_survive_cleanup(tmp_path):
+    from datetime import datetime, timezone
+    import os
+
+    for token, product, filename, applied_at, applied in (
+        ('a', 'gmm', 'anterior.xlsx', '2026-11-01T10:00:00+00:00', True),
+        ('b', 'gmm', 'reciente.xlsx', '2026-11-02T10:00:00+00:00', True),
+        ('c', 'vida', 'vida.xlsx', '2026-11-01T10:00:00+00:00', True),
+        ('d', 'gmm', 'solo-preview.xlsx', '2026-11-03T10:00:00+00:00', False),
+    ):
+        directory = tmp_path / (token * 32)
+        directory.mkdir()
+        (directory / 'manifest.json').write_text(json.dumps({'source_key': f'renovaciones.metlife_{product}'}))
+        if applied:
+            (directory / 'apply-result.json').write_text(json.dumps({'applied': True, 'filename': filename, 'applied_at': applied_at}))
+        old = datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp()
+        os.utime(directory, (old, old))
+    with patch.object(service, 'staging_root', return_value=tmp_path):
+        service.cleanup_expired_previews()
+        result = service.latest_base_loads()
+        assert result['gmm']['filename'] == 'reciente.xlsx'
+        assert result['vida']['filename'] == 'vida.xlsx'

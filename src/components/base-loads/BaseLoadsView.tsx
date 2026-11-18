@@ -1,9 +1,12 @@
 'use client';
 
-import { ChangeEvent, useState } from 'react';
+import { ChangeEvent, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, FileSpreadsheet, Loader2, ShieldCheck, Upload } from 'lucide-react';
-import type { BaseLoadApplyResult, BaseLoadPreview } from '@/lib/types/baseLoads';
+import type { BaseLoadApplyResult, BaseLoadPreview, LatestBaseLoads } from '@/lib/types/baseLoads';
 import {
+    fetchLatestBaseLoads,
+    previewAarcoBase,
+    applyAarcoBase,
     applyMetlifeGmmBase,
     applyMetlifeVidaBase,
     previewMetlifeGmmBase,
@@ -28,7 +31,7 @@ function Metric({ label, value, tone = 'default' }: { label: string; value: numb
 }
 
 export function BaseLoadsView() {
-    const [product, setProduct] = useState<'gmm' | 'vida'>('gmm');
+    const [product, setProduct] = useState<'gmm' | 'vida' | 'aarco'>('gmm');
     const [file, setFile] = useState<File | null>(null);
     const [preview, setPreview] = useState<BaseLoadPreview | null>(null);
     const [result, setResult] = useState<BaseLoadApplyResult | null>(null);
@@ -36,7 +39,25 @@ export function BaseLoadsView() {
     const [applying, setApplying] = useState(false);
     const [error, setError] = useState('');
 
-    function selectProduct(nextProduct: 'gmm' | 'vida') {
+    const [latestLoads, setLatestLoads] = useState<LatestBaseLoads>({ gmm: null, vida: null, aarco: null });
+    const [historyLoading, setHistoryLoading] = useState(true);
+    const [historyError, setHistoryError] = useState('');
+
+    async function refreshLatestLoads() {
+        setHistoryLoading(true);
+        setHistoryError('');
+        try {
+            setLatestLoads(await fetchLatestBaseLoads());
+        } catch {
+            setHistoryError('No se pudo consultar la última carga.');
+        } finally {
+            setHistoryLoading(false);
+        }
+    }
+
+    useEffect(() => { void refreshLatestLoads(); }, []);
+
+    function selectProduct(nextProduct: 'gmm' | 'vida' | 'aarco') {
         setProduct(nextProduct);
         setFile(null);
         setPreview(null);
@@ -67,7 +88,7 @@ export function BaseLoadsView() {
         try {
             setPreview(await (product === 'gmm'
                 ? previewMetlifeGmmBase(file)
-                : previewMetlifeVidaBase(file)));
+                : product === 'aarco' ? previewAarcoBase(file) : previewMetlifeVidaBase(file)));
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : 'No se pudo analizar el archivo');
         } finally {
@@ -82,8 +103,9 @@ export function BaseLoadsView() {
         try {
             const applied = await (product === 'gmm'
                 ? applyMetlifeGmmBase(preview.token)
-                : applyMetlifeVidaBase(preview.token));
+                : product === 'aarco' ? applyAarcoBase(preview.token) : applyMetlifeVidaBase(preview.token));
             setResult(applied);
+            void refreshLatestLoads();
             setPreview(null);
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : 'No se pudo actualizar la base');
@@ -104,16 +126,17 @@ export function BaseLoadsView() {
             </div>
 
             <div className="inline-flex rounded-xl bg-white/15 p-1" role="tablist" aria-label="Producto MetLife">
-                {(['gmm', 'vida'] as const).map((option) => (
+                {(['gmm', 'vida', 'aarco'] as const).map((option) => (
                     <button
                         key={option}
                         type="button"
                         role="tab"
                         aria-selected={product === option}
+                        disabled={loading || applying}
                         onClick={() => selectProduct(option)}
                         className={`rounded-lg px-5 py-2 font-semibold transition ${product === option ? 'bg-white text-blue-800 shadow' : 'text-white hover:bg-white/10'}`}
                     >
-                        {option === 'gmm' ? 'MetLife GMM' : 'MetLife Vida'}
+                        {option === 'aarco' ? 'AARCO & AXA' : option === 'gmm' ? 'MetLife GMM' : 'MetLife Vida'}
                     </button>
                 ))}
             </div>
@@ -122,13 +145,23 @@ export function BaseLoadsView() {
                 <div className="flex items-start gap-4">
                     <div className="rounded-xl bg-blue-100 p-3 text-blue-700"><FileSpreadsheet className="h-7 w-7" /></div>
                     <div className="flex-1">
-                        <h2 className="text-xl font-semibold text-slate-900">MetLife {product === 'gmm' ? 'GMM' : 'Vida'}</h2>
+                        <h2 className="text-xl font-semibold text-slate-900">{product === 'aarco' ? 'AARCO & AXA' : `MetLife ${product === 'gmm' ? 'GMM' : 'Vida'}`}</h2>
                         <p className="mt-1 text-sm text-slate-600">
                             {product === 'gmm'
                                 ? 'Reporte de cartera KC. Se filtra por Clave Definitiva y se conserva toda la información de Y en adelante.'
-                                : 'Reporte de cartera Vida. Se concilia por POLIZA_ORIGEN, se actualiza ESTATUS_POL y se conservan los datos internos de Taiico.'}
+                                : product === 'aarco' ? 'Carga mensual por póliza y vigencia anual. Conserva contactos, prospectadores, enlaces y gestiones internas cuando no vienen en el reporte.' : 'Reporte de cartera Vida. Se concilia por POLIZA_ORIGEN, se actualiza ESTATUS_POL y se conservan los datos internos de Taiico.'}
                         </p>
                     </div>
+                </div>
+
+                <div role="status" className="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-4">
+                    <p className="text-sm font-semibold text-slate-800">Último archivo cargado correctamente</p>
+                    {historyLoading ? <p className="mt-1 text-sm text-slate-600">Consultando última carga…</p>
+                        : historyError ? <p className="mt-1 text-sm text-amber-800">{historyError} <button type="button" onClick={() => void refreshLatestLoads()} className="underline">Reintentar</button></p>
+                        : latestLoads[product] ? <>
+                            <p className="mt-1 break-all font-medium text-blue-800">{latestLoads[product]!.filename}</p>
+                            <p className="mt-1 text-xs text-slate-600">Aplicado el {new Date(latestLoads[product]!.applied_at).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' })}</p>
+                        </> : <p className="mt-1 text-sm text-slate-600">No hay una carga aplicada registrada para este producto.</p>}
                 </div>
 
                 <div className="mt-6 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-6">
@@ -171,8 +204,8 @@ export function BaseLoadsView() {
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                         <Metric label="Filas del reporte" value={stats.source_rows} />
-                        <Metric label="Claves definitivas" value={stats.allowed_agent_keys} />
-                        <Metric label="Filas después del filtro" value={stats.rows_after_agent_filter} />
+                        <Metric label={product === 'aarco' ? 'Agentes en el reporte' : 'Claves definitivas'} value={stats.allowed_agent_keys} />
+                        <Metric label={product === 'aarco' ? 'Filas de cartera' : 'Filas después del filtro'} value={stats.rows_after_agent_filter} />
                         <Metric label="Pólizas únicas" value={stats.unique_incoming_policies} />
                         {product === 'gmm' && <Metric label="Vigencias únicas" value={stats.unique_policy_periods || 0} />}
                         <Metric label="Pólizas actualizadas" value={stats.existing_policies_updated} tone="success" />
@@ -220,6 +253,7 @@ export function BaseLoadsView() {
                         <div>
                             <h2 className="text-xl font-semibold">Base actualizada</h2>
                             <p className="mt-1 text-sm">Se consolidaron {number.format(result.final_policy_count)} pólizas en {number.format(result.final_row_count)} filas. La copia local y Drive quedaron sincronizados.</p>
+                            {!!result.renewal_sync?.policy_number_conflicts?.length && <p className="mt-2 text-sm text-amber-900">Hay {result.renewal_sync.policy_number_conflicts.length} números de póliza compartidos con otra aseguradora: visibles en Renovaciones, pendientes de conciliar en Clientes.</p>}
                             <div className="mt-3 flex flex-wrap gap-4 text-sm font-semibold">
                                 <a href={result.drive_url} target="_blank" rel="noopener noreferrer" className="underline hover:text-emerald-700">
                                     Abrir base en Drive

@@ -1,4 +1,4 @@
-import type { BaseLoadApplyResult, BaseLoadPreview } from '@/lib/types/baseLoads';
+import type { BaseLoadApplyResult, BaseLoadPreview, LatestBaseLoads } from '@/lib/types/baseLoads';
 
 async function responseJson<T>(response: Response): Promise<T> {
     if (!response.ok) {
@@ -85,4 +85,32 @@ export async function applyMetlifeVidaBase(token: string): Promise<BaseLoadApply
         credentials: 'same-origin',
         cache: 'no-store',
     }));
+}
+
+export async function fetchLatestBaseLoads(): Promise<LatestBaseLoads> {
+    return responseJson<LatestBaseLoads>(await fetch('/api/base-loads/latest', {
+        credentials: 'same-origin', cache: 'no-store',
+    }));
+}
+
+export async function previewAarcoBase(file: File): Promise<BaseLoadPreview> {
+    const body = new FormData();
+    body.append('file', file);
+    return responseJson<BaseLoadPreview>(await fetch('/api/base-loads/aarco/preview', {
+        method: 'POST', body, credentials: 'same-origin', cache: 'no-store',
+    }));
+}
+
+export async function applyAarcoBase(token: string): Promise<BaseLoadApplyResult> {
+    const url = `/api/base-loads/aarco/apply/${token}`;
+    let progress = await responseJson<{status: string; result?: BaseLoadApplyResult; detail?: string}>(await fetch(url, {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    }));
+    for (let attempt = 0; attempt < 600; attempt++) {
+        if (progress.status === 'completed' && progress.result) return progress.result;
+        if (progress.status === 'failed') throw new Error(progress.detail || 'No se pudo aplicar la carga.');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        progress = await responseJson<typeof progress>(await fetch(url, { credentials: 'same-origin', cache: 'no-store' }));
+    }
+    throw new Error('La carga sigue en proceso. Consulta de nuevo el resultado antes de generar otra.');
 }

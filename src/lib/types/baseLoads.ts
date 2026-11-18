@@ -31,6 +31,7 @@ export interface BaseLoadPreview {
 
 export interface BaseLoadApplyResult extends BaseLoadPreviewStats {
     applied: true;
+    renewal_sync?: { status: string; policy_number_conflicts?: string[] };
     filename: string;
     backup_file_id: string;
     backup_name: string;
@@ -45,3 +46,5 @@ export interface BaseLoadApplyResult extends BaseLoadPreviewStats {
     drive_modified_time: string;
     drive_version: string;
 }
+
+export type LatestBaseLoads = Record<'gmm' | 'vida' | 'aarco', { filename: string; applied_at: string } | null>;
